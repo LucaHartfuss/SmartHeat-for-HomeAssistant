@@ -97,6 +97,17 @@ def _felder(signatur_text: str) -> tuple[str, str]:
     return dokument["zertifikat"], dokument["signatur"]
 
 
+def zertifikat_abdruck(signatur_text: str) -> str:
+    """SHA-256-Fingerabdruck (hex) des Zertifikats im Signaturtext, ohne etwas zu pruefen; "" bei einem unlesbaren Text.
+    Der Updater bindet damit die Ablehnung einer Version an das Zertifikat statt an die Bytes der Signatur."""
+    try:
+        pem, _ = _felder(signatur_text)
+    except SignatureError:
+        return ""
+    zertifikate = _pem_zertifikate(pem)
+    return zertifikate[0].fingerprint(hashes.SHA256()).hex() if len(zertifikate) == 1 else ""
+
+
 def _gilt(cert: x509.Certificate, jetzt: datetime) -> bool:
     return cert.not_valid_before_utc <= jetzt <= cert.not_valid_after_utc
 

@@ -75,13 +75,14 @@ von Hand). Ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Superv
   `gateway/host/release-roots.pem` lehnt das Gate echte `gateway-v*`-Tags ab. Änderungen in
   `smartheat_core`/`smartheat_runtime` wirken auf beide Clienttypen.
 - **Gateway-Release** baut und signiert der Betreiber an seinem Rechner (`gateway/release/release_lokal.sh`, Aufruf und
-  Voraussetzungen: `../docs/ci-cd-runbook.md` §13); die CI (`release-gateway.yml`: `ci`, `probe`, `main`) prüft nur,
-  baut im Job `probe` mit einer Wegwerf-Kette und lädt nichts hoch. Kein Signierschlüssel, keine Zertifikatsdatei mit Schlüssel und kein
-  `.env` im Repo (Geheimnis-Scan, `scripts/ci/geheimnis_scan.py`).
-- **Add-on-Release:** `release.yml` baut das Image je Architektur und pusht es nach GHCR
-  (`ghcr.io/lucahartfuss/<arch>-heizungsbruecke:<version>`, `image:` in der `config.yaml`); der Supervisor zieht es und
-  baut nicht selbst. Rechte und Sandbox: `heizungsbruecke/config.yaml` nur mit den vier Rechten der Liste
-  (`homeassistant_api`, `hassio_api`, `discovery`, `stdin`; Grund je Recht in `../docs/module/ha-host.md`, „Rechte und
+  Voraussetzungen: `../docs/ci-cd-runbook.md` §13); die CI (`release-gateway.yml`: `ci`, `probe`, `gate`, `main`) prüft nur,
+  baut im Job `probe` mit einer Wegwerf-Kette und lädt nichts hoch. In allen Release-Workflows läuft Code aus dem Root-Repo
+  nur im Job `gate` (Leserecht); die Jobs mit Schreibrecht führen keinen Root-Code aus (`../docs/ci-cd-runbook.md` §4).
+  Kein Signierschlüssel, keine Zertifikatsdatei mit Schlüssel und kein `.env` im Repo (Geheimnis-Scan, `scripts/ci/geheimnis_scan.py`).
+- **Add-on-Release:** `release.yml` (Jobs `ci`, `gate`, `image`, `release`) baut das Image je Architektur und pusht es nach
+  GHCR (`ghcr.io/lucahartfuss/<arch>-heizungsbruecke:<version>`, `image:` in der `config.yaml`; nie auf ein vorhandenes Tag);
+  der Supervisor zieht es und baut nicht selbst. Rechte und Sandbox: `heizungsbruecke/config.yaml` nur mit den vier
+  Rechten der Liste (`homeassistant_api`, `hassio_api`, `discovery`, `stdin`; Grund je Recht in `../docs/module/ha-host.md`, „Rechte und
   AppArmor“) und `heizungsbruecke/apparmor.txt`; beides sichert `heizungsbruecke/tests/test_config_yaml.py`. Ein neues
   Recht oder eine neue Schreibstelle außerhalb von `/data` und `/tmp` braucht erst eine Entscheidung und den Eintrag in
   beiden.

@@ -289,6 +289,24 @@ def test_naive_zeit_ist_ein_programmierfehler():
         _pruefe(root_cert, key, cert, untergrenze=VON.replace(tzinfo=None))
 
 
+def test_zertifikat_abdruck_ist_der_sha256_des_zertifikats_und_unabhaengig_von_der_signatur():
+    root_cert, key, cert = _kette()
+    text = signiere(key, cert, DATA)
+    erwartet = cert.fingerprint(hashes.SHA256()).hex()
+    assert kette.zertifikat_abdruck(text) == erwartet
+    assert kette.zertifikat_abdruck(signiere(key, cert, b"andere Bytes")) == erwartet
+    assert kette.zertifikat_abdruck(json.dumps(json.loads(text), indent=4)) == erwartet
+    _, andere_key, anderes = _kette()
+    assert kette.zertifikat_abdruck(signiere(andere_key, anderes, DATA)) != erwartet
+
+
+@pytest.mark.parametrize("text", ["", "kein json", "[]", json.dumps({"format": FORMAT}),
+                                  json.dumps({"format": FORMAT, "zertifikat": "kein pem", "signatur": ""}),
+                                  "x" * (kette.MAX_SIGNATUR_BYTES + 1)])
+def test_zertifikat_abdruck_ist_leer_wenn_der_text_kein_zertifikat_traegt(text):
+    assert kette.zertifikat_abdruck(text) == ""
+
+
 def test_roots_identity_aendert_sich_mit_dem_bund():
     a, b = root(cn="A")[1], root(cn="B")[1]
     nur_a, beide, umgekehrt = roots_pem(a), roots_pem(a, b), roots_pem(b, a)

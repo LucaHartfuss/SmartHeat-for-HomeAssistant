@@ -24,8 +24,9 @@ in_progress wird vor `compose up` geschrieben und uebersteht einen Stromausfall:
 erneut (up ist idempotent) und wartet auf Gesundheit. Ist "rollback" gesetzt (Grund), scheiterte der Rueckweg auf
 `previous`; recover()/run_once wiederholen ihn, bevor sonst etwas geschieht, und melden das Ergebnis erst danach
 ("reject": false = die Version kommt danach nicht nach rejected, siehe unten).
-rejected hat je Eintrag "<version>@<sha256 der Signatur>": eine neu signierte Fassung derselben Version (anderes
-Zertifikat, neue Signatur) wird wieder versucht (Updates-Spec Abschnitt 4). rejected gilt nur im Kontext
+rejected hat je Eintrag "<version>@<sha256 ueber Fingerabdruck des Release-Zertifikats + manifest_sha256>": eine neu
+signierte Fassung derselben Version (anderes Zertifikat) oder ein anderes Manifest wird wieder versucht (Updates-Spec
+Abschnitt 4); anderer Leerraum im Signaturtext oder die zweite ECDSA-Form (s -> n - s) ergeben keine neue Kennung. rejected gilt nur im Kontext
 rejected_context (Version des Updaters und Kennung des Schluesselbunds aus release-roots.pem, kette.roots_identity,
 oder "placeholder"): aendert sich eines von beiden, wird rejected geleert (ein neuer Updater oder der echte
 Schluesselbund darf es neu versuchen).
@@ -628,11 +629,15 @@ def _roots_identity(roots_text: str) -> str:
         return "placeholder" if kette.PLACEHOLDER_MARKER in roots_text else "ungueltig"
 
 
-def _rejected_key(version: str, signatur: object) -> str:
-    """Eintrag in `rejected`: "<version>@<sha256 (hex) der Signatur>". Eine Signatur, die kein Text ist (oder fehlt),
-    zaehlt als leerer Text."""
-    data = signatur.encode() if isinstance(signatur, str) else signatur if isinstance(signatur, bytes) else b""
-    return f"{version}@{hashlib.sha256(data).hexdigest()}"
+def _rejected_key(version: str, manifest_sha256: object, signatur: object) -> str:
+    """Eintrag in `rejected`: "<version>@<sha256 (hex) ueber Fingerabdruck des Release-Zertifikats + manifest_sha256>".
+    Die Kennung haengt an Zertifikat und Manifest, nicht an den Bytes der Signatur: anderer Leerraum im Signaturtext oder
+    die zweite ECDSA-Form (s -> n - s) ergeben keine neue Kennung; eine Neusignatur mit anderem Zertifikat oder ein
+    anderes Manifest schon. Fehlt eines von beiden oder ist es kein Text, zaehlt es als leer."""
+    text = signatur.decode(errors="replace") if isinstance(signatur, bytes) else signatur
+    abdruck = kette.zertifikat_abdruck(text) if isinstance(text, str) else ""
+    sha = manifest_sha256.lower() if isinstance(manifest_sha256, str) else ""
+    return f"{version}@{hashlib.sha256((abdruck + sha).encode()).hexdigest()}"
 
 
 def _hoehere_untergrenze(bisher: str | None, neu: object) -> str | None:
@@ -762,7 +767,9 @@ class Updater:
             return "vorlaeufig"
         version = desired.get("version")
         signatur = desired.get("signature")
-        if not isinstance(version, str) or version == state.current or _rejected_key(version, signatur) in state.rejected:
+        manifest_sha = desired.get("manifest_sha256")
+        if (not isinstance(version, str) or version == state.current
+                or _rejected_key(version, manifest_sha, signatur) in state.rejected):
             return "aktuell"
         if not any(desired.get(key) for key in OFFER_KEYS):  # nur eine Version, kein Bundle angeboten
             return "aktuell"
@@ -779,7 +786,7 @@ class Updater:
             return WARTET_AUF_ZEIT
         if _older_or_equal(version, state.current):
             logger.error("Soll-Version %s ist nicht neuer als %s, abgelehnt (Downgrade-Schutz)", version, state.current)
-            self._reject(state, version, VERSION_ZU_ALT, signatur)
+            self._reject(state, version, VERSION_ZU_ALT, manifest_sha, signatur)
             return "abgelehnt"
         try:
             paket = self._download(desired, version, jetzt, untergrenze)
@@ -796,7 +803,7 @@ class Updater:
             return "vorlaeufig"
         except _Refused as refused:
             logger.error("Bundle %s abgelehnt: %s", version, refused)
-            self._reject(state, version, refused.reason, signatur)
+            self._reject(state, version, refused.reason, manifest_sha, signatur)
             return "abgelehnt"
         zertifikat = paket.zertifikat
         self._store.install(version, paket.files)  # erst nach allen Pruefungen, atomar
@@ -975,17 +982,24 @@ class Updater:
             state.pending_reports = state.pending_reports[sent:]
             state.save(self._state_path)
 
-    def _installed_signature(self, version: str) -> bytes | None:
-        """Die Signatur, mit der das Bundle `version` installiert wurde (None, wenn die Datei fehlt)."""
+    def _installed_angebot(self, version: str) -> tuple[str | None, bytes | None]:
+        """SHA-256 des Manifests und Signatur, mit denen das Bundle `version` installiert wurde (je None, wenn die Datei
+        fehlt)."""
+        ordner = self._store.dir(version)
         try:
-            return (self._store.dir(version) / bundles.SIGNATURE_NAME).read_bytes()
+            manifest = hashlib.sha256((ordner / bundles.MANIFEST_NAME).read_bytes()).hexdigest()
         except OSError:
-            return None
+            manifest = None
+        try:
+            signatur = (ordner / bundles.SIGNATURE_NAME).read_bytes()
+        except OSError:
+            signatur = None
+        return manifest, signatur
 
-    def _reject(self, state: State, version: str, reason: str, signatur: object) -> None:
-        """Version samt Signatur ablehnen und melden: nur dieses Angebot ist abgelehnt, eine neu signierte Fassung
-        derselben Version wird wieder versucht."""
-        state.rejected = (state.rejected + [_rejected_key(version, signatur)])[-MAX_REJECTED:]
+    def _reject(self, state: State, version: str, reason: str, manifest_sha256: object, signatur: object) -> None:
+        """Version samt Zertifikat und Manifest ablehnen und melden: nur dieses Angebot ist abgelehnt, eine mit einem
+        anderen Zertifikat neu signierte Fassung oder ein anderes Manifest derselben Version wird wieder versucht."""
+        state.rejected = (state.rejected + [_rejected_key(version, manifest_sha256, signatur)])[-MAX_REJECTED:]
         self._queue(state, version, "rollback", reason)
         state.save(self._state_path)
         self._flush(state)
@@ -1030,7 +1044,7 @@ class Updater:
         state.current, state.in_progress = previous, None
         logger.error("Update auf %s zurueckgerollt (%s)", version, reason)
         if reject:
-            self._reject(state, version, reason, self._installed_signature(version))
+            self._reject(state, version, reason, *self._installed_angebot(version))
         else:
             self._queue(state, version, "rollback", reason)
             state.save(self._state_path)

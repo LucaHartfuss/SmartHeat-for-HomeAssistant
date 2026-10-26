@@ -1,7 +1,8 @@
 """Lieferkette des Gateway-Releases: Release-Werkzeug nur aus Hash-Lock-Dateien; die CI prueft nur (volle CI, Probelauf mit
-Wegwerf-Kette, Tag-Signatur, Gate, Fast-Forward von main hinter `environment: release`), baut und signiert nichts fuer
-ein Release: das tut der Betreiber am eigenen Rechner (release_lokal.sh). Kein Signier-Secret, kein `packages: write`,
-kein Werks-Image in der CI (FR-26)."""
+Wegwerf-Kette, Gate mit Leserecht, Tag-Signatur und Fast-Forward von main hinter `environment: release`), baut und
+signiert nichts fuer ein Release: das tut der Betreiber am eigenen Rechner (release_lokal.sh). Kein Signier-Secret, kein
+`packages: write`, kein Werks-Image in der CI (FR-26). Root-Code (siblings.sh, Gate) laeuft nur im Job `gate` ohne
+Schreibrecht (I-1)."""
 import re
 from pathlib import Path
 
@@ -49,8 +50,8 @@ def test_every_pip_install_uses_a_hash_lock():
                     seen[name] = line.strip()
                     assert "--require-hashes" in line, (name, line)
     assert seen["probe"].endswith("-r gateway/release/requirements.txt")
-    assert seen["main"].endswith('-r "$DEV_ROOT/tools/release/requirements.txt"') and "--no-deps" in seen["main"]
-    assert set(seen) == {"probe", "main"}
+    assert seen["gate"].endswith('-r "$DEV_ROOT/tools/release/requirements.txt"') and "--no-deps" in seen["gate"]
+    assert set(seen) == {"probe", "gate"}  # der Job mit Schreibrecht installiert nichts
 
 
 def test_kein_job_hat_ein_secret_ausser_github_token():
@@ -61,10 +62,11 @@ def test_kein_job_hat_ein_secret_ausser_github_token():
     jobs = _jobs()
     assert jobs["ci"]["secrets"] == "inherit"  # die volle CI braucht das Token der Geschwister-Repos
     assert "secrets." not in yaml.safe_dump(jobs["probe"])  # der Probelauf fuehrt Repo-Code aus: keine Secrets
-    for name in ("probe", "main"):
+    assert "secrets." not in yaml.safe_dump(jobs["main"])  # der Job mit Schreibrecht hat kein Secret (I-1)
+    for name in ("probe", "gate", "main"):
         for step in jobs[name]["steps"]:
             if "secrets." in yaml.safe_dump(step):
-                assert name == "main" and "siblings.sh" in step["run"] and "pip" not in step["run"]
+                assert name == "gate" and "siblings.sh" in step["run"] and "pip" not in step["run"]
                 assert step["env"] == {"CROSS_REPO_TOKEN": "${{ secrets.CROSS_REPO_TOKEN }}"}
 
 
@@ -77,12 +79,14 @@ def test_kein_job_hat_packages_write():
     assert schreibend == ["main"]
 
 
-def test_main_braucht_ci_und_probe_und_environment():
+def test_main_braucht_gate_und_probe_und_environment():
     jobs = _jobs()
-    assert set(jobs) == {"ci", "probe", "main"}
+    assert set(jobs) == {"ci", "probe", "gate", "main"}
     assert jobs["probe"]["needs"] == "ci" and "environment" not in jobs["probe"]
     assert jobs["probe"]["permissions"] == {"contents": "read"}
-    assert jobs["main"]["needs"] == ["ci", "probe"]
+    assert jobs["gate"]["needs"] == "ci" and "environment" not in jobs["gate"]
+    assert jobs["gate"]["permissions"] == {"contents": "read"}
+    assert jobs["main"]["needs"] == ["gate", "probe"]
     assert jobs["main"]["environment"] == "release"
     assert jobs["main"]["permissions"] == {"contents": "write"}
     assert "if" not in jobs["main"]  # auch im -dryrun: Tag-Pruefung und Gate laufen, nur Schreiben entfaellt
@@ -109,15 +113,24 @@ def test_probe_runs_for_dryrun_and_real_tags_alike():
     assert len(version) == 1 and "-dryrun" in version[0]["run"]
 
 
+def test_gate_steps_in_order():
+    gate = _jobs()["gate"]
+    order = [_index(gate, m) for m in ("tag_pruefen.sh", "siblings.sh", "pip install", "release_gate.py")]
+    assert order == sorted(order) and len(set(order)) == 4
+    assert gate["steps"][_index(gate, "release_gate.py")]["id"] == "gate"
+    assert gate["outputs"] == {"dryrun": "${{ steps.gate.outputs.dryrun }}", "title": "${{ steps.gate.outputs.title }}"}
+
+
 def test_main_steps_in_order_and_writes_only_for_real_tags():
     main = _jobs()["main"]
-    order = [_index(main, m) for m in ("tag_pruefen.sh", "siblings.sh", "pip install", "release_gate.py", "git push",
-                                      "gh release create")]
-    assert order == sorted(order) and len(set(order)) == 6
+    order = [_index(main, m) for m in ("tag_pruefen.sh", "Gate meldet", "git push", "gh release create")]
+    assert order == sorted(order) and len(set(order)) == 4
     for merkmal in ("git push", "gh release create"):
         assert main["steps"][_index(main, merkmal)]["if"] == "steps.gate.outputs.dryrun == 'false'"
-    assert 'git push origin "$GITHUB_SHA:refs/heads/main"' in _runs(main)[_index_run(main, "git push")]
-    assert main["steps"][_index(main, "release_gate.py")]["id"] == "gate"
+    assert 'git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA:refs/heads/main"' in (
+        _runs(main)[_index_run(main, "git push")])
+    assert main["steps"][_index(main, "Gate meldet")]["id"] == "gate"
+    assert "siblings.sh" not in yaml.safe_dump(main) and "DEV_ROOT" not in yaml.safe_dump(main)
 
 
 def _index_run(job: dict, merkmal: str) -> int:
@@ -130,7 +143,10 @@ def test_release_note_hangs_no_assets_on_the_release():
     assert "--notes-file" in step["run"] and "--verify-tag" in step["run"]
     assert "manifest" not in step["run"] and "upload" not in step["run"]
     assert "bundle" not in step["run"] and ".img" not in step["run"]
-    assert not any("download-artifact" in s.get("uses", "") or "upload-artifact" in s.get("uses", "") for s in main["steps"])
+    # Einziges Artefakt: die Release-Notiz des Gates (reine Daten); der Job laedt nichts hoch.
+    assert not any("upload-artifact" in s.get("uses", "") for s in main["steps"])
+    herunter = [s for s in main["steps"] if "download-artifact" in s.get("uses", "")]
+    assert [s["with"]["name"] for s in herunter] == ["release-notiz"]
 
 
 def test_kein_werks_image_in_der_ci():

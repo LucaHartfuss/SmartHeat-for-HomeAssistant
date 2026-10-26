@@ -1,4 +1,5 @@
 import ast
+import base64
 import dataclasses
 import errno
 import hashlib
@@ -19,6 +20,9 @@ from pathlib import Path
 from unittest.mock import create_autospec
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature, encode_dss_signature
 from kette_helper import release, roots_pem, signiere
 from kette_helper import root as neue_root
 
@@ -137,12 +141,20 @@ class World:
         return signiere(key or self.release_key, cert or self.release_cert, data)
 
     def abgelehnt(self, version="0.3.0"):
-        """Eintrag in `rejected` fuer das jetzige Angebot: "<version>@<sha256 der Signatur>"."""
-        return f"{version}@{hashlib.sha256(self.api.desired_answer['signature'].encode()).hexdigest()}"
+        """Eintrag in `rejected` fuer das jetzige Angebot: "<version>@<sha256 (Fingerabdruck des Release-Zertifikats
+        + manifest_sha256)>", unabhaengig vom Text und von den Signaturbytes."""
+        angebot = self.api.desired_answer
+        try:  # eine unlesbare Signatur traegt kein Zertifikat: leerer Fingerabdruck
+            pem = json.loads(angebot["signature"])["zertifikat"].encode()
+            abdruck = x509.load_pem_x509_certificate(pem).fingerprint(hashes.SHA256()).hex()
+        except ValueError:
+            abdruck = ""
+        return f"{version}@{hashlib.sha256((abdruck + angebot['manifest_sha256']).encode()).hexdigest()}"
 
     def installiere_angebot(self, version="0.3.0"):
         """Legt das angebotene Bundle samt Signatur im Speicher ab (wie ein Update, das vor `up` stand)."""
         self.store.install(version, {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ,
+                                     bundles.MANIFEST_NAME: self.served[BASE + "manifest.json"],
                                      bundles.SIGNATURE_NAME: self.api.desired_answer["signature"].encode()})
 
     def neues_zertifikat(self, *, von, bis):
@@ -886,6 +898,48 @@ def test_neu_signierte_fassung_derselben_version_wird_wieder_versucht(tmp_path):
     assert world.abgelehnt() != ersteres
     assert world.updater.run_once() == "aktualisiert"
     assert world.state().current == "0.3.0" and world.api.results[-1] == ("0.3.0", "ok", "")
+
+
+P256_ORDNUNG = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+
+
+def _umformatiert(signatur_text: str) -> str:
+    return json.dumps(json.loads(signatur_text), indent=2, sort_keys=True) + "\n"
+
+
+def _s_zu_n_minus_s(signatur_text: str) -> str:
+    """Dieselbe ECDSA-Signatur in der zweiten Form (r, n - s): gleiche Aussage, andere Bytes."""
+    dokument = json.loads(signatur_text)
+    r, s = decode_dss_signature(base64.b64decode(dokument["signatur"]))
+    dokument["signatur"] = base64.b64encode(encode_dss_signature(r, P256_ORDNUNG - s)).decode()
+    return json.dumps(dokument)
+
+
+@pytest.mark.parametrize("abwandlung", [_umformatiert, _s_zu_n_minus_s])
+def test_abgelehntes_angebot_bleibt_abgelehnt_wenn_nur_die_signaturbytes_anders_sind(tmp_path, abwandlung):
+    """M-1: die Kennung haengt an Zertifikat und Manifest, nicht am Text der Signatur: anderer Leerraum im JSON oder
+    s -> n - s ergibt keine neue Kennung, der Server kann die Ablehnung so nicht umgehen."""
+    world = World(tmp_path)
+    world.now = ZERTIFIKAT_BIS + timedelta(days=1)
+    assert world.updater.run_once() == "abgelehnt"
+    ersteres = world.abgelehnt()
+    angebot = world.api.desired_answer
+    angebot["signature"] = abwandlung(angebot["signature"])
+    assert world.abgelehnt() == ersteres
+    fetched = len(world.fetched)
+    assert world.updater.run_once() == "aktuell"
+    assert world.state().rejected == [ersteres] and len(world.api.results) == 1 and len(world.fetched) == fetched
+
+
+def test_dasselbe_zertifikat_mit_anderem_manifest_ist_ein_neues_angebot(tmp_path):
+    world = World(tmp_path)
+    world.now = ZERTIFIKAT_BIS + timedelta(days=1)
+    assert world.updater.run_once() == "abgelehnt"
+    ersteres = world.abgelehnt()
+    world.api.desired_answer["manifest_sha256"] = "e" * 64
+    assert world.abgelehnt() != ersteres
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.state().rejected == [ersteres, world.abgelehnt()]
 
 
 def test_eine_neu_signierte_fassung_wird_auch_nach_einem_rueckweg_wieder_versucht(tmp_path):
@@ -2234,7 +2288,7 @@ def test_main_keeps_the_state_and_the_data_under_shg_root(tmp_path, monkeypatch,
     updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == "abgelehnt\n"
     assert json.loads((tmp_path / "updater" / "state.json").read_text())["rejected"] == [
-        "0.3.0@" + hashlib.sha256(b"x").hexdigest()]
+        "0.3.0@" + hashlib.sha256(b"a" * 64).hexdigest()]  # kein Zertifikat im Text: nur das Manifest zaehlt
     assert json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"][0]["version"] == "0.3.0"
 
 

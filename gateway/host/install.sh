@@ -191,8 +191,21 @@ first_bundle() {
     put "$ROOT/bundles/$version/manifest.json.sig" 0644 0:0 <"$BUNDLE/manifest.json.sig"
   fi
   if [ ! -f "$ROOT/updater/state.json" ]; then
-    put "$ROOT/updater/state.json" 0644 0:0 < <(printf \
-      '{"current": "%s", "in_progress": null, "previous": null, "rejected": []}' "$version")
+    # Untergrenze fuer Release-Zertifikate (Widerruf, FR-25): notBefore des Zertifikats im mitgelieferten Bundle. Ohne sie
+    # nahme der erste Update auch ein aelteres, vor dem Erstbundle ausgestelltes (gestohlenes) Zertifikat an.
+    local grenze=""
+    if [ -f "$BUNDLE/manifest.json.sig" ]; then
+      grenze="$(python3 -c 'import json, sys
+from cryptography import x509
+text = json.load(open(sys.argv[1]))["zertifikat"]
+print(x509.load_pem_x509_certificate(text.encode()).not_valid_before_utc.isoformat())' "$BUNDLE/manifest.json.sig")" \
+        || { echo "FEHLER: $BUNDLE/manifest.json.sig traegt kein lesbares Zertifikat (notBefore fuer die Untergrenze)" >&2; exit 1; }
+    fi
+    put "$ROOT/updater/state.json" 0644 0:0 < <(python3 -c 'import json, sys
+state = {"current": sys.argv[1], "in_progress": None, "previous": None, "rejected": []}
+if sys.argv[2]:
+    state["zertifikat_untergrenze"] = sys.argv[2]
+print(json.dumps(state), end="")' "$version" "$grenze")
   fi
 }
 

@@ -1,16 +1,20 @@
 name: Release Gateway
 # Tag gateway-vX.Y.Z. Das Gateway-Release wird am Betreiberrechner gebaut, signiert und per scp in die eigene Ablage
 # geladen (gateway/release/release_lokal.sh, Runbook Gateway-Release); die CI baut und signiert nichts fuer ein Release
-# und hat kein Signier-Secret. Sie prueft nur:
+# und hat kein Signier-Secret. Sie prueft nur; Rechte und Code sind getrennt (Abschlussreview AP-04, I-1):
 #   ci:    volle Stufe (Docker, Real-HA-Container-Tests).
 #   probe: Probelauf mit release_lokal.sh --probe und einer Wegwerf-Kette (ca.py test-kette): Image bauen, Bundle bauen
 #          und per Neubau pruefen, signieren, Signatur pruefen; kein Upload. Fuehrt Repo-Code aus, daher nur Leserecht,
 #          keine Environment, keine Secrets. Laeuft bei echten und bei -dryrun-Tags gleich.
-#   main:  nach ci und probe, hinter der Freigabe der Environment "release" (Pflicht-Reviewer, Runbook H-1): Signatur des
-#          Tags pruefen (zweite Linie neben dem Tag-Ruleset), Gate (tools/release_gate.py), main per Fast-Forward
-#          nachziehen, Release-Notiz ohne Dateien anlegen. Im -dryrun nur Tag-Pruefung und Gate, main bleibt.
+#   gate:  Leserecht, keine Environment. Prueft die Freigabe (Tag-Signatur, tools/release_gate.py) und fuehrt dafuer Code
+#          aus dem privaten Root-Repo aus (siblings.sh, CROSS_REPO_TOKEN). Ohne Schreibtoken. Ausgaben: dryrun, title und
+#          die Release-Notiz als Artefakt (reine Daten).
+#   main:  nach gate und probe, hinter der Freigabe der Environment "release" (Pflicht-Reviewer, Runbook H-1); contents:
+#          write, kein Root-Code, kein CROSS_REPO_TOKEN. Prueft die Signatur des Tags mit dem eigenen Skript, die Ausgaben
+#          des Gates per Regex, rueckt main per Fast-Forward vor und legt die Release-Notiz ohne Dateien an. Im -dryrun
+#          bleibt main. Der Checkout behaelt den Token nicht (persist-credentials: false).
 # Ein Werks-Image gibt es in der CI nicht mehr (Nutzer-Entscheidung FR-26: der Bau kommt lokal, AP-05a).
-# Python-Pakete nur aus Hash-Lock-Dateien (--require-hashes); der Job mit Schreibrecht installiert nur das Lock des Gates.
+# Python-Pakete nur aus Hash-Lock-Dateien (--require-hashes).
 on:
   push:
     tags: ["gateway-v*"]
@@ -61,22 +65,24 @@ jobs:
           bash gateway/release/release_lokal.sh "$VERSION" --probe --schluessel "$RUNNER_TEMP/kette/release.key" \
             --zertifikat "$RUNNER_TEMP/kette/release.crt" --roots "$RUNNER_TEMP/kette/root.crt" \
             --aus "$RUNNER_TEMP/out"
-  main:
-    needs: [ci, probe]
-    # Schreibt main per Fast-Forward und legt die Release-Notiz an. Das Environment `release` haelt den Lauf bis zur
-    # Freigabe des Reviewers an (Runbook H-1). Dieser Job baut und signiert nichts.
-    environment: release
+  gate:
+    needs: ci
+    # Kein "environment:" und kein Schreibrecht: dieser Job fuehrt Root-Code aus (siblings.sh, release_gate.py).
     permissions:
-      contents: write
+      contents: read
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      dryrun: ${{ steps.gate.outputs.dryrun }}
+      title: ${{ steps.gate.outputs.title }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+          persist-credentials: false
       # Zweite Linie neben dem Tag-Ruleset (Pflicht-Signatur): SSH-Signatur des Tags gegen .github/allowed_signers aus
-      # origin/main. Vor allem anderen, auch vor dem Token-Schritt; die Pruefung kommt bewusst aus diesem Repo, nicht aus
-      # dem Root-Repo (siblings.sh klont Root an einem Branch, der wie der Tag heisst).
+      # origin/main. Vor allem anderen; die Pruefung kommt bewusst aus diesem Repo, nicht aus dem Root-Repo (siblings.sh
+      # klont Root an einem Branch, der wie der Tag heisst).
       - name: Signatur des Tags pruefen
         run: bash scripts/ci/tag_pruefen.sh "$GITHUB_REF_NAME" "$GITHUB_SHA"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -86,16 +92,65 @@ jobs:
         env:
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
         run: bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" "$SELF" "$GITHUB_WORKSPACE" "$GITHUB_REF_NAME"
-      # release_gate.py braucht nur PyYAML; dieser Job hat Schreibrecht, daher nur mit Hashes.
+      # release_gate.py braucht nur PyYAML, installiert aus dem Hash-Lock.
       - run: pip install --require-hashes --no-deps -r "$DEV_ROOT/tools/release/requirements.txt"
       - name: Freigabe pruefen
         id: gate
         run: >-
           python "$DEV_ROOT/tools/release_gate.py" --kind "$KIND" --repo "$GITHUB_WORKSPACE"
           --tag "$GITHUB_REF_NAME" --sha "$GITHUB_SHA" --main-ref origin/main --notes-out "$RUNNER_TEMP/notes.md"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-notiz
+          path: ${{ runner.temp }}/notes.md
+          if-no-files-found: error
+          retention-days: 1
+  main:
+    needs: [gate, probe]
+    # Schreibt main per Fast-Forward und legt die Release-Notiz an. Das Environment `release` haelt den Lauf bis zur
+    # Freigabe des Reviewers an (Runbook H-1). Kein Root-Code, kein CROSS_REPO_TOKEN: das Gate lief im Job `gate`.
+    environment: release
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Zweite Linie neben dem Tag-Ruleset (Pflicht-Signatur): SSH-Signatur des Tags gegen .github/allowed_signers aus
+      # origin/main. Vor allem anderen, auch vor dem Token-Schritt; das Skript kommt aus diesem Repo.
+      - name: Signatur des Tags pruefen
+        run: bash scripts/ci/tag_pruefen.sh "$GITHUB_REF_NAME" "$GITHUB_SHA"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-notiz
+          path: ${{ runner.temp }}/ergebnis
+      # Die Ausgaben des Gates sind Daten aus Root-Code: nur bekannte Formen, dryrun muss zum Tag passen (ein
+      # -dryrun-Tag schreibt nie, auch wenn das Gate etwas anderes meldet).
+      - name: Ausgaben des Gates pruefen
+        id: gate
+        env:
+          DRYRUN: ${{ needs.gate.outputs.dryrun }}
+          TITLE: ${{ needs.gate.outputs.title }}
+        run: |
+          [[ $DRYRUN =~ ^(true|false)$ ]] || { echo "::error::Gate meldet dryrun=$DRYRUN"; exit 1; }
+          form='^[A-Za-z0-9._ -]{1,80}$'
+          [[ $TITLE =~ $form ]] || { echo "::error::Gate meldet einen unzulaessigen Titel"; exit 1; }
+          erwartet=false
+          if [[ $GITHUB_REF_NAME == *-dryrun ]]; then erwartet=true; fi
+          [ "$DRYRUN" = "$erwartet" ] || { echo "::error::Gate meldet dryrun=$DRYRUN, der Tag $GITHUB_REF_NAME verlangt $erwartet"; exit 1; }
+          [ -f "$RUNNER_TEMP/ergebnis/notes.md" ] && [ ! -L "$RUNNER_TEMP/ergebnis/notes.md" ] \
+            || { echo "::error::Release-Notiz fehlt"; exit 1; }
+          echo "dryrun=$DRYRUN" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+      # Der Token steht nur in den beiden folgenden Schritten.
       - name: main per Fast-Forward nachziehen
         if: steps.gate.outputs.dryrun == 'false'
-        run: git push origin "$GITHUB_SHA:refs/heads/main"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA:refs/heads/main"
       - name: GitHub-Release anlegen (Notiz ohne Dateien)
         if: steps.gate.outputs.dryrun == 'false'
         env:
@@ -105,7 +160,7 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME existiert bereits"; exit 0
           fi
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" --notes-file "$RUNNER_TEMP/ergebnis/notes.md"
       - name: Probelauf-Hinweis
         if: steps.gate.outputs.dryrun == 'true'
         run: echo "::notice::Probelauf gruen - main unveraendert, kein Release. Tag jetzt loeschen (Runbook 'Probelauf')."

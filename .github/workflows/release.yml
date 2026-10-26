@@ -1,4 +1,16 @@
 name: Release
+# Tag heizungsbruecke-vX.Y.Z. Rechte und Code sind getrennt (Abschlussreview AP-04, I-1):
+#   ci:      volle Stufe (Docker, Real-HA-Container-Tests).
+#   gate:    Leserecht, keine Environment. Prueft die Freigabe (Tag-Signatur, tools/release_gate.py) und fuehrt dafuer Code
+#            aus dem privaten Root-Repo aus (siblings.sh, CROSS_REPO_TOKEN). Ohne Schreibtoken: was dort schiefgeht, erreicht
+#            weder main noch GHCR. Ausgaben: dryrun, title und die Release-Notiz als Artefakt (reine Daten).
+#   image:   hinter der Freigabe der Environment `release` (Runbook H-1); packages: write, kein Root-Code, kein CROSS_REPO_TOKEN.
+#            Baut das Add-on je Architektur, pusht es nach GHCR (nie auf ein vorhandenes Tag) und erzeugt das CycloneDX-SBOM
+#            des gepushten Digests (gepinnter syft-Container). Im Probelauf (-dryrun) wird nur gebaut.
+#   release: hinter der Freigabe der Environment `release`; contents: write, kein Root-Code, kein CROSS_REPO_TOKEN. Prueft
+#            die Signatur des Tags mit dem eigenen Skript, die Ausgaben des Gates per Regex, rueckt main per Fast-Forward vor
+#            und legt das GitHub-Release mit Notiz und SBOM an. Der Checkout behaelt den Token nicht (persist-credentials:
+#            false); er steht nur in den Schritten, die schreiben.
 on:
   push:
     tags: ["heizungsbruecke-v*"]
@@ -9,6 +21,8 @@ env:
   KIND: addon
   SELF: SmartHeat-for-HomeAssistant
   REGISTRY: ghcr.io/lucahartfuss
+  # syft fuer das CycloneDX-SBOM: Digest gepinnt, derselbe wie in gateway/release/release_lokal.sh (ein Test haelt beide gleich).
+  SYFT_IMAGE: anchore/syft:v1.55.0@sha256:4cc92b64ca74ffca4c94d4c8fcc01f217731375300be14d0b6eeb2e82eaa110a
 jobs:
   ci:
     # Volle Stufe (Docker, Real-HA-Container-Tests); der Push-Lauf faehrt nur die Standardstufe.
@@ -18,11 +32,52 @@ jobs:
     secrets: inherit
     permissions:
       contents: read
+  gate:
+    needs: ci
+    # Kein "environment:" und kein Schreibrecht: dieser Job fuehrt Root-Code aus (siblings.sh, release_gate.py).
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      dryrun: ${{ steps.gate.outputs.dryrun }}
+      title: ${{ steps.gate.outputs.title }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Zweite Linie neben dem Tag-Ruleset (Pflicht-Signatur): SSH-Signatur des Tags gegen .github/allowed_signers aus
+      # origin/main. Vor allem anderen; die Pruefung kommt bewusst aus diesem Repo, nicht aus dem Root-Repo (siblings.sh
+      # klont Root an einem Branch, der wie der Tag heisst).
+      - name: Signatur des Tags pruefen
+        run: bash scripts/ci/tag_pruefen.sh "$GITHUB_REF_NAME" "$GITHUB_SHA"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: tools/ aus dem Root-Repo holen
+        env:
+          CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+        run: bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" "$SELF" "$GITHUB_WORKSPACE" "$GITHUB_REF_NAME"
+      # release_gate.py braucht nur PyYAML, installiert aus dem Hash-Lock.
+      - run: pip install --require-hashes --no-deps -r "$DEV_ROOT/tools/release/requirements.txt"
+      - name: Freigabe pruefen
+        id: gate
+        run: >-
+          python "$DEV_ROOT/tools/release_gate.py" --kind "$KIND" --repo "$GITHUB_WORKSPACE"
+          --tag "$GITHUB_REF_NAME" --sha "$GITHUB_SHA" --main-ref origin/main --notes-out "$RUNNER_TEMP/notes.md"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-notiz
+          path: ${{ runner.temp }}/notes.md
+          if-no-files-found: error
+          retention-days: 1
   image:
     # Baut das Add-on als fertiges Image je Architektur und pusht es nach GHCR (ghcr.io/lucahartfuss/<arch>-
     # heizungsbruecke:<version>, config.yaml `image:`); der Supervisor zieht es, statt selbst zu bauen. Nur dieser Job
-    # hat `packages: write`; ohne CROSS_REPO_TOKEN, ohne Root-Code, ohne pip. Im Probelauf (-dryrun) wird nur gebaut.
-    needs: ci
+    # hat `packages: write`; ohne CROSS_REPO_TOKEN, ohne Root-Code, ohne Python-Pakete. Die GHCR-Pakete muessen oeffentlich
+    # sein (H-9): der Supervisor und das SBOM-Werkzeug ziehen anonym.
+    needs: gate
     environment: release
     permissions:
       contents: read
@@ -35,8 +90,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # Zweite Linie neben dem Tag-Ruleset (Pflicht-Signatur): SSH-Signatur des Tags gegen .github/allowed_signers aus
-      # origin/main. Vor allem anderen, auch vor dem Token-Schritt; die Pruefung kommt bewusst aus diesem Repo, nicht aus
-      # dem Root-Repo (siblings.sh klont Root an einem Branch, der wie der Tag heisst).
+      # origin/main. Vor allem anderen, auch vor dem Login bei ghcr.
       - name: Signatur des Tags pruefen
         run: bash scripts/ci/tag_pruefen.sh "$GITHUB_REF_NAME" "$GITHUB_SHA"
       - name: Version aus dem Tag und config.yaml
@@ -57,6 +111,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ACTOR: ${{ github.actor }}
         run: docker login ghcr.io --username "$ACTOR" --password-stdin <<< "$GH_TOKEN"
+      # GHCR-Tags sind veraenderlich (SG-23): ein Push auf ein vorhandenes Tag wuerde ein Image ersetzen, das Geraete schon
+      # gezogen haben. Beide Architekturen vorab, damit nicht eine gepusht und die andere abgelehnt ist.
+      - name: Kein vorhandenes GHCR-Tag ueberschreiben
+        if: steps.ver.outputs.dryrun == 'false'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          for arch in aarch64 amd64; do
+            if docker buildx imagetools inspect "$REGISTRY/$arch-heizungsbruecke:$VERSION" >/dev/null 2>&1; then
+              echo "::error::$REGISTRY/$arch-heizungsbruecke:$VERSION existiert schon in GHCR, Tags werden nie ueberschrieben (neue Version vergeben)"
+              exit 1
+            fi
+          done
       - name: Image bauen und pushen (im Probelauf nur bauen)
         env:
           VERSION: ${{ steps.ver.outputs.version }}
@@ -64,16 +131,40 @@ jobs:
         run: |
           push=(--push)
           if [ "$DRYRUN" = true ]; then push=(); fi
+          mkdir -p "$RUNNER_TEMP/meta"
           for paar in aarch64:linux/arm64 amd64:linux/amd64; do
             arch="${paar%%:*}"
             docker buildx build --platform "${paar#*:}" --sbom=true "${push[@]}" \
+              --metadata-file "$RUNNER_TEMP/meta/$arch.json" \
               --build-arg BUILD_VERSION="$VERSION" --build-arg BUILD_ARCH="$arch" \
               --tag "$REGISTRY/$arch-heizungsbruecke:$VERSION" heizungsbruecke
           done
+      # CycloneDX-SBOM (SG-16) des gepushten Digests je Architektur; --sbom=true oben haengt SPDX als Attestierung an.
+      - name: CycloneDX-SBOM der gepushten Images
+        if: steps.ver.outputs.dryrun == 'false'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/sbom"
+          for paar in aarch64:linux/arm64 amd64:linux/amd64; do
+            arch="${paar%%:*}"
+            digest="$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/meta/$arch.json")"
+            [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::Kein Digest fuer $arch im Bauergebnis"; exit 1; }
+            docker run --rm -e SYFT_CHECK_FOR_APP_UPDATE=false "$SYFT_IMAGE" scan \
+              "registry:$REGISTRY/$arch-heizungsbruecke@$digest" --platform "${paar#*:}" -o cyclonedx-json \
+              > "$RUNNER_TEMP/sbom/heizungsbruecke-$VERSION-$arch.cdx.json"
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.ver.outputs.dryrun == 'false'
+        with:
+          name: sbom
+          path: ${{ runner.temp }}/sbom
+          if-no-files-found: error
+          retention-days: 1
   release:
-    needs: image
+    needs: [gate, image]
     # Schreibt main per Fast-Forward und legt das GitHub-Release an. Das Environment `release` haelt den Lauf bis zur
-    # Freigabe des Reviewers an (Runbook H-1).
+    # Freigabe des Reviewers an (Runbook H-1). Kein Root-Code, kein CROSS_REPO_TOKEN: das Gate lief im Job `gate`.
     environment: release
     permissions:
       contents: write
@@ -83,28 +174,50 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+          persist-credentials: false
       # Zweite Linie neben dem Tag-Ruleset (Pflicht-Signatur): SSH-Signatur des Tags gegen .github/allowed_signers aus
-      # origin/main. Vor allem anderen, auch vor dem Token-Schritt; die Pruefung kommt bewusst aus diesem Repo, nicht aus
-      # dem Root-Repo (siblings.sh klont Root an einem Branch, der wie der Tag heisst).
+      # origin/main. Vor allem anderen, auch vor dem Token-Schritt; das Skript kommt aus diesem Repo.
       - name: Signatur des Tags pruefen
         run: bash scripts/ci/tag_pruefen.sh "$GITHUB_REF_NAME" "$GITHUB_SHA"
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          python-version: "3.12"
-      - name: tools/ aus dem Root-Repo holen
-        env:
-          CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
-        run: bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" "$SELF" "$GITHUB_WORKSPACE" "$GITHUB_REF_NAME"
-      # release_gate.py braucht nur PyYAML; dieser Job hat Schreibrecht, daher nur mit Hashes.
-      - run: pip install --require-hashes --no-deps -r "$DEV_ROOT/tools/release/requirements.txt"
-      - name: Freigabe pruefen
+          name: release-notiz
+          path: ${{ runner.temp }}/ergebnis
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.gate.outputs.dryrun == 'false'
+        with:
+          name: sbom
+          path: ${{ runner.temp }}/ergebnis/sbom
+      # Die Ausgaben des Gates sind Daten aus Root-Code: nur bekannte Formen, dryrun muss zum Tag passen (ein
+      # -dryrun-Tag schreibt nie, auch wenn das Gate etwas anderes meldet).
+      - name: Ausgaben des Gates pruefen
         id: gate
-        run: >-
-          python "$DEV_ROOT/tools/release_gate.py" --kind "$KIND" --repo "$GITHUB_WORKSPACE"
-          --tag "$GITHUB_REF_NAME" --sha "$GITHUB_SHA" --main-ref origin/main --notes-out "$RUNNER_TEMP/notes.md"
+        env:
+          DRYRUN: ${{ needs.gate.outputs.dryrun }}
+          TITLE: ${{ needs.gate.outputs.title }}
+        run: |
+          [[ $DRYRUN =~ ^(true|false)$ ]] || { echo "::error::Gate meldet dryrun=$DRYRUN"; exit 1; }
+          form='^[A-Za-z0-9._ -]{1,80}$'
+          [[ $TITLE =~ $form ]] || { echo "::error::Gate meldet einen unzulaessigen Titel"; exit 1; }
+          erwartet=false
+          if [[ $GITHUB_REF_NAME == *-dryrun ]]; then erwartet=true; fi
+          [ "$DRYRUN" = "$erwartet" ] || { echo "::error::Gate meldet dryrun=$DRYRUN, der Tag $GITHUB_REF_NAME verlangt $erwartet"; exit 1; }
+          [ -f "$RUNNER_TEMP/ergebnis/notes.md" ] && [ ! -L "$RUNNER_TEMP/ergebnis/notes.md" ] \
+            || { echo "::error::Release-Notiz fehlt"; exit 1; }
+          if [ "$DRYRUN" = false ]; then
+            for arch in aarch64 amd64; do
+              datei="$RUNNER_TEMP/ergebnis/sbom/heizungsbruecke-${GITHUB_REF_NAME#heizungsbruecke-v}-$arch.cdx.json"
+              [ -f "$datei" ] && [ ! -L "$datei" ] || { echo "::error::SBOM fuer $arch fehlt"; exit 1; }
+            done
+          fi
+          echo "dryrun=$DRYRUN" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+      # Der Token steht nur in den beiden folgenden Schritten.
       - name: main per Fast-Forward nachziehen
         if: steps.gate.outputs.dryrun == 'false'
-        run: git push origin "$GITHUB_SHA:refs/heads/main"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA:refs/heads/main"
       - name: GitHub-Release anlegen
         if: steps.gate.outputs.dryrun == 'false'
         env:
@@ -114,11 +227,9 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME existiert bereits"; exit 0
           fi
-          if [ -s "$RUNNER_TEMP/notes.md" ]; then
-            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md"
-          else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" --generate-notes
-          fi
+          notiz="$RUNNER_TEMP/ergebnis/notes.md"
+          if [ -s "$notiz" ]; then text=(--notes-file "$notiz"); else text=(--generate-notes); fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" "${text[@]}" "$RUNNER_TEMP"/ergebnis/sbom/*.cdx.json
       - name: Probelauf-Hinweis
         if: steps.gate.outputs.dryrun == 'true'
         run: echo "::notice::Probelauf gruen - main unveraendert, kein Release. Tag jetzt loeschen (Runbook 'Probelauf')."

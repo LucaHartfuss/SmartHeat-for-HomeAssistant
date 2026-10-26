@@ -1,10 +1,12 @@
 """release_lokal.sh: Bau, Pruefung, Signatur und Upload am Betreiberrechner. `docker` (Image-Bau) und `scp` sind
 Attrappen im PATH; Git, build_bundle.py, verify_bundle.py und signieren.py laufen echt. Das Skript liegt in einem
 Wegwerf-Repo (`gateway` ist dort ein Symlink auf den Checkout), damit Tag und Arbeitsbaum echt geprueft werden, ohne dass
-der Checkout selbst angefasst wird. Tags tragen eine SSH-Signatur (git tag -s mit gpg.format=ssh)."""
+der Checkout selbst angefasst wird. Tags tragen eine SSH-Signatur (git tag -s mit gpg.format=ssh); die Schluesselliste
+kommt aus origin/main (ein Wegwerf-Repo `ablage`), nicht aus dem Checkout und nicht aus der Git-Konfiguration."""
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -28,9 +30,14 @@ from oci_helper import make_oci_archive
 logs = Path(os.environ["ATTRAPPE_LOGS"])
 with (logs / "docker.log").open("a") as protokoll:
     protokoll.write(json.dumps(sys.argv[1:]) + "\\n")
-if os.environ.get("ATTRAPPE_DOCKER_FEHLER"):
+if os.environ.get("ATTRAPPE_DOCKER_FEHLER") and sys.argv[1] != "run":
     sys.exit(1)
 args = sys.argv[1:]
+if args[0] == "run":  # syft: CycloneDX-SBOM auf stdout
+    if os.environ.get("ATTRAPPE_SYFT_FEHLER"):
+        sys.exit(1)
+    print(os.environ.get("ATTRAPPE_SBOM") or json.dumps(dict(bomFormat="CycloneDX", specVersion="1.7", components=[])))
+    sys.exit(0)
 ziel = [t.split("=", 1)[1] for t in args[args.index("--output") + 1].split(",") if t.startswith("dest=")][0]
 make_oci_archive(Path(ziel))
 '''
@@ -62,13 +69,22 @@ def werk(tmp_path):
     (repo / "gateway").symlink_to(GW)
     erlaubt = _ssh_schluessel(tmp_path / "erlaubt")
     fremd = _ssh_schluessel(tmp_path / "fremd")
+    zeile = 'test@example.org namespaces="git" {}'
+    # Die Konfiguration des Betreibers traut hier beiden Schluesseln; massgeblich ist nur origin/main (M-5).
     signers = tmp_path / "signers"
-    signers.write_text(f'test@example.org namespaces="git" {erlaubt.with_suffix(".pub").read_text()}')
+    signers.write_text(zeile.format(erlaubt.with_suffix(".pub").read_text()) + zeile.format(fremd.with_suffix(".pub").read_text()))
     _git(repo, "init", "-q", "-b", "main")
     for schluessel, wert in (("user.name", "Test"), ("user.email", "test@example.org"), ("commit.gpgsign", "false"),
                              ("tag.gpgsign", "false"), ("gpg.format", "ssh"), ("user.signingkey", str(erlaubt)),
                              ("gpg.ssh.allowedSignersFile", str(signers))):
         _git(repo, "config", schluessel, wert)
+    ablage = tmp_path / "ablage"  # der Remote origin: sein Zweig main haelt die Schluesselliste
+    (ablage / ".github").mkdir(parents=True)
+    (ablage / ".github" / "allowed_signers").write_text(zeile.format(erlaubt.with_suffix(".pub").read_text()))
+    _git(ablage, "init", "-q", "-b", "main")
+    _git(ablage, "add", ".github")
+    _git(ablage, "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-q", "-m", "Liste")
+    _git(repo, "remote", "add", "origin", str(ablage))
     _git(repo, "add", "gateway")
     _git(repo, "commit", "-q", "-m", "Stand")
     bin_dir, logs = tmp_path / "bin", tmp_path / "logs"
@@ -82,6 +98,7 @@ def werk(tmp_path):
     ca.test_kette_anlegen(kette)
     werk = type("Werk", (), {})()
     werk.repo, werk.bin, werk.logs, werk.kette, werk.erlaubt, werk.fremd = repo, bin_dir, logs, kette, erlaubt, fremd
+    werk.ablage = ablage
     werk.aus = tmp_path / "aus"
     return werk
 
@@ -129,7 +146,7 @@ def test_release_lokal_probe_baut_und_signiert_ohne_upload(werk):
     bundle = werk.aus / VERSION
     assert sorted(p.name for p in bundle.iterdir()) == DATEIEN
     assert _pruefen(werk, bundle) == 0
-    (build,) = _log(werk, "docker.log")
+    build, syft = _log(werk, "docker.log")
     assert build[:2] == ["buildx", "build"] and "--sbom=true" in build
     assert build[build.index("--platform") + 1] == "linux/arm64"
     assert build[build.index("-f") + 1] == str(werk.repo / "gateway" / "Dockerfile")
@@ -137,6 +154,48 @@ def test_release_lokal_probe_baut_und_signiert_ohne_upload(werk):
     epoche = _git(werk.repo, "log", "-1", "--format=%ct").strip()
     assert f"SOURCE_DATE_EPOCH={epoche}" in build
     assert build[-1] == str(werk.repo)  # Kontext: die Repo-Wurzel, wie bei docker build -f gateway/Dockerfile .
+    assert syft[0] == "run" and (werk.aus / f"gateway-{VERSION}.cdx.json").is_file()
+
+
+def test_cyclonedx_sbom_per_gepinntem_syft_neben_dem_bundle(werk):
+    """SG-16: CycloneDX aus dem OCI-Archiv per syft-Container (Digest gepinnt, ohne Netz, Archiv nur lesend); die Datei
+    liegt neben dem Bundle, nicht darin, und geht nicht in die Ablage."""
+    _signierter_tag(werk)
+    ergebnis = _lauf(werk, "--schluessel", str(werk.kette / "release.key"), "--zertifikat", str(werk.kette / "release.crt"),
+                     "--roots", str(werk.kette / "root.crt"), "--aus", str(werk.aus),
+                     umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    build, syft = _log(werk, "docker.log")
+    assert build[:2] == ["buildx", "build"]
+    assert syft[0] == "run" and "--rm" in syft and syft[syft.index("--network") + 1] == "none"
+    image = next(a for a in syft if a.startswith("anchore/syft:"))
+    assert re.fullmatch(r"anchore/syft:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}", image), image
+    assert syft[syft.index(image) + 1:] == ["scan", "oci-archive:/image.oci.tar", "-o", "cyclonedx-json"]
+    assert f"{werk.aus.resolve()}/image.oci.tar:/image.oci.tar:ro" in syft
+    sbom = werk.aus / f"gateway-{VERSION}.cdx.json"
+    assert json.loads(sbom.read_text())["bomFormat"] == "CycloneDX"
+    assert sbom.name not in {p.name for p in (werk.aus / VERSION).iterdir()}
+    (hochgeladen,) = _log(werk, "scp.log")
+    assert sbom.name not in hochgeladen["dateien"]
+
+
+@pytest.mark.parametrize("umgebung", [{"ATTRAPPE_SYFT_FEHLER": "1"}, {"ATTRAPPE_SBOM": "kein cyclonedx"}])
+def test_fehlt_das_cyclonedx_sbom_wird_nichts_signiert_oder_hochgeladen(werk, umgebung):
+    _signierter_tag(werk)
+    ergebnis = _lauf(werk, "--schluessel", str(werk.kette / "release.key"), "--zertifikat", str(werk.kette / "release.crt"),
+                     "--roots", str(werk.kette / "root.crt"), "--aus", str(werk.aus),
+                     umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS, **umgebung})
+    assert ergebnis.returncode == 1 and "syft" in ergebnis.stderr and ergebnis.stdout == ""
+    assert _log(werk, "scp.log") == []
+    assert not (werk.aus / VERSION).exists() and not list(werk.aus.glob("*.json"))
+
+
+def test_syft_image_ist_im_skript_und_in_der_ci_derselbe_digest():
+    skript = (GW / "release" / "release_lokal.sh").read_text()
+    release = (GW.parent / ".github" / "workflows" / "release.yml").read_text()
+    (image,) = re.findall(r'^SYFT_IMAGE="([^"]+)"', skript, flags=re.MULTILINE)
+    assert re.fullmatch(r"anchore/syft:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}", image)
+    assert image in release
 
 
 def test_release_lokal_laedt_per_scp_und_gibt_die_vier_werte_aus(werk):
@@ -157,7 +216,7 @@ def test_release_lokal_laedt_per_scp_und_gibt_die_vier_werte_aus(werk):
     assert hochgeladen["argv"] == ["-r", "--", str(bundle), ZIEL + "/"]  # der Ordner <version> landet in der Ablage
     assert hochgeladen["dateien"] == DATEIEN
     assert _pruefen(werk, bundle) == 0
-    assert len(_log(werk, "docker.log")) == 1
+    assert [aufruf[0] for aufruf in _log(werk, "docker.log")] == ["buildx", "run"]
 
 
 def test_release_lokal_ohne_signierten_tag_bricht_ab(werk):
@@ -185,6 +244,30 @@ def _tag_eines_fremden_schluessels(werk):
     _signierter_tag(werk, werk.fremd)
 
 
+def _tag_nur_mit_der_liste_im_eigenen_checkout(werk):
+    """Der fremde Schluessel steht in .github/allowed_signers des getaggten Commits (und in der Git-Konfiguration des
+    Betreibers), aber nicht auf origin/main: die Liste im Checkout zaehlt nicht (M-5)."""
+    (werk.repo / ".github").mkdir()
+    (werk.repo / ".github" / "allowed_signers").write_text(
+        f'test@example.org namespaces="git" {werk.fremd.with_suffix(".pub").read_text()}')
+    _git(werk.repo, "add", ".github")
+    _git(werk.repo, "commit", "-q", "-m", "eigene Liste")
+    _signierter_tag(werk, werk.fremd)
+
+
+def _liste_auf_origin_main_fehlt(werk):
+    _git(werk.ablage, "rm", "-q", ".github/allowed_signers")
+    _git(werk.ablage, "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-q", "-m", "ohne Liste")
+    _signierter_tag(werk)
+
+
+def _liste_auf_origin_main_ist_der_platzhalter(werk):
+    (werk.ablage / ".github" / "allowed_signers").write_text('# Platzhalter\nSMARTHEAT-PLATZHALTER namespaces="git" ssh-ed25519 AAAA\n')
+    _git(werk.ablage, "add", ".github")
+    _git(werk.ablage, "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-q", "-m", "Platzhalter")
+    _signierter_tag(werk)
+
+
 def _tag_auf_altem_commit(werk):
     _signierter_tag(werk)
     _git(werk.repo, "commit", "-q", "--allow-empty", "-m", "danach")
@@ -196,7 +279,9 @@ def _unsauberer_baum(werk):
 
 
 @pytest.mark.parametrize("vorbereitung", [_kein_tag, _leichter_tag, _unsignierter_tag, _tag_eines_fremden_schluessels,
-                                          _tag_auf_altem_commit, _unsauberer_baum])
+                                          _tag_nur_mit_der_liste_im_eigenen_checkout, _liste_auf_origin_main_fehlt,
+                                          _liste_auf_origin_main_ist_der_platzhalter, _tag_auf_altem_commit,
+                                          _unsauberer_baum])
 def test_release_lokal_lehnt_jeden_unsauberen_stand_ab_bevor_gebaut_wird(werk, vorbereitung):
     vorbereitung(werk)
     ergebnis = _lauf(werk, "--schluessel", str(werk.kette / "release.key"), "--zertifikat", str(werk.kette / "release.crt"),
@@ -293,10 +378,32 @@ def test_fehlende_schluesseldatei_oder_zertifikat_bricht_vor_dem_bau_ab(werk):
 
 def test_pkcs11_uri_wird_ohne_dateipruefung_durchgereicht(werk):
     """Eine pkcs11:-URI ist keine Datei: das Skript reicht sie an signieren.py durch (hier scheitert openssl ohne Token)."""
-    ergebnis = _lauf(werk, "--probe", "--schluessel", "pkcs11:token=gibt-es-nicht;object=x?pin-value=GEHEIME-PIN",
+    _signierter_tag(werk)
+    ergebnis = _lauf(werk, "--schluessel", "pkcs11:token=gibt-es-nicht;object=x?pin-value=GEHEIME-PIN",
                      "--zertifikat", str(werk.kette / "release.crt"), "--roots", str(werk.kette / "root.crt"),
-                     "--aus", str(werk.aus))
+                     "--aus", str(werk.aus), umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
     assert ergebnis.returncode == 1
     assert "GEHEIME-PIN" not in ergebnis.stdout + ergebnis.stderr and "pkcs11:" not in ergebnis.stdout + ergebnis.stderr
-    assert len(_log(werk, "docker.log")) == 1  # gebaut wurde, signiert nicht
-    assert not (werk.aus / VERSION / "manifest.json.sig").exists()
+    assert [aufruf[0] for aufruf in _log(werk, "docker.log")] == ["buildx", "run"]  # gebaut wurde, signiert nicht
+    assert not (werk.aus / VERSION / "manifest.json.sig").exists() and _log(werk, "scp.log") == []
+
+
+@pytest.mark.parametrize("schluessel", ["pkcs11:token=echt;object=release", "pkcs11:token=echt?pin-value=GEHEIME-PIN"])
+def test_probe_lehnt_einen_pkcs11_schluessel_ab(werk, schluessel):
+    """M-4: --probe baut und signiert ohne Tag- und Baum-Check, also nie mit dem echten Token."""
+    ergebnis = _lauf(werk, "--probe", "--schluessel", schluessel, "--zertifikat", str(werk.kette / "release.crt"),
+                     "--roots", str(werk.kette / "root.crt"), "--aus", str(werk.aus))
+    assert ergebnis.returncode == 1 and "pkcs11" in ergebnis.stderr and ergebnis.stdout == ""
+    assert "GEHEIME-PIN" not in ergebnis.stderr
+    assert _log(werk, "docker.log") == [] and not werk.aus.exists()
+
+
+@pytest.mark.parametrize("roots", [None, "gateway/host/release-roots.pem", "gateway/../gateway/host/release-roots.pem"])
+def test_probe_lehnt_den_standard_schluesselbund_ab(werk, roots):
+    argumente = ["--probe", "--schluessel", str(werk.kette / "release.key"), "--zertifikat", str(werk.kette / "release.crt"),
+                 "--aus", str(werk.aus)]
+    if roots:
+        argumente += ["--roots", str(werk.repo / roots)]
+    ergebnis = _lauf(werk, *argumente)
+    assert ergebnis.returncode == 1 and "Schluesselbund" in ergebnis.stderr and ergebnis.stdout == ""
+    assert _log(werk, "docker.log") == [] and not werk.aus.exists()

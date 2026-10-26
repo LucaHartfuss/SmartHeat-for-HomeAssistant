@@ -24,7 +24,24 @@ SRC=/src/gateway/host
 # Signatur, die ohne Pilot-SSH die Fixture selbst (Signatur optional).
 SIGNED_BUNDLE=/tmp/bundle-signed
 cp -r "$SRC/tests/fixtures/bundle" "$SIGNED_BUNDLE"
-printf '{"format": "smartheat-kette-1", "test": true}\n' >"$SIGNED_BUNDLE/manifest.json.sig"
+# Signaturtext mit einem echten Zertifikat (notBefore 2026-03-01): install.sh setzt daraus die Untergrenze (M-2). Die
+# Signatur selbst prueft der Installer nicht, der Updater tut es.
+python3 - "$SIGNED_BUNDLE/manifest.json.sig" <<'PYEOF'
+import json, sys
+from datetime import UTC, datetime, timedelta
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+key = ec.generate_private_key(ec.SECP256R1())
+name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "Test Release")])
+von = datetime(2026, 3, 1, tzinfo=UTC)
+cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+        .serial_number(x509.random_serial_number()).not_valid_before(von).not_valid_after(von + timedelta(days=90))
+        .sign(key, hashes.SHA256()))
+text = {"format": "smartheat-kette-1", "zertifikat": cert.public_bytes(serialization.Encoding.PEM).decode(),
+        "signatur": "AA=="}
+open(sys.argv[1], "w").write(json.dumps(text))
+PYEOF
 ARGS=(--no-docker --no-activate --device-api-url https://api.example.test --root /var/lib/smartheat
       --bundle "$SIGNED_BUNDLE" --pilot-ssh "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItest test-key")
 # Aelterer Installer-Stand: smartheat.conf (statt 00-smartheat.conf) muss beim Lauf verschwinden.
@@ -94,6 +111,21 @@ from smartheat_host import updater
 state = updater.State.load(Path('/var/lib/smartheat/updater/state.json'))
 assert state.current == '0.2.0' and state.previous is None and state.rejected == [] and state.in_progress is None, state" \
   || fail "state.json laesst sich nicht mit updater.State.load lesen"
+# M-2: das Erstbundle setzt die Untergrenze aus dem notBefore seines Zertifikats; ohne Signatur (Fixture) bleibt sie leer.
+PYTHONPATH=/opt/smartheat/host python3 -c "
+from pathlib import Path
+from smartheat_host import updater
+state = updater.State.load(Path('/var/lib/smartheat/updater/state.json'))
+assert state.zertifikat_untergrenze == '2026-03-01T00:00:00+00:00', state.zertifikat_untergrenze" \
+  || fail "state.json ohne zertifikat_untergrenze aus dem Zertifikat des Erstbundles"
+# Eine Signatur ohne lesbares Zertifikat bricht den Installer laut ab und legt keinen Zustand an.
+BAD_BUNDLE=/tmp/bundle-badsig
+cp -r "$SRC/tests/fixtures/bundle" "$BAD_BUNDLE"
+printf '{"format": "smartheat-kette-1", "test": true}\n' >"$BAD_BUNDLE/manifest.json.sig"
+if bash "$SRC/install.sh" --no-docker --no-activate --device-api-url https://api.example.test --root /var/lib/smartheat-bad \
+     --bundle "$BAD_BUNDLE" >/tmp/bad.log 2>&1; then fail "Signatur ohne Zertifikat: Installer lief durch"; fi
+grep -q "kein lesbares Zertifikat" /tmp/bad.log || { cat /tmp/bad.log; fail "Signatur ohne Zertifikat: keine klare Meldung"; }
+[ ! -e /var/lib/smartheat-bad/updater/state.json ] || fail "Signatur ohne Zertifikat: state.json angelegt"
 PYTHONPATH=/opt/smartheat/host python3 -c "
 from smartheat_host import kette
 try:
