@@ -69,19 +69,15 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/in/bundle"
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D "$RUNNER_TEMP/in/bundle" \
-            -p docker-compose.yml -p mosquitto.conf -p manifest.json -p manifest.json.minisig
+            -p docker-compose.yml -p mosquitto.conf -p manifest.json -p manifest.json.sig
       - name: Signatur gegen release.pub pruefen
         env:
           PYTHONPATH: gateway/host:gateway/src
-        run: |
-          python - "$RUNNER_TEMP/in/bundle" <<'PY'
-          import pathlib, sys
-          from smartheat_host import minisign
-          bundle = pathlib.Path(sys.argv[1])
-          key = minisign.load_public_key(pathlib.Path("gateway/host/release.pub").read_text())
-          minisign.verify(key, (bundle / "manifest.json").read_bytes(), (bundle / "manifest.json.minisig").read_text())
-          print("Signatur gueltig")
-          PY
+        # Dieselbe Pruefung wie auf dem Geraet (Kette: Root -> Release-Zertifikat -> Signatur). release.pub ist der
+        # Schluesselbund; bis die echte Root dort liegt (Task 5), scheitert der Schritt am Platzhalter.
+        run: >-
+          python -m smartheat_host.kette gateway/host/release.pub "$RUNNER_TEMP/in/bundle/manifest.json"
+          "$RUNNER_TEMP/in/bundle/manifest.json.sig"
       - name: Image bauen
         run: |
           args=(--bundle "$RUNNER_TEMP/in/bundle" --out "$RUNNER_TEMP/image" --device-api-url "$API_URL" --portal-base-url "$PORTAL_URL")

@@ -1,5 +1,5 @@
-"""Lieferkette des Gateway-Releases: Release-Werkzeug nur aus der Hash-Lock-Datei,
-Signier-Job prueft per Neubau, Artefakt ueberlebt das Warten auf die Freigabe."""
+"""Lieferkette des Gateway-Releases: Release-Werkzeug nur aus der Hash-Lock-Datei, in Actions nie ein Signierschluessel
+(signiert wird am Betreiberrechner, release_lokal.sh), Artefakt ueberlebt das Warten auf die Freigabe."""
 import re
 from pathlib import Path
 
@@ -42,15 +42,26 @@ def test_every_pip_install_uses_the_hash_lock():
     assert seen == {"build", "sign"}
 
 
-def test_sign_job_verifies_by_rebuilding_and_build_job_never_signs_for_real():
+def test_actions_hold_no_signing_secret_and_the_dryrun_runs_the_local_script_with_a_test_chain():
+    text = WORKFLOW.read_text()
+    assert "MINISIGN" not in text and "minisign" not in text and "sign_bundle.sh" not in text
+    assert not re.findall(r"secrets\.(?!CROSS_REPO_TOKEN\b)\w+", text)  # nur das Token fuer die Geschwister-Repos
     jobs = _jobs()
-    sign_runs = "\n".join(_runs(jobs["sign"]))
-    assert "gateway/release/sign_bundle.sh" in sign_runs and "--dryrun" not in sign_runs
-    build_signing = [run for run in _runs(jobs["build"]) if "sign_bundle.sh" in run]
-    assert build_signing and all("--dryrun" in run for run in build_signing)
+    probe = [run for run in _runs(jobs["build"]) if "release_lokal.sh" in run]
+    assert len(probe) == 1 and "--probe" in probe[0] and "ca.py test-kette" in probe[0]
+    assert "bash gateway/release/release_lokal.sh" not in "\n".join(_runs(jobs["sign"]))  # der Job sign signiert nicht, auch nicht zur Probe
     assert "environment" not in jobs["build"] and jobs["sign"]["environment"] == "release"
-    script = (REPO / "gateway" / "release" / "sign_bundle.sh").read_text()
-    assert "verify_bundle.py" in script
+    script = (REPO / "gateway" / "release" / "release_lokal.sh").read_text()
+    assert "verify_bundle.py" in script and "signieren.py" in script
+
+
+def test_sign_job_is_blocked_until_the_workflow_is_rebuilt():
+    # Task 5 baut den Workflow um; bis dahin darf kein GitHub-Release ohne Signatur der echten Kette entstehen.
+    steps = _jobs()["sign"]["steps"]
+    sperre = [step for step in steps if "gesperrt" in step.get("name", "")]
+    assert len(sperre) == 1 and sperre[0]["run"].rstrip().endswith("exit 1")
+    release = [i for i, step in enumerate(steps) if "gh release create" in step.get("run", "")]
+    assert release and steps.index(sperre[0]) < release[0]
 
 
 def test_bundle_artifact_survives_a_reviewer_wait():

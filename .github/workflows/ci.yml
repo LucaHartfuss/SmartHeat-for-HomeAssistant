@@ -66,8 +66,6 @@ jobs:
       - run: |
           pip install --require-hashes --no-deps --only-binary :all: -r heizungsbruecke/requirements-hypothesis.lock
           pip install -e "./heizungsbruecke[dev]" -e "./gateway[dev]"  # pin-check: ungehasht (CI ohne Schreibrecht)
-      # Kreuztest smartheat_host.minisign gegen das echte Programm (gateway/host/tests/test_minisign.py).
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign
       # Real-HA-Container-Tests (Docker, HA_IMAGE) nur in der vollen Stufe; sonst ueberspringt pytest sie. Profil von
       # hypothesis je Stufe (heizungsbruecke/tests/conftest.py): schnell 50 Beispiele, fester Seed; voll 500, zufaellig.
       - name: test
