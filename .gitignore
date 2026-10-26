@@ -5,3 +5,12 @@ __pycache__/
 .pytest_cache/
 .venv/
 .hypothesis/
+
+# Lieferkette (Sicherheitsgrundsatz S-10): Schluesseldateien und Umgebungsdateien nie committen
+# (der Geheimnis-Scan liest ignorierte Dateien nicht, daher gehoeren Schluesselnamen hierher)
+*.key
+*.minisign
+.env*
+*.pem
+# Oeffentliche Vertrauensanker des Add-ons sind keine Geheimnisse
+!gateway/host/release-roots.pem

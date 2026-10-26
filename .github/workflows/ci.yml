@@ -168,7 +168,7 @@ jobs:
           bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" SmartHeat-for-HomeAssistant "$GITHUB_WORKSPACE"
           "$SIBLINGS_REF"
           HeizungssteuerungServer SmartHeat-Integration
-      - run: pip install -r "$DEV_ROOT/tools/requirements-dev.txt"  # pin-check: ungehasht (CI ohne Schreibrecht)
+      - run: pip install --require-hashes -r "$DEV_ROOT/tools/requirements-dev.txt"
       - run: PYTHON=python bash scripts/check.sh --only contract
   # Scan der Lock-Dateien aller Repos auf bekannte Schwachstellen: nur im geplanten Lauf, hier im
   # oeffentlichen Repo (keine Minuten). Der Server-Lock kommt ueber den Dev-Root; Ausnahmen mit Grund in
@@ -190,5 +190,5 @@ jobs:
         run: >-
           bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" SmartHeat-for-HomeAssistant "$GITHUB_WORKSPACE"
           develop HeizungssteuerungServer
-      - run: pip install pip-audit==2.10.1  # pin-check: ungehasht (CI ohne Schreibrecht, Scan-Werkzeug)
+      - run: pip install --require-hashes -r "$DEV_ROOT/tools/requirements-audit.txt"
       - run: bash "$DEV_ROOT/tools/pip_audit.sh" "$DEV_ROOT"
