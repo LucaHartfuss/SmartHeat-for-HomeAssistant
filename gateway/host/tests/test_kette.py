@@ -2,6 +2,7 @@ import base64
 import json
 import shutil
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -91,6 +92,14 @@ def test_root_noch_nicht_gueltig_wird_abgelehnt():
     key, cert = release(root_key, root_cert, von=VON, bis=BIS)
     with pytest.raises(kette.SignatureError, match="Root abgelaufen oder noch nicht gueltig"):
         _pruefe(root_cert, key, cert)
+
+
+def test_root_gilt_ab_ihrem_beginn():
+    root_key, root_cert = root(von=JETZT)
+    key, cert = release(root_key, root_cert, von=VON, bis=BIS)
+    assert _pruefe(root_cert, key, cert, jetzt=JETZT) == cert
+    with pytest.raises(kette.SignatureError, match="Root abgelaufen"):
+        _pruefe(root_cert, key, cert, jetzt=JETZT - timedelta(seconds=1))
 
 
 def test_abgelaufene_root_neben_gleicher_gueltiger_root_gilt():
@@ -262,6 +271,8 @@ def test_kaputte_signaturtexte_werden_abgelehnt():
     ablehnen(json.dumps({**gut, "zertifikat": 5}), "Felder")
     ablehnen(json.dumps({**gut, "signatur": None}), "Felder")
     ablehnen(json.dumps({**gut, "signatur": "***kein base64***"}), "kein Base64")
+    # Fremde Zeichen in einer sonst gueltigen Signatur duerfen nicht still ueberlesen werden.
+    ablehnen(json.dumps({**gut, "signatur": gut["signatur"][:10] + "\n**" + gut["signatur"][10:]}), "kein Base64")
     ablehnen(json.dumps({**gut, "zertifikat": "kein pem"}), "Zertifikat: kein PEM")
     ablehnen(json.dumps({**gut, "zertifikat": ""}), "Zertifikat: kein PEM")
     ablehnen(json.dumps({**gut, "zertifikat": pem + pem}), "Zertifikat: kein PEM")  # genau ein Zertifikat
@@ -291,7 +302,7 @@ def test_roots_identity_aendert_sich_mit_dem_bund():
         kette.roots_identity("kein pem")
 
 
-def test_cli_exit_codes(tmp_path, capsys):
+def test_cli_exit_codes(tmp_path, capsys, monkeypatch):
     jetzt = datetime.now(UTC)
     root_key, root_cert = root()
     key, cert = release(root_key, root_cert, von=jetzt - timedelta(days=1), bis=jetzt + timedelta(days=30))
@@ -318,6 +329,8 @@ def test_cli_exit_codes(tmp_path, capsys):
     assert kette.main([str(roots), str(tmp_path / "fehlt"), str(sig)]) == 1
     assert "UNGUELTIG" in capsys.readouterr().err
     assert kette.main([str(roots), str(datei)]) == 2
+    monkeypatch.setattr(sys, "argv", ["kette", str(roots), str(datei), str(sig)])  # ohne argv: Kommandozeile
+    assert kette.main() == 0
     assert kette.main([]) == 2
     assert kette.main([str(roots), str(datei), str(sig), "zuviel"]) == 2
     assert "Aufruf" in capsys.readouterr().err
