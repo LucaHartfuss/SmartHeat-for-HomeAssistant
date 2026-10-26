@@ -20,11 +20,11 @@ nft_syntax_check() {  # $1 = Fehlermeldung
   echo "$out"; fail "$1"
 }
 SRC=/src/gateway/host
-# Release-Bundles bringen manifest.json.minisig mit, die Fixture nicht: die Laeufe mit Pilot-SSH nutzen eine Kopie mit
+# Release-Bundles bringen manifest.json.sig mit, die Fixture nicht: die Laeufe mit Pilot-SSH nutzen eine Kopie mit
 # Signatur, die ohne Pilot-SSH die Fixture selbst (Signatur optional).
 SIGNED_BUNDLE=/tmp/bundle-signed
 cp -r "$SRC/tests/fixtures/bundle" "$SIGNED_BUNDLE"
-printf 'untrusted comment: signature from minisign secret key\ntest-signatur\n' >"$SIGNED_BUNDLE/manifest.json.minisig"
+printf '{"format": "smartheat-kette-1", "test": true}\n' >"$SIGNED_BUNDLE/manifest.json.sig"
 ARGS=(--no-docker --no-activate --device-api-url https://api.example.test --root /var/lib/smartheat
       --bundle "$SIGNED_BUNDLE" --pilot-ssh "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItest test-key")
 # Aelterer Installer-Stand: smartheat.conf (statt 00-smartheat.conf) muss beim Lauf verschwinden.
@@ -78,7 +78,7 @@ grep -q "/var/lib/smartheat/host/zigbee_adapter" /etc/udev/rules.d/99-smartheat-
 [ "$(stat -c '%u:%g' /var/lib/smartheat/data)" = "1000:1000" ] || fail "data gehoert nicht uid 1000"
 grep -q '^SHG_DEVICE_API_URL=https://api.example.test$' /var/lib/smartheat/host/gateway.env || fail "gateway.env"
 grep -q '"current": "0.2.0"' /var/lib/smartheat/updater/state.json || fail "erstes Bundle nicht als current"
-for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.minisig; do
+for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.sig; do
   cmp -s "$SIGNED_BUNDLE/$name" "/var/lib/smartheat/bundles/0.2.0/$name" || fail "Bundle-Ordner ohne $name (Spec 2.2)"
 done
 dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null | grep -q "install ok installed" \
@@ -86,7 +86,7 @@ dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null | grep -q "install ok i
 grep -q "WARNUNG: ohne --pilot-ssh" /tmp/run1.log && fail "SSH-Warnung trotz --pilot-ssh"
 [ "$(stat -c '%a' /root/.ssh/authorized_keys)" = "600" ] || fail "authorized_keys"
 PYTHONPATH=/opt/smartheat/host python3 -c "import smartheat_host.updater, smartheat_host.led, \
-  smartheat_host.hoststatus, smartheat_host.minisign, smartheat_core.dateien" \
+  smartheat_host.hoststatus, smartheat_host.kette, smartheat_core.dateien" \
   || fail "Host-Dienste mit dem System-Python nicht importierbar"
 PYTHONPATH=/opt/smartheat/host python3 -c "
 from pathlib import Path
@@ -95,13 +95,13 @@ state = updater.State.load(Path('/var/lib/smartheat/updater/state.json'))
 assert state.current == '0.2.0' and state.previous is None and state.rejected == [] and state.in_progress is None, state" \
   || fail "state.json laesst sich nicht mit updater.State.load lesen"
 PYTHONPATH=/opt/smartheat/host python3 -c "
-from smartheat_host import minisign
+from smartheat_host import kette
 try:
-    minisign.load_public_key(open('/opt/smartheat/host/release.pub').read())
-except minisign.SignatureError as error:
+    kette.load_roots(open('/opt/smartheat/host/release-roots.pem').read())
+except kette.SignatureError as error:
     assert 'Platzhalter' in str(error)
 else:
-    raise SystemExit('Platzhalter nicht erkannt')" || fail "release.pub-Platzhalter"
+    raise SystemExit('Platzhalter nicht erkannt')" || fail "release-roots.pem-Platzhalter"
 # Ohne --pilot-ssh: Drop-in weg, kein Port 22 in der Firewall; danach ist ein weiterer Lauf wieder ein No-op.
 ARGS_NOPILOT=(--no-docker --no-activate --device-api-url https://api.example.test --root /var/lib/smartheat
               --bundle "$SRC/tests/fixtures/bundle")

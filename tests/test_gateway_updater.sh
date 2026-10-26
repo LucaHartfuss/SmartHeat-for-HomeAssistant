@@ -120,7 +120,7 @@ printf 'SHG_ROOT=%s\nSHG_DEVICE_API_URL=http://%s:8090\nSHG_DIAG_HOSTNAMES=runti
 # Die Test-PKI bleibt 0700/0600 (gateway_lib.sh): ihre Leser laufen als PKI_USER.
 find "$DATA" -path "$PKI" -prune -o -exec chmod 777 {} +
 
-# 5. Test-Bundles (Wegwerf-Schluessel) bauen und beim Fake-Bootstrap ablegen; dazu ein manipuliertes Manifest 0.9.4
+# 5. Test-Bundles (Wegwerf-Root und -Release-Zertifikat) bauen und beim Fake-Bootstrap ablegen; dazu ein manipuliertes Manifest 0.9.4
 # (Manifest von 0.9.2 mit geaenderter Version, also andere Bytes als die Signatur von 0.9.2).
 run_in_image -v "$REPO/gateway:/gw:ro" -v "$DATA:$DATA" "$BUILDER_IMAGE" sh -c \
   'pip install --quiet --disable-pip-version-check --root-user-action=ignore pyyaml==6.0.3 cryptography==50.0.2 >&2 \
@@ -149,7 +149,7 @@ curl -fsS "$API_URL/_e2e/files/0.9.2/docker-compose.yml" | cmp -s - "$DATA/relea
 
 # 6. Erstes Bundle wie install.sh --bundle, Start per Compose
 mkdir -p "$DATA/bundles/0.9.1"
-for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.minisig; do
+for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.sig; do
   cp "$DATA/release/0.9.1/$name" "$DATA/bundles/0.9.1/"
 done
 printf '{"current": "0.9.1", "previous": null, "rejected": [], "in_progress": null}' >"$DATA/updater/state.json"
@@ -177,13 +177,21 @@ RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq 
 EOF
 # Vom Kern nur, was install.sh auf das Geraet kopiert (SHIPPED_CORE: smartheat_core/__init__.py und dateien.py).
 CORE="$REPO/heizungsbruecke/src/smartheat_core"
+# Uhr wie auf dem Geraet: der Hoststatus-Dienst schreibt host/status.json; der Updater versucht nur mit synchroner Uhr und
+# frischem Status ein Update. Der Test schreibt sie vor jedem Aufruf frisch (UHR=aus: keine Datei, "wartet_auf_zeit").
+host_status() {
+  if [ "${UHR:-an}" = aus ]; then rm -f "$DATA/host/status.json"; return; fi
+  printf '{"netz": true, "dns": true, "zeit_synchron": true, "ts": "%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
+    >"$DATA/host/status.json" && chmod 666 "$DATA/host/status.json"
+}
 updater() {
+  host_status
   docker run --rm --network "$NET" --security-opt label=disable \
     -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA:$DATA" -v "$REPO/gateway:/gw:ro" \
     -v "$CORE/__init__.py:/core/smartheat_core/__init__.py:ro" \
     -v "$CORE/dateien.py:/core/smartheat_core/dateien.py:ro" \
     -e PYTHONPATH=/gw/host:/gw/src:/core -e SHG_ROOT="$DATA" \
-    "$UPDATER_IMAGE" python3 /gw/host/tests/updater_testlauf.py --release-pub "$DATA/release/test.pub" \
+    "$UPDATER_IMAGE" python3 /gw/host/tests/updater_testlauf.py --release-roots "$DATA/release/test-roots.pem" \
     --health-host runtime --health-seconds 180 --compose-project "$PROJECT" --once
 }
 expect_word() {  # $1 erwartetes Ergebnis, $2 Version; Log des Updaters (stderr) nur bei Abweichung
@@ -249,15 +257,20 @@ created_times() {
   for id in $(project_containers); do docker inspect -f '{{.Name}} {{.Id}} {{.Created}}' "$id"; done | sort
 }
 
-# 8. 0.9.1 -> 0.9.2: aktualisiert
+# 8. 0.9.1 -> 0.9.2: ohne synchrone Uhr passiert nichts (kein Abruf, keine Ablehnung), mit Uhr: aktualisiert
 set_desired 0.9.2
+UHR=aus expect_word wartet_auf_zeit 0.9.2
+state_is 's["current"] == "0.9.1" and s["rejected"] == [] and s["in_progress"] is None and s.get("pending_reports", []) == []' \
+  || fail "state.json ohne Uhr: $(cat "$DATA/updater/state.json")"
+[ -e "$DATA/bundles/0.9.2" ] && fail "ohne synchrone Uhr wurde ein Bundle abgelegt"
+stage_done "Update ohne Uhr"
 start=$SECONDS
 expect_word aktualisiert 0.9.2
 echo "    0.9.2: $((SECONDS - start)) s"
-state_is 's["current"] == "0.9.2" and s["previous"] == "0.9.1" and s["in_progress"] is None and s["pending_reports"] == []' \
+state_is 's["current"] == "0.9.2" and s["previous"] == "0.9.1" and s["in_progress"] is None and s["pending_reports"] == [] and s["zertifikat_untergrenze"] is not None' \
   || fail "state.json nach 0.9.2: $(cat "$DATA/updater/state.json")"
 reported 0.9.2 ok "" || fail "update_result ok fuer 0.9.2 fehlt"
-for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.minisig; do
+for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.sig; do
   cmp -s "$DATA/release/0.9.2/$name" "$DATA/bundles/0.9.2/$name" || fail "Bundle 0.9.2: $name fehlt oder weicht ab"
 done
 stage_done "Update auf 0.9.2"
@@ -270,7 +283,7 @@ start=$SECONDS
 expect_word zurueckgerollt 0.9.3
 echo "    0.9.3: $((SECONDS - start)) s, Laufzeitfehler: $(wc -l <"$DATA/data/testfehler" 2>/dev/null || echo 0)"
 [ -s "$DATA/data/testfehler" ] || fail "0.9.3: die Laufzeit hat nicht im laufenden Prozess geworfen"
-state_is 's["current"] == "0.9.2" and s["previous"] == "0.9.1" and "0.9.3" in s["rejected"] and s["in_progress"] is None' \
+state_is 's["current"] == "0.9.2" and s["previous"] == "0.9.1" and any(r.startswith("0.9.3@") for r in s["rejected"]) and s["in_progress"] is None' \
   || fail "state.json nach dem Rueckweg: $(cat "$DATA/updater/state.json")"
 reported 0.9.3 rollback ungesund || fail "update_result rollback/ungesund fuer 0.9.3 fehlt"
 runtime_id="$(service_container runtime)"
@@ -296,7 +309,7 @@ if [ -z "$before" ] || [ "$before" != "$after" ]; then
   fail "Container nach der Ablehnung veraendert: $before / $after"
 fi
 printf '%s\n' "$before" | grep -q "${PROJECT}-runtime-1 " || fail "Container runtime nicht im Vergleich"
-state_is 's["current"] == "0.9.2" and "0.9.4" in s["rejected"] and s["in_progress"] is None' \
+state_is 's["current"] == "0.9.2" and any(r.startswith("0.9.4@") for r in s["rejected"]) and s["in_progress"] is None' \
   || fail "state.json nach der Ablehnung: $(cat "$DATA/updater/state.json")"
 reported 0.9.4 rollback signatur_ungueltig || fail "update_result signatur_ungueltig fuer 0.9.4 fehlt"
 [ -e "$DATA/bundles/0.9.4" ] && fail "manipuliertes Bundle abgelegt"

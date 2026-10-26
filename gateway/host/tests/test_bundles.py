@@ -193,7 +193,7 @@ def test_store_keeps_manifest_and_signature(tmp_path):
     store = bundles.BundleStore(tmp_path)
     store.install("0.3.0", {"docker-compose.yml": GOOD_COMPOSE.encode(), "mosquitto.conf": b"x",
                             bundles.MANIFEST_NAME: b"{}", bundles.SIGNATURE_NAME: b"sig"})
-    assert (tmp_path / "bundles" / "0.3.0" / "manifest.json.minisig").read_bytes() == b"sig"
+    assert (tmp_path / "bundles" / "0.3.0" / "manifest.json.sig").read_bytes() == b"sig"
     assert (tmp_path / "bundles" / "0.3.0" / "manifest.json").read_bytes() == b"{}"
     assert store.exists("0.3.0")
 

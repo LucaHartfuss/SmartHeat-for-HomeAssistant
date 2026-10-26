@@ -107,8 +107,12 @@ fi
 # Erststart ohne Pull, signiertes laufendes Bundle
 if ! compgen -G "$SH/images/*.tar" >/dev/null; then fail "keine Image-Archive fuer den Erststart"; fi
 current="$(sed -n 's/.*"current": *"\([^"]*\)".*/\1/p' "$SH/updater/state.json" 2>/dev/null)"
-if [ -z "$current" ] || [ ! -f "$SH/bundles/$current/manifest.json.minisig" ]; then
+if [ -z "$current" ] || [ ! -f "$SH/bundles/$current/manifest.json.sig" ]; then
   fail "laufendes Bundle fehlt oder ist nicht signiert"
+fi
+# Schluesselbund der Release-Roots: ohne ihn kann der Updater kein Bundle pruefen (install.sh legt ihn ab)
+if [ ! -s "$R/opt/smartheat/host/release-roots.pem" ]; then
+  fail "release-roots.pem fehlt oder ist leer (opt/smartheat/host)"
 fi
 
 # Start von der SSD am USB (usbboot.sh): Regel mit fester Disk-Signatur und initramfs-Hook, der sie mitnimmt.

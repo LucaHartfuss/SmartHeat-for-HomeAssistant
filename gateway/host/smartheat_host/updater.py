@@ -1,25 +1,34 @@
 """Updater des Gateways: liest alle 15 min die Soll-Version (Feld `software` des
 Konfigurationsdokuments, von der Laufzeit nach data/software_soll.json geschrieben), laedt und prueft Manifest
-(https, SHA-256, minisign gegen release.pub, Version, min_updater_version) und Bundle-Dateien, schaltet per Compose um,
-wartet bis zu 10 min auf "gesund" und rollt sonst auf das vorige Bundle zurueck. Nur streng neuere Versionen werden
+(https, SHA-256, X.509-Kette gegen release-roots.pem (kette.py), Version, min_updater_version) und Bundle-Dateien,
+schaltet per Compose um, wartet bis zu 10 min auf "gesund" und rollt sonst auf das vorige Bundle zurueck. Nur streng neuere Versionen werden
 geladen (Downgrade-Schutz, Grund version_zu_alt; der Betreiber gibt fuer einen Rueckweg der Flotte den alten Stand als
 neue Version heraus). Fristen ueber die monotone Uhr (die Wanduhr springt beim Boot); ein Abruf hat zusaetzlich eine
 Gesamtfrist (ABRUF_GESAMT_SECONDS) und geht nur an oeffentliche Adressen (is_public_address).
 Zustand in updater/state.json (atomar, 0644), Format:
 
     {"current": str|null, "previous": str|null, "rejected": [str],
-     "rejected_context": {"updater": str, "key": str}|null,
-     "in_progress": {"version": str, "previous": str|null, "since": float, "rollback": str (optional),
-                     "reject": false (optional)}|null,
+     "rejected_context": {"updater": str, "roots": str}|null,
+     "zertifikat_untergrenze": str|null,
+     "in_progress": {"version": str, "previous": str|null, "since": float, "zertifikat_ab": str (optional),
+                     "rollback": str (optional), "reject": false (optional)}|null,
      "pending_reports": [{"version": str, "result": str, "reason": str}]}
 
 in_progress wird vor `compose up` geschrieben und uebersteht einen Stromausfall: recover() startet das Bundle dann
 erneut (up ist idempotent) und wartet auf Gesundheit. Ist "rollback" gesetzt (Grund), scheiterte der Rueckweg auf
 `previous`; recover()/run_once wiederholen ihn, bevor sonst etwas geschieht, und melden das Ergebnis erst danach
 ("reject": false = die Version kommt danach nicht nach rejected, siehe unten).
-rejected gilt nur im Kontext rejected_context (Version des Updaters und Schluessel-ID aus release.pub oder
-"placeholder"): aendert sich eines von beiden, wird rejected geleert (ein neuer Updater oder der echte Schluessel
-darf es neu versuchen).
+rejected hat je Eintrag "<version>@<sha256 der Signatur>": eine neu signierte Fassung derselben Version (anderes
+Zertifikat, neue Signatur) wird wieder versucht (Updates-Spec Abschnitt 4). rejected gilt nur im Kontext
+rejected_context (Version des Updaters und Kennung des Schluesselbunds aus release-roots.pem, kette.roots_identity,
+oder "placeholder"): aendert sich eines von beiden, wird rejected geleert (ein neuer Updater oder der echte
+Schluesselbund darf es neu versuchen).
+
+Zeit und Widerruf (SG-04, FR-25): ein Update wird nur mit synchroner Uhr versucht (uhr(), `zeit_aus_status`: Hoststatus
+meldet zeit_synchron und ist hoechstens 15 min alt); sonst "wartet_auf_zeit", ohne Abruf und ohne Ablehnung.
+zertifikat_untergrenze (ISO-Zeit) ist das hoechste `notBefore` eines angenommenen Release-Zertifikats, gesetzt erst nach
+erfolgreichem Wechsel (in_progress.zertifikat_ab traegt den Wert bis dahin) und nur steigend: kette.verify lehnt aeltere
+Zertifikate ab (Widerruf eines gestohlenen Schluessels), und eine Uhr darunter ist falsch ("wartet_auf_zeit").
 
 Umgebung ist kein Fehler des Bundles:
 - Die Gesundheitsfrist ruht, solange der Host den Broker nicht erreicht (je Takt eine TCP-Verbindung zu host:port aus
@@ -52,12 +61,14 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from cryptography import x509
 from smartheat_core import dateien
 
 from smartheat_gateway.version import GATEWAY_VERSION
-from smartheat_host import bundles, kanal, minisign
+from smartheat_host import bundles, kanal, kette
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +99,9 @@ MAX_FILE_BYTES = 1048576
 MAX_REJECTED = 20
 MAX_PENDING_REPORTS = 20
 OFFER_KEYS = ("manifest_url", "manifest_sha256", "signature")
+STATUS_MAX_ALTER = timedelta(minutes=15)  # so alt darf host/status.json fuer die Uhr hoechstens sein
+STATUS_MAX_VORSPRUNG = timedelta(minutes=1)  # so weit darf ts vor der Uhr liegen (Korrektur durch NTP)
+WARTET_AUF_ZEIT = "wartet_auf_zeit"
 _HEALTHY, _UNHEALTHY, _UNREACHABLE = "gesund", "ungesund", "unerreichbar"
 REQUIRED_HEALTHY = ("runtime",)
 
@@ -121,6 +135,40 @@ def _report_entries(value) -> list[dict]:
     return valid
 
 
+def _zeit(value) -> datetime | None:
+    """ISO-Zeit mit Zeitzone aus einem Text, sonst None (Zustandsdatei und Auftrag sind lokale Eingabe: wirft nie)."""
+    if not isinstance(value, str):
+        return None
+    try:
+        zeit = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return zeit if zeit.tzinfo is not None else None
+
+
+def _zeit_text(value) -> str | None:
+    return value if _zeit(value) is not None else None
+
+
+def zeit_aus_status(status_datei: Path, jetzt: Callable[[], datetime] = lambda: datetime.now(UTC)) -> datetime | None:
+    """Die Uhr des Geraets, wenn man ihr trauen darf, sonst None: der Hoststatus (hoststatus.py, je Minute) meldet
+    `zeit_synchron` und sein Zeitstempel `ts` ist hoechstens STATUS_MAX_ALTER alt. Ein `ts` ueber STATUS_MAX_VORSPRUNG in
+    der Zukunft heisst: die Uhr wurde seit dem Schreiben zurueckgestellt; auch dann keine Zeit. Wirft nie."""
+    try:
+        status = json.loads(status_datei.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(status, dict) or status.get("zeit_synchron") is not True:
+        return None
+    stempel = _zeit(status.get("ts"))
+    if stempel is None:
+        return None
+    zeit = jetzt()
+    if not -STATUS_MAX_VORSPRUNG <= zeit - stempel <= STATUS_MAX_ALTER:
+        return None
+    return zeit
+
+
 @dataclass
 class State:
     current: str | None = None
@@ -129,6 +177,7 @@ class State:
     in_progress: dict | None = None
     rejected_context: dict | None = None
     pending_reports: list[dict] = field(default_factory=list)
+    zertifikat_untergrenze: str | None = None
 
     @classmethod
     def load(cls, path: Path) -> "State":
@@ -143,7 +192,8 @@ class State:
             if not (isinstance(context, dict) and all(isinstance(value, str) for value in context.values())):
                 context = None
             return cls(_text_or_none(data.get("current")), _text_or_none(data.get("previous")), rejected, in_progress,
-                       context, _report_entries(data.get("pending_reports")))
+                       context, _report_entries(data.get("pending_reports")),
+                       _zeit_text(data.get("zertifikat_untergrenze")))
         except (OSError, ValueError, AttributeError, TypeError):
             return cls()
 
@@ -427,12 +477,29 @@ def health_ok(data: dict | None, containers: dict[str, str]) -> bool:
     return all(containers.get(name) == "healthy" for name in REQUIRED_HEALTHY)
 
 
-def _key_identity(public_key_text: str) -> str:
-    """Schluessel-ID aus release.pub (hex) oder "placeholder"; Teil des Kontexts der abgelehnten Versionen."""
+def _roots_identity(roots_text: str) -> str:
+    """Kennung des Schluesselbunds aus release-roots.pem (kette.roots_identity) oder "placeholder"/"ungueltig"; Teil des
+    Kontexts der abgelehnten Versionen."""
     try:
-        return minisign.load_public_key(public_key_text).key_id.hex()
-    except minisign.SignatureError:
-        return "placeholder" if minisign.PLACEHOLDER_MARKER in public_key_text else "ungueltig"
+        return kette.roots_identity(roots_text)
+    except kette.SignatureError:
+        return "placeholder" if kette.PLACEHOLDER_MARKER in roots_text else "ungueltig"
+
+
+def _rejected_key(version: str, signatur: object) -> str:
+    """Eintrag in `rejected`: "<version>@<sha256 (hex) der Signatur>". Eine Signatur, die kein Text ist (oder fehlt),
+    zaehlt als leerer Text."""
+    data = signatur.encode() if isinstance(signatur, str) else signatur if isinstance(signatur, bytes) else b""
+    return f"{version}@{hashlib.sha256(data).hexdigest()}"
+
+
+def _hoehere_untergrenze(bisher: str | None, neu: object) -> str | None:
+    """Die Untergrenze steigt nur: das spaetere von `bisher` und `neu` (ISO-Zeiten); ein unbrauchbares `neu` aendert
+    nichts."""
+    neue_zeit, alte_zeit = _zeit(neu), _zeit(bisher)
+    if neue_zeit is None or (alte_zeit is not None and neue_zeit <= alte_zeit):
+        return bisher
+    return neue_zeit.isoformat()
 
 
 def _older_or_equal(version: str, current: str | None) -> bool:
@@ -448,18 +515,23 @@ def _older_or_equal(version: str, current: str | None) -> bool:
 
 class Updater:
     def __init__(self, *, kanal: kanal.LokalerKanal, store: bundles.BundleStore, compose,
-                 fetch: Callable[[str, int], bytes], public_key_text: str, state_path: Path, version: str,
-                 health: Callable[[str], bool], clock: Callable[[], float] = time.monotonic,
+                 fetch: Callable[[str, int], bytes], roots_text: str, uhr: Callable[[], datetime | None],
+                 state_path: Path, version: str, health: Callable[[str], bool],
+                 clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep, allow_http: bool = False,
                  health_seconds: float = HEALTH_SECONDS, path_exists: Callable[[str], bool] = os.path.exists) -> None:
         self._kanal, self._store, self._compose, self._fetch = kanal, store, compose, fetch
-        self._public_key_text, self._state_path, self._version = public_key_text, state_path, version
+        self._uhr, self._state_path, self._version = uhr, state_path, version
         self._health, self._clock, self._sleep, self._allow_http = health, clock, sleep, allow_http
         self._health_seconds, self._path_exists = health_seconds, path_exists
-        self._context = {"updater": version, "key": _key_identity(public_key_text)}
+        self._context = {"updater": version, "roots": _roots_identity(roots_text)}
+        try:
+            self._roots, self._roots_fehler = kette.load_roots(roots_text), None
+        except kette.SignatureError as error:  # Platzhalter oder unbrauchbar: jedes Angebot wird abgelehnt
+            self._roots, self._roots_fehler = [], str(error)
 
     def _load(self) -> State:
-        """Zustand laden; eine Ablehnung gilt nur fuer denselben Updater und denselben Release-Schluessel."""
+        """Zustand laden; eine Ablehnung gilt nur fuer denselben Updater und denselben Schluesselbund."""
         state = State.load(self._state_path)
         if state.rejected_context != self._context:
             state.rejected = []
@@ -476,8 +548,8 @@ class Updater:
             self._file_error("recover", error)
 
     def run_once(self) -> str:
-        """Ein Durchlauf (Ergebnis: aktuell, vorlaeufig, abgelehnt, aktualisiert, zurueckgerollt). Ein Dateifehler
-        (Datentraeger voll oder schreibgeschuetzt, Zustandsdatei) ist kein Fehler des Bundles: ERROR mit dem
+        """Ein Durchlauf (Ergebnis: aktuell, vorlaeufig, wartet_auf_zeit, abgelehnt, aktualisiert, zurueckgerollt). Ein
+        Dateifehler (Datentraeger voll oder schreibgeschuetzt, Zustandsdatei) ist kein Fehler des Bundles: ERROR mit dem
         Namen des Fehlers, Ergebnis "vorlaeufig"; der Zustand bleibt, wie die letzte erfolgreiche Speicherung ihn liess
         (ein unterbrochenes Update setzt recover() im naechsten Durchlauf fort)."""
         try:
@@ -534,22 +606,34 @@ class Updater:
             logger.info("Soll-Version nicht abrufbar (%s), naechster Durchlauf", error)
             return "vorlaeufig"
         version = desired.get("version")
-        if not isinstance(version, str) or version == state.current or version in state.rejected:
+        signatur = desired.get("signature")
+        if not isinstance(version, str) or version == state.current or _rejected_key(version, signatur) in state.rejected:
             return "aktuell"
         if not any(desired.get(key) for key in OFFER_KEYS):  # nur eine Version, kein Bundle angeboten
             return "aktuell"
+        # keine verlaessliche Uhr (oder eine vor dem juengsten angenommenen Zertifikat): kein Versuch und keine
+        # Ablehnung - die Zeit ist kein Fehler des Bundles
+        jetzt = self._uhr()
+        untergrenze = _zeit(state.zertifikat_untergrenze)
+        if jetzt is None:
+            logger.info("Update %s wartet: die Uhr ist nicht synchron", version)
+            return WARTET_AUF_ZEIT
+        if untergrenze is not None and jetzt < untergrenze:
+            logger.warning("Update %s wartet: die Uhr (%s) steht vor dem juengsten angenommenen Zertifikat (%s)", version,
+                           jetzt.isoformat(), untergrenze.isoformat())
+            return WARTET_AUF_ZEIT
         if _older_or_equal(version, state.current):
             logger.error("Soll-Version %s ist nicht neuer als %s, abgelehnt (Downgrade-Schutz)", version, state.current)
-            self._reject(state, version, VERSION_ZU_ALT)
+            self._reject(state, version, VERSION_ZU_ALT, signatur)
             return "abgelehnt"
         try:
-            files = self._download(desired, version)
+            files, zertifikat = self._download(desired, version, jetzt, untergrenze)
         except FetchError as error:
             logger.warning("Bundle %s nicht ladbar (%s), naechster Durchlauf", version, error)
             return "vorlaeufig"
         except _Refused as refused:
             logger.error("Bundle %s abgelehnt: %s", version, refused)
-            self._reject(state, version, refused.reason)
+            self._reject(state, version, refused.reason, signatur)
             return "abgelehnt"
         missing = self._missing_devices(files["docker-compose.yml"].decode("utf-8"))
         if missing:  # z. B. Zigbee-Stick abgezogen: up und Rueckweg scheiterten beide, kein Fehler des Bundles
@@ -561,7 +645,8 @@ class Updater:
         except bundles.ComposeError as error:
             logger.warning("docker compose pull fuer %s gescheitert (%s), naechster Durchlauf", version, error)
             return "vorlaeufig"
-        state.in_progress = {"version": version, "previous": state.current, "since": time.time()}
+        state.in_progress = {"version": version, "previous": state.current, "since": time.time(),
+                             "zertifikat_ab": zertifikat.not_valid_before_utc.isoformat()}
         state.save(self._state_path)  # vor dem Umschalten: ein Stromausfall findet den Auftrag wieder
         try:
             self._compose.up(version)
@@ -587,8 +672,10 @@ class Updater:
 
     # --- Schritte ---
 
-    def _download(self, desired: dict, version: str) -> dict[str, bytes]:
-        """Prueft und laedt; liefert die Bundle-Dateien plus Manifest und Signatur (alles fuer bundles/<version>/)."""
+    def _download(self, desired: dict, version: str, jetzt: datetime,
+                  untergrenze: datetime | None) -> tuple[dict[str, bytes], x509.Certificate]:
+        """Prueft und laedt; liefert die Bundle-Dateien plus Manifest und Signatur (alles fuer bundles/<version>/) und das
+        Release-Zertifikat, mit dem das Manifest signiert ist."""
         url, expected_sha, signature = (desired.get(key) for key in OFFER_KEYS)
         if not isinstance(url, str):
             raise _Refused(MANIFEST_UNGUELTIG, "Manifest-URL fehlt oder ist kein Text")
@@ -607,9 +694,11 @@ class Updater:
         raw = self._fetch(url, MAX_MANIFEST_BYTES)
         if hashlib.sha256(raw).hexdigest() != expected_sha.lower():
             raise _Refused(MANIFEST_UNGUELTIG, "SHA-256 des Manifests passt nicht")
+        if self._roots_fehler is not None:
+            raise _Refused(SIGNATUR_UNGUELTIG, self._roots_fehler)
         try:
-            minisign.verify(minisign.load_public_key(self._public_key_text), raw, signature)
-        except minisign.SignatureError as error:
+            zertifikat = kette.verify(self._roots, raw, signature, jetzt, untergrenze)
+        except kette.SignatureError as error:
             raise _Refused(SIGNATUR_UNGUELTIG, str(error)) from None
         try:
             manifest = bundles.parse_manifest(raw)
@@ -631,7 +720,7 @@ class Updater:
             raise _Refused(MANIFEST_UNGUELTIG, str(error)) from None
         files[bundles.MANIFEST_NAME] = raw
         files[bundles.SIGNATURE_NAME] = signature.encode()
-        return files
+        return files, zertifikat
 
     def _missing_devices(self, compose_text: str) -> list[str]:
         return [path for path in bundles.compose_devices(compose_text) if not self._path_exists(path)]
@@ -683,14 +772,25 @@ class Updater:
             state.pending_reports = state.pending_reports[sent:]
             state.save(self._state_path)
 
-    def _reject(self, state: State, version: str, reason: str) -> None:
-        state.rejected = (state.rejected + [version])[-MAX_REJECTED:]
+    def _installed_signature(self, version: str) -> bytes | None:
+        """Die Signatur, mit der das Bundle `version` installiert wurde (None, wenn die Datei fehlt)."""
+        try:
+            return (self._store.dir(version) / bundles.SIGNATURE_NAME).read_bytes()
+        except OSError:
+            return None
+
+    def _reject(self, state: State, version: str, reason: str, signatur: object) -> None:
+        """Version samt Signatur ablehnen und melden: nur dieses Angebot ist abgelehnt, eine neu signierte Fassung
+        derselben Version wird wieder versucht."""
+        state.rejected = (state.rejected + [_rejected_key(version, signatur)])[-MAX_REJECTED:]
         self._queue(state, version, "rollback", reason)
         state.save(self._state_path)
         self._flush(state)
 
     def _finish(self, state: State, version: str) -> None:
-        previous = state.in_progress.get("previous") if state.in_progress else state.current
+        progress = state.in_progress or {}
+        previous = progress.get("previous") if state.in_progress else state.current
+        state.zertifikat_untergrenze = _hoehere_untergrenze(state.zertifikat_untergrenze, progress.get("zertifikat_ab"))
         state.previous, state.current, state.in_progress = previous, version, None
         self._queue(state, version, "ok", "")
         state.save(self._state_path)
@@ -727,7 +827,7 @@ class Updater:
         state.current, state.in_progress = previous, None
         logger.error("Update auf %s zurueckgerollt (%s)", version, reason)
         if reject:
-            self._reject(state, version, reason)
+            self._reject(state, version, reason, self._installed_signature(version))
         else:
             self._queue(state, version, "rollback", reason)
             state.save(self._state_path)
@@ -740,7 +840,7 @@ class Einstellungen:
     """Eingaenge von `main`, ausser `SHG_ROOT`. Die Standardwerte sind die des Geraets (install.sh); der Dienst
     ruft `main` ohne Einstellungen, `allow_http` ist dort aus und aus der Umgebung nicht einzuschalten. Nur Tests reichen
     eigene Werte durch (`host/tests/updater_testlauf.py` fuer den Docker-Test; sie ist auf keinem Geraet installiert)."""
-    release_pub: Path = Path("/opt/smartheat/host/release.pub")
+    release_roots: Path = Path("/opt/smartheat/host/release-roots.pem")
     allow_http: bool = False
     health_url: str = "http://127.0.0.1:8081/healthz"
     health_seconds: float = HEALTH_SECONDS
@@ -752,13 +852,14 @@ def main(argv: list[str] | None = None, *, einstellungen: Einstellungen | None =
     args = sys.argv[1:] if argv is None else argv
     settings = Einstellungen() if einstellungen is None else einstellungen
     root = Path(os.environ.get("SHG_ROOT", "/var/lib/smartheat"))
-    public_key_text = settings.release_pub.read_text()
+    roots_text = settings.release_roots.read_text()
 
     store = bundles.BundleStore(root)
     compose = bundles.ComposeRunner(root, project=settings.compose_project)
     run = Updater(
         kanal=kanal.LokalerKanal(root / "data"), store=store, compose=compose,
-        fetch=lambda url, limit: fetch_url(url, limit, settings.allow_http), public_key_text=public_key_text,
+        fetch=lambda url, limit: fetch_url(url, limit, settings.allow_http), roots_text=roots_text,
+        uhr=lambda: zeit_aus_status(root / "host" / "status.json"),
         state_path=root / "updater" / "state.json", version=GATEWAY_VERSION,
         health=lambda version: health_ok(fetch_health(settings.health_url), compose.health(version)),
         allow_http=settings.allow_http, health_seconds=settings.health_seconds,

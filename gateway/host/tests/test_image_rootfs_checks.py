@@ -220,7 +220,8 @@ def _good(root: Path, pilot: bool = False) -> Path:
         ENV: "SHG_ROOT=/var/lib/smartheat\nSHG_DEVICE_API_URL=https://accounts.hartfussha.org\n"
              "SHG_PORTAL_BASE_URL=https://portal.hartfussha.org\nTZ=Europe/Berlin\n",
         "var/lib/smartheat/updater/state.json": '{"current": "0.3.0", "in_progress": null}',
-        "var/lib/smartheat/bundles/0.3.0/manifest.json.minisig": "sig",
+        "var/lib/smartheat/bundles/0.3.0/manifest.json.sig": "sig",
+        "opt/smartheat/host/release-roots.pem": "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
         "var/lib/smartheat/images/01.tar": "x",
         "home/pi/.ssh/authorized_keys": "",
         "opt/smartheat/installer/gateway/host/install.sh": "#!/bin/bash\n",
@@ -305,7 +306,9 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     lambda r: (r / "home/pi/.ssh/authorized_keys").write_text("ssh-ed25519 AAAA test-key\n"),
     lambda r: (r / "etc/smartheat").mkdir() or (r / "etc/smartheat/pilot-ssh-tunnel.env").write_text("TUNNEL_TOKEN=x"),
     lambda r: (r / "var/lib/smartheat/images/01.tar").unlink(),
-    lambda r: (r / "var/lib/smartheat/bundles/0.3.0/manifest.json.minisig").unlink(),
+    lambda r: (r / "var/lib/smartheat/bundles/0.3.0/manifest.json.sig").unlink(),
+    lambda r: (r / "opt/smartheat/host/release-roots.pem").unlink(),
+    lambda r: (r / "opt/smartheat/host/release-roots.pem").write_text(""),
     lambda r: (r / "var/lib/smartheat/updater/state.json").write_text('{"current": null}'),
     lambda r: (r / WANTS / "smartheat-updater.service").unlink(),
     lambda r: (r / WANTS / "docker.service").unlink(),
@@ -356,6 +359,19 @@ def test_usb_boot_rule_and_hook_are_checked_strictly(tmp_path, breakit, problem)
     assert result.returncode != 0
     fails = [line for line in result.stdout.splitlines() if line.startswith("FAIL:")]
     assert len(fails) == 1 and problem in fails[0], result.stdout
+
+
+@pytest.mark.parametrize("breakit", [
+    lambda r: (r / "opt/smartheat/host/release-roots.pem").unlink(),
+    lambda r: (r / "opt/smartheat/host/release-roots.pem").write_text(""),
+], ids=["fehlt", "leer"])
+def test_a_missing_release_roots_bundle_is_the_only_problem(tmp_path, breakit):
+    root = _good(tmp_path)
+    assert _run(root).returncode == 0
+    breakit(root)
+    result = _run(root)
+    fails = [line for line in result.stdout.splitlines() if line.startswith("FAIL:")]
+    assert result.returncode != 0 and len(fails) == 1 and "release-roots.pem" in fails[0], result.stdout
 
 
 def _relink(path: Path, target: str) -> None:

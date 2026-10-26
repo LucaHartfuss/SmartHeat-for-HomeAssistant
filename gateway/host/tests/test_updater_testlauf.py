@@ -10,10 +10,10 @@ from smartheat_host import updater
 def test_the_test_entry_hands_its_values_to_the_updater_as_settings(monkeypatch):
     seen = []
     monkeypatch.setattr(updater, "main", lambda argv, *, einstellungen: seen.append((argv, einstellungen)))
-    updater_testlauf.main(["--release-pub", "/d/test.pub", "--health-host", "runtime",
+    updater_testlauf.main(["--release-roots", "/d/test-roots.pem", "--health-host", "runtime",
                            "--health-seconds", "180", "--compose-project", "smartheat-updtest", "--once"])
     assert seen == [(["--once"], updater.Einstellungen(
-        release_pub=Path("/d/test.pub"), allow_http=True, health_url="http://runtime:8081/healthz",
+        release_roots=Path("/d/test-roots.pem"), allow_http=True, health_url="http://runtime:8081/healthz",
         health_seconds=180.0, compose_project="smartheat-updtest"))]
 
 
@@ -22,7 +22,7 @@ def test_the_health_address_is_the_default_of_the_device_with_the_test_host(monk
     assert updater.Einstellungen().health_url == "http://127.0.0.1:8081/healthz"
     seen = []
     monkeypatch.setattr(updater, "main", lambda argv, *, einstellungen: seen.append(einstellungen))
-    updater_testlauf.main(["--release-pub", "x", "--health-host", "runtime", "--health-seconds", "1",
+    updater_testlauf.main(["--release-roots", "x", "--health-host", "runtime", "--health-seconds", "1",
                            "--compose-project", "p"])
     assert seen[0].health_url == updater.Einstellungen().health_url.replace("127.0.0.1", "runtime")
 
@@ -30,7 +30,7 @@ def test_the_health_address_is_the_default_of_the_device_with_the_test_host(monk
 def test_without_once_the_test_entry_runs_the_service_loop(monkeypatch):
     seen = []
     monkeypatch.setattr(updater, "main", lambda argv, *, einstellungen: seen.append(argv))
-    updater_testlauf.main(["--release-pub", "x", "--health-host", "h", "--health-seconds", "1", "--compose-project", "p"])
+    updater_testlauf.main(["--release-roots", "x", "--health-host", "h", "--health-seconds", "1", "--compose-project", "p"])
     assert seen == [[]]
 
 

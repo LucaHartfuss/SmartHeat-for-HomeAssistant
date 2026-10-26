@@ -102,8 +102,8 @@ def test_checker_rejects_forbidden_gateway_imports():
 
 
 def test_checker_rejects_host_package_in_shipped_gateway_modules():
-    assert forbidden_imports("import smartheat_host.minisign", "smartheat_gateway", allow_host=False) == [
-        "smartheat_host.minisign"
+    assert forbidden_imports("import smartheat_host.kette", "smartheat_gateway", allow_host=False) == [
+        "smartheat_host.kette"
     ]
 
 
@@ -117,9 +117,9 @@ def test_checker_accepts_the_allowed_forms():
         "from smartheat_core.dateien import schreiben_json",
         "from smartheat_gateway.paths import Paths",
         "from smartheat_gateway.version import GATEWAY_VERSION",
-        "from smartheat_host import minisign",
-        "from smartheat_host.minisign import verify",
-        "from . import minisign as sibling",
+        "from smartheat_host import kette",
+        "from smartheat_host.kette import verify",
+        "from . import kette as sibling",
     ])
     assert forbidden_imports(source, "smartheat_host", allow_host=True) == []
     relative = "from .paths import Paths"

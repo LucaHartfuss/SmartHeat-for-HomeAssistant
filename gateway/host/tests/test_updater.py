@@ -14,18 +14,23 @@ import subprocess
 import threading
 import time
 import urllib.request
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import create_autospec
 
 import pytest
-from minisign_helper import keypair, sign
+from kette_helper import release, roots_pem, signiere
+from kette_helper import root as neue_root
 
 from smartheat_gateway.version import GATEWAY_VERSION
-from smartheat_host import bundles, kanal, updater
+from smartheat_host import bundles, hoststatus, kanal, kette, updater
 
 COMPOSE = ("services:\n  runtime:\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n").encode()
 MOSQ = b"listener 1883\n"
 BASE = "https://release.example.test/0.3.0/"
+JETZT = datetime(2026, 6, 1, 12, tzinfo=UTC)  # die synchrone Uhr der Tests
+ZERTIFIKAT_VON = datetime(2026, 3, 1, tzinfo=UTC)
+ZERTIFIKAT_BIS = datetime(2027, 3, 1, tzinfo=UTC)
 
 
 class FakeKanal:
@@ -76,7 +81,11 @@ class FakeCompose:
 class World:
     def __init__(self, tmp_path, *, manifest_over=None, compose=COMPOSE, healthy=True, version="0.2.0",
                  url=BASE + "manifest.json", tamper=False, fail_up=(), fail_pull=False, health_seconds=None):
-        self.secret, self.key_id, self.public = keypair()
+        self.root_key, self.root_cert = neue_root()
+        self.roots = roots_pem(self.root_cert)
+        self.release_key, self.release_cert = release(self.root_key, self.root_cert, von=ZERTIFIKAT_VON,
+                                                      bis=ZERTIFIKAT_BIS)
+        self.now = JETZT  # None: die Uhr ist nicht synchron
         files = {"docker-compose.yml": compose, "mosquitto.conf": MOSQ}
         manifest = {"version": "0.3.0", "min_updater_version": "0.2.0",
                     "files": {n: hashlib.sha256(d).hexdigest() for n, d in files.items()},
@@ -88,7 +97,7 @@ class World:
             self.served[BASE + "docker-compose.yml"] = compose + b"#x\n"
         self.api = FakeKanal({"version": "0.3.0", "manifest_url": url,
                             "manifest_sha256": hashlib.sha256(raw).hexdigest(),
-                            "signature": sign(self.secret, self.key_id, raw)})
+                            "signature": self.sign(raw)})
         self.compose = FakeCompose(fail_up, fail_pull)
         self.store = bundles.BundleStore(tmp_path)
         self.store.install("0.2.0", {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ})  # laufendes Bundle
@@ -98,14 +107,31 @@ class World:
         self.fetched = []
         self.clock = [0.0]
         self.extra = {} if health_seconds is None else {"health_seconds": health_seconds}
-        self.context = {"updater": version, "key": self.key_id.hex()}
+        self.context = {"updater": version, "roots": kette.roots_identity(self.roots)}
         self.updater = self.rebuild(version=version)
 
-    def rebuild(self, *, version="0.2.0", public_key_text=None):
-        """Neuer Updater ueber derselben Zustandsdatei (Neustart, neue Host-Version, neuer Schluessel)."""
+    def sign(self, data, *, key=None, cert=None):
+        """Signaturtext (smartheat-kette-1) ueber `data`, Standard: mit dem Release-Zertifikat der World."""
+        return signiere(key or self.release_key, cert or self.release_cert, data)
+
+    def abgelehnt(self, version="0.3.0"):
+        """Eintrag in `rejected` fuer das jetzige Angebot: "<version>@<sha256 der Signatur>"."""
+        return f"{version}@{hashlib.sha256(self.api.desired_answer['signature'].encode()).hexdigest()}"
+
+    def installiere_angebot(self, version="0.3.0"):
+        """Legt das angebotene Bundle samt Signatur im Speicher ab (wie ein Update, das vor `up` stand)."""
+        self.store.install(version, {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ,
+                                     bundles.SIGNATURE_NAME: self.api.desired_answer["signature"].encode()})
+
+    def neues_zertifikat(self, *, von, bis):
+        """Weiteres Release-Zertifikat derselben Root: (Schluessel, Zertifikat)."""
+        return release(self.root_key, self.root_cert, von=von, bis=bis)
+
+    def rebuild(self, *, version="0.2.0", roots_text=None):
+        """Neuer Updater ueber derselben Zustandsdatei (Neustart, neue Host-Version, neuer Schluesselbund)."""
         return updater.Updater(
             kanal=self.api, store=self.store, compose=self.compose, fetch=self.fetch,
-            public_key_text=public_key_text or self.public, state_path=self.state_path, version=version,
+            roots_text=roots_text or self.roots, uhr=lambda: self.now, state_path=self.state_path, version=version,
             health=lambda version: self.healthy, clock=lambda: self.clock[0], sleep=self.sleep, **self.extra,
         )
 
@@ -142,7 +168,8 @@ def test_state_file_is_world_readable_and_survives_load(tmp_path):
     assert stat.S_IMODE(world.state_path.stat().st_mode) == 0o644
     assert json.loads(world.state_path.read_text()) == {
         "current": "0.3.0", "previous": "0.2.0", "rejected": [], "in_progress": None,
-        "rejected_context": {"updater": "0.2.0", "key": world.key_id.hex()}, "pending_reports": []}
+        "rejected_context": {"updater": "0.2.0", "roots": kette.roots_identity(world.roots)}, "pending_reports": [],
+        "zertifikat_untergrenze": ZERTIFIKAT_VON.isoformat()}
 
 
 def test_in_progress_is_persisted_before_the_switch(tmp_path):
@@ -151,7 +178,8 @@ def test_in_progress_is_persisted_before_the_switch(tmp_path):
     seen = []
     world.compose.on_up = lambda version: seen.append(world.state().in_progress) if version == "0.3.0" else None
     world.updater.run_once()
-    assert seen == [{"version": "0.3.0", "previous": "0.2.0", "since": seen[0]["since"]}]
+    assert seen == [{"version": "0.3.0", "previous": "0.2.0", "since": seen[0]["since"],
+                     "zertifikat_ab": ZERTIFIKAT_VON.isoformat()}]
     assert isinstance(seen[0]["since"], float)
 
 
@@ -162,7 +190,7 @@ def test_unhealthy_update_rolls_back_within_ten_minutes(tmp_path):
     assert world.clock[0] >= updater.HEALTH_SECONDS  # Standardfrist 10 min
     assert world.clock[0] < updater.HEALTH_SECONDS + updater.HEALTH_POLL_SECONDS
     state = world.state()
-    assert (state.current, state.rejected, state.in_progress) == ("0.2.0", ["0.3.0"], None)
+    assert (state.current, state.rejected, state.in_progress) == ("0.2.0", [world.abgelehnt()], None)
     assert world.api.results == [("0.3.0", "rollback", "ungesund")]
     assert world.updater.run_once() == "aktuell"  # abgelehnt bleibt abgelehnt
 
@@ -208,7 +236,7 @@ def test_refused_bundles_are_never_started(tmp_path, kwargs, reason):
     assert not any(call[0] in ("up", "pull") for call in world.compose.calls)
     assert not world.store.exists("0.3.0")  # nichts davon landet im Bundle-Ordner
     assert world.api.results == [("0.3.0", "rollback", reason)]
-    assert world.state().current == "0.2.0" and world.state().rejected == ["0.3.0"]
+    assert world.state().current == "0.2.0" and world.state().rejected == [world.abgelehnt()]
 
 
 def test_manifest_with_wrong_sha_is_refused(tmp_path):
@@ -232,7 +260,7 @@ def _serve_manifest(world, raw, *, signed=None):
     """Bietet `raw` als Manifest an: die SHA-256 im Angebot passt zu `raw`, die Signatur gilt `signed` (Standard `raw`)."""
     world.served[BASE + "manifest.json"] = raw
     world.api.desired_answer["manifest_sha256"] = hashlib.sha256(raw).hexdigest()
-    world.api.desired_answer["signature"] = sign(world.secret, world.key_id, raw if signed is None else signed)
+    world.api.desired_answer["signature"] = world.sign(raw if signed is None else signed)
 
 
 def _manifest_with(world, **changes):
@@ -270,7 +298,7 @@ def test_manifest_changed_after_signing_is_refused_even_with_a_matching_sha(tmp_
     assert "signatur_ungueltig" in updater.REASONS  # Grund aus der festen Liste
     assert world.fetched == [BASE + "manifest.json"]  # keine Bundle-Datei geladen
     _assert_nothing_installed(world)
-    assert world.state().rejected == ["0.3.0"] and world.state().current == "0.2.0"
+    assert world.state().rejected == [world.abgelehnt()] and world.state().current == "0.2.0"
     # Gegenprobe: dieselben Bytes, mit dem Schluessel signiert, werden angenommen - allein die Signatur trennt
     (tmp_path / "zwei").mkdir()
     signed = World(tmp_path / "zwei")
@@ -397,7 +425,7 @@ def test_a_complete_update_changes_only_the_bundle_store_and_the_state(tmp_path)
     assert world.updater.run_once() == "aktualisiert"
     assert _tree(tmp_path) == before
     assert sorted(path.name for path in world.store.dir("0.3.0").iterdir()) == [
-        "docker-compose.yml", "manifest.json", "manifest.json.minisig", "mosquitto.conf"]
+        "docker-compose.yml", "manifest.json", "manifest.json.sig", "mosquitto.conf"]
 
 
 def test_the_running_version_is_current_without_download_report_or_state_change(tmp_path):
@@ -442,24 +470,61 @@ def test_one_bundle_field_alone_makes_the_version_an_offer(tmp_path, field, valu
     assert world.fetched == [] and world.compose.calls == []
 
 
+def _assert_signature_refused(world):
+    """Das Angebot wird mit `signatur_ungueltig` abgelehnt, ohne Bundle-Datei zu laden und ohne etwas zu starten."""
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "signatur_ungueltig")]
+    assert world.fetched == [BASE + "manifest.json"]
+    _assert_nothing_installed(world)
+    assert world.state().zertifikat_untergrenze is None
+
+
 def test_wrong_signature_is_refused(tmp_path):
     world = World(tmp_path)
-    other_secret, other_id, _ = keypair()
-    world.api.desired_answer["signature"] = sign(other_secret, other_id, world.served[BASE + "manifest.json"])
-    assert world.updater.run_once() == "abgelehnt"
-    assert world.api.results == [("0.3.0", "rollback", "signatur_ungueltig")]
-    assert not any(call[0] == "up" for call in world.compose.calls)
+    other_key, other_cert = world.neues_zertifikat(von=ZERTIFIKAT_VON, bis=ZERTIFIKAT_BIS)
+    world.api.desired_answer["signature"] = world.sign(world.served[BASE + "manifest.json"] + b" ", key=other_key,
+                                                       cert=other_cert)  # Signatur ueber andere Bytes
+    _assert_signature_refused(world)
 
 
-def test_placeholder_release_key_refuses_every_update(tmp_path):
+def test_signature_of_another_key_than_the_certificates_is_refused(tmp_path):
     world = World(tmp_path)
-    world.updater = updater.Updater(
-        kanal=world.api, store=world.store, compose=world.compose, fetch=world.fetch,
-        public_key_text="untrusted comment: SMARTHEAT-PLATZHALTER\nSMARTHEAT-PLATZHALTER\n",
-        state_path=world.state_path, version="0.2.0", health=lambda version: True, clock=lambda: 0.0,
-        sleep=world.sleep)
-    assert world.updater.run_once() == "abgelehnt"
-    assert world.api.results == [("0.3.0", "rollback", "signatur_ungueltig")]
+    other_key, _ = world.neues_zertifikat(von=ZERTIFIKAT_VON, bis=ZERTIFIKAT_BIS)
+    world.api.desired_answer["signature"] = world.sign(world.served[BASE + "manifest.json"], key=other_key)
+    _assert_signature_refused(world)
+
+
+def test_placeholder_release_roots_refuse_every_update(tmp_path):
+    world = World(tmp_path)
+    world.updater = world.rebuild(roots_text="-----SMARTHEAT-PLATZHALTER-----\n")
+    _assert_signature_refused(world)
+
+
+def test_abgelaufenes_zertifikat_wird_abgelehnt(tmp_path):
+    world = World(tmp_path)
+    world.now = ZERTIFIKAT_BIS + timedelta(seconds=1)
+    _assert_signature_refused(world)
+    (tmp_path / "zwei").mkdir()
+    gueltig = World(tmp_path / "zwei")
+    gueltig.now = ZERTIFIKAT_BIS
+    assert gueltig.updater.run_once() == "aktualisiert"  # Gegenprobe: bis zum letzten Augenblick gueltig
+
+
+def test_ein_noch_nicht_gueltiges_zertifikat_wird_abgelehnt(tmp_path):
+    world = World(tmp_path)
+    world.now = ZERTIFIKAT_VON - timedelta(seconds=1)
+    _assert_signature_refused(world)
+
+
+def test_bootstrap_anker_signiertes_bundle_wird_abgelehnt(tmp_path):
+    """Ein Zertifikat, das ein anderer Anker als der Schluesselbund des Geraets ausgestellt hat (etwa der Bootstrap-Anker
+    der Geraete-Identitaet), ist kein Release: nur die Roots in `release-roots.pem` zaehlen."""
+    world = World(tmp_path)
+    anker_key, anker_cert = neue_root(cn="Bootstrap-Anker")
+    fremd_key, fremd_cert = release(anker_key, anker_cert, von=ZERTIFIKAT_VON, bis=ZERTIFIKAT_BIS)
+    world.api.desired_answer["signature"] = world.sign(world.served[BASE + "manifest.json"], key=fremd_key,
+                                                       cert=fremd_cert)
+    _assert_signature_refused(world)
 
 
 @pytest.mark.parametrize("error", [kanal.KanalFehler("x")])
@@ -507,24 +572,24 @@ def test_rejected_list_is_capped(tmp_path):
     world.api.desired_answer["signature"] = "kaputt"
     assert world.updater.run_once() == "abgelehnt"
     rejected = world.state().rejected
-    assert len(rejected) == updater.MAX_REJECTED and rejected[-1] == "0.3.0" and "0.1.0" not in rejected
+    assert len(rejected) == updater.MAX_REJECTED and rejected[-1] == world.abgelehnt() and "0.1.0" not in rejected
 
 
 def test_recover_finishes_or_rolls_back_an_interrupted_update(tmp_path):
     world = World(tmp_path)
-    world.store.install("0.3.0", {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ})  # 0.2.0 legt World an
+    world.installiere_angebot()  # 0.2.0 legt World an
     updater.State(current="0.2.0", in_progress={"version": "0.3.0", "previous": "0.2.0", "since": 0.0}).save(
         world.state_path)
     world.healthy = False
     world.updater.recover()
     state = world.state()
-    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, ["0.3.0"])
+    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, [world.abgelehnt()])
     assert world.compose.calls[-1] == ("up", "0.2.0")
     assert world.api.results == [("0.3.0", "rollback", "ungesund")]
 
 
 def _interrupted(world, previous="0.2.0", **extra):
-    world.store.install("0.3.0", {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ})
+    world.installiere_angebot()
     updater.State(current=previous, rejected_context=world.context,
                   in_progress={"version": "0.3.0", "previous": previous, "since": 0.0, **extra}).save(world.state_path)
 
@@ -546,13 +611,14 @@ def test_recover_rolls_back_when_the_restart_fails(tmp_path):
     _interrupted(world)
     world.updater.recover()
     state = world.state()
-    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, ["0.3.0"])
+    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, [world.abgelehnt()])
     assert world.compose.calls == [("up", "0.3.0"), ("up", "0.2.0")]
     assert world.api.results == [("0.3.0", "rollback", "start_fehlgeschlagen")]
 
 
 def test_failed_rollback_is_kept_and_retried_before_anything_else(tmp_path):
     world = World(tmp_path, healthy=False, fail_up={"0.3.0", "0.2.0"})
+    erwartet = world.abgelehnt()
     assert world.updater.run_once() == "vorlaeufig"
     state = world.state()
     assert state.in_progress == {"version": "0.3.0", "previous": "0.2.0", "since": state.in_progress["since"],
@@ -567,7 +633,7 @@ def test_failed_rollback_is_kept_and_retried_before_anything_else(tmp_path):
     world.api.desired_answer = {"version": "0.2.0"}
     assert world.updater.run_once() == "aktuell"
     state = world.state()
-    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, ["0.3.0"])
+    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, [erwartet])
     assert world.api.results == [("0.3.0", "rollback", "start_fehlgeschlagen")]
 
 
@@ -576,7 +642,7 @@ def test_pending_rollback_survives_a_restart(tmp_path):
     _interrupted(world, rollback="ungesund")
     world.rebuild().recover()
     state = world.state()
-    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, ["0.3.0"])
+    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, [world.abgelehnt()])
     assert world.compose.calls == [("up", "0.2.0")]  # kein erneuter Start des abgelehnten Bundles
     assert world.api.results == [("0.3.0", "rollback", "ungesund")]
 
@@ -588,7 +654,7 @@ def test_rollback_without_a_previous_bundle_is_logged_and_reported(tmp_path, cap
                   in_progress={"version": "0.3.0", "previous": None, "since": 0.0}).save(world.state_path)
     world.updater.recover()
     state = world.state()
-    assert (state.current, state.in_progress, state.rejected) == (None, None, ["0.3.0"])
+    assert (state.current, state.in_progress, state.rejected) == (None, None, [world.abgelehnt()])
     assert world.compose.calls == [("up", "0.3.0")]  # kein Rueckweg-up
     assert world.api.results == [("0.3.0", "rollback", "ungesund")]
     assert "Kein Rueckweg moeglich" in caplog.text
@@ -597,14 +663,14 @@ def test_rollback_without_a_previous_bundle_is_logged_and_reported(tmp_path, cap
 def _reject_once(world):
     world.api.desired_answer["signature"] = "kaputt"
     assert world.updater.run_once() == "abgelehnt"
-    assert world.state().rejected == ["0.3.0"]
+    assert world.state().rejected == [world.abgelehnt()]
 
 
 def test_rejected_is_kept_for_the_same_updater_and_key(tmp_path):
     world = World(tmp_path)
     _reject_once(world)
     assert world.rebuild().run_once() == "aktuell"
-    assert world.state().rejected == ["0.3.0"]
+    assert world.state().rejected == [world.abgelehnt()]
 
 
 def test_rejected_is_cleared_after_an_updater_upgrade(tmp_path):
@@ -616,15 +682,269 @@ def test_rejected_is_cleared_after_an_updater_upgrade(tmp_path):
     assert world.state().rejected == []
 
 
-def test_rejected_is_cleared_after_a_release_key_change(tmp_path):
+def test_rejected_is_cleared_after_a_release_roots_change(tmp_path):
     world = World(tmp_path)
-    placeholder = "untrusted comment: SMARTHEAT-PLATZHALTER\nSMARTHEAT-PLATZHALTER\n"
-    placeholder_updater = world.rebuild(public_key_text=placeholder)
+    placeholder = "-----SMARTHEAT-PLATZHALTER-----\n"
+    placeholder_updater = world.rebuild(roots_text=placeholder)
     assert placeholder_updater.run_once() == "abgelehnt"
-    assert world.state().rejected_context == {"updater": "0.2.0", "key": "placeholder"}
-    assert world.rebuild(public_key_text=placeholder).run_once() == "aktuell"  # gleicher Schluessel: bleibt abgelehnt
-    assert world.rebuild().run_once() == "aktualisiert"  # echter Schluessel: neuer Versuch
+    assert world.state().rejected_context == {"updater": "0.2.0", "roots": "placeholder"}
+    assert world.rebuild(roots_text=placeholder).run_once() == "aktuell"  # gleicher Bund: bleibt abgelehnt
+    assert world.rebuild().run_once() == "aktualisiert"  # echter Bund: neuer Versuch
     assert world.state().rejected_context == world.context
+
+
+def test_rejected_is_cleared_after_an_added_root(tmp_path):
+    """Eine hinzugekommene Root aendert die Kennung des Schluesselbunds: die Ablehnung gilt nicht mehr."""
+    world = World(tmp_path)
+    _reject_once(world)
+    _, zweite_root = neue_root(cn="Zweite Root")
+    mehr = world.rebuild(roots_text=world.roots + roots_pem(zweite_root))
+    assert mehr.run_once() == "abgelehnt"  # das unveraendert kaputte Angebot wird neu versucht und neu abgelehnt
+    assert [reason for _, _, reason in world.api.results] == ["signatur_ungueltig", "signatur_ungueltig"]
+    assert world.state().rejected_context["roots"] != world.context["roots"]
+
+
+# --- Uhr, Untergrenze und Widerruf (SG-04, FR-25) ---
+
+
+def _nichts_versucht(world):
+    """Kein Abruf, keine Meldung, kein Start, nichts abgelehnt, die Untergrenze unberuehrt."""
+    assert world.fetched == [] and world.compose.calls == [] and world.api.results == []
+    state = world.state()
+    assert state.rejected == [] and state.in_progress is None and state.pending_reports == []
+
+
+def test_ohne_synchrone_uhr_wird_nichts_versucht_und_nichts_abgelehnt(tmp_path):
+    world = World(tmp_path)
+    world.now = None
+    assert world.updater.run_once() == "wartet_auf_zeit"
+    assert world.updater.run_once() == "wartet_auf_zeit"
+    _nichts_versucht(world)
+    assert world.state().zertifikat_untergrenze is None
+    world.now = JETZT  # Gegenprobe: mit Uhr geht dasselbe Angebot durch
+    assert world.updater.run_once() == "aktualisiert"
+
+
+def test_die_laufende_version_braucht_keine_uhr(tmp_path):
+    world = World(tmp_path)
+    world.now = None
+    world.api.desired_answer = {"version": "0.2.0"}
+    assert world.updater.run_once() == "aktuell"
+
+
+@pytest.fixture
+def status_datei(tmp_path):
+    return tmp_path / "host" / "status.json"
+
+
+def test_zeit_aus_status_liefert_die_zeit_bei_synchroner_uhr_und_frischem_status(tmp_path, status_datei):
+    _host_status(tmp_path, zeit_synchron=True)
+    jetzt = updater.zeit_aus_status(status_datei)
+    assert jetzt is not None and jetzt.tzinfo is not None and abs(datetime.now(UTC) - jetzt) < timedelta(seconds=5)
+    assert updater.zeit_aus_status(tmp_path / "host" / "gibt-es-nicht.json") is None
+
+
+@pytest.mark.parametrize(("alter", "gilt"), [
+    (timedelta(minutes=14, seconds=59), True),
+    (timedelta(minutes=15), True),
+    (timedelta(minutes=15, seconds=1), False),
+    (timedelta(hours=3), False),
+])
+def test_veralteter_status_gilt_als_nicht_synchron(tmp_path, status_datei, alter, gilt):
+    """Der Hoststatus schreibt je Minute; ein Status ueber 15 min alt (Dienst steht, Datei von gestern) sagt nichts mehr
+    ueber die Uhr."""
+    _host_status(tmp_path, zeit_synchron=True, ts=JETZT)
+    ergebnis = updater.zeit_aus_status(status_datei, jetzt=lambda: JETZT + alter)
+    assert ergebnis == (JETZT + alter if gilt else None)
+
+
+def test_unsynchroner_status_gibt_keine_zeit(tmp_path, status_datei):
+    _host_status(tmp_path, zeit_synchron=False)
+    assert updater.zeit_aus_status(status_datei) is None
+
+
+def test_ein_status_mit_zeitstempel_aus_der_zukunft_gibt_keine_zeit(tmp_path, status_datei):
+    """Die Uhr wurde seit dem Schreiben zurueckgestellt: der Status ist nicht mehr von dieser Uhr."""
+    _host_status(tmp_path, zeit_synchron=True, ts=JETZT)
+    assert updater.zeit_aus_status(status_datei, jetzt=lambda: JETZT - timedelta(minutes=5)) is None
+    assert updater.zeit_aus_status(status_datei, jetzt=lambda: JETZT - timedelta(seconds=61)) is None
+    assert updater.zeit_aus_status(status_datei, jetzt=lambda: JETZT - timedelta(seconds=60)) is not None  # NTP-Korrektur
+
+
+@pytest.mark.parametrize("inhalt", [
+    None,  # Datei fehlt
+    "kein json",
+    "[]",
+    json.dumps({"zeit_synchron": True}),
+    json.dumps({"ts": "2026-06-01T12:00:00+00:00"}),
+    json.dumps({"zeit_synchron": "ja", "ts": "2026-06-01T12:00:00+00:00"}),
+    json.dumps({"zeit_synchron": True, "ts": "gestern"}),
+    json.dumps({"zeit_synchron": True, "ts": 12}),
+    json.dumps({"zeit_synchron": True, "ts": "2026-06-01T12:00:00"}),  # ohne Zeitzone
+])
+def test_unbrauchbarer_status_gibt_keine_zeit(tmp_path, status_datei, inhalt):
+    if inhalt is not None:
+        status_datei.parent.mkdir(parents=True)
+        status_datei.write_text(inhalt)
+    assert updater.zeit_aus_status(status_datei, jetzt=lambda: datetime(2026, 6, 1, 12, 5, tzinfo=UTC)) is None
+
+
+def test_zeit_aus_status_nimmt_die_zeit_des_aufrufs(tmp_path, status_datei):
+    status_datei.parent.mkdir(parents=True)
+    status_datei.write_text(json.dumps({"zeit_synchron": True, "ts": "2026-06-01T12:00:00+00:00"}))
+    jetzt = datetime(2026, 6, 1, 12, 5, tzinfo=UTC)
+    assert updater.zeit_aus_status(status_datei, jetzt=lambda: jetzt) == jetzt
+
+
+def test_uhr_unter_der_untergrenze_wartet(tmp_path):
+    world = World(tmp_path)
+    updater.State(current="0.2.0", zertifikat_untergrenze=ZERTIFIKAT_VON.isoformat()).save(world.state_path)
+    world.now = ZERTIFIKAT_VON - timedelta(days=1)  # die Uhr zeigt eine Zeit vor dem juengsten angenommenen Zertifikat
+    assert world.updater.run_once() == "wartet_auf_zeit"
+    _nichts_versucht(world)
+    assert world.state().zertifikat_untergrenze == ZERTIFIKAT_VON.isoformat()
+    world.now = ZERTIFIKAT_VON  # Gegenprobe: genau auf der Untergrenze geht es
+    assert world.updater.run_once() == "aktualisiert"
+
+
+def test_die_untergrenze_wird_erst_nach_dem_wechsel_gesetzt(tmp_path):
+    world = World(tmp_path, healthy=False)
+    seen = []
+    world.compose.on_up = lambda version: seen.append(world.state().zertifikat_untergrenze)
+    assert world.updater.run_once() == "zurueckgerollt"
+    assert seen == [None, None]  # weder vor dem Start noch vor dem Rueckweg
+    assert world.state().zertifikat_untergrenze is None  # ein gescheitertes Update hebt sie nicht
+    (tmp_path / "zwei").mkdir()
+    gut = World(tmp_path / "zwei")
+    assert gut.updater.run_once() == "aktualisiert"
+    assert gut.state().zertifikat_untergrenze == ZERTIFIKAT_VON.isoformat()
+
+
+def test_neu_signierte_fassung_derselben_version_wird_wieder_versucht(tmp_path):
+    world = World(tmp_path)
+    world.now = ZERTIFIKAT_BIS + timedelta(days=1)  # das Zertifikat der ersten Fassung ist abgelaufen
+    assert world.updater.run_once() == "abgelehnt"
+    ersteres = world.abgelehnt()
+    assert world.state().rejected == [ersteres]
+    assert world.updater.run_once() == "aktuell"  # dieselbe Fassung bleibt abgelehnt, keine zweite Meldung
+    assert len(world.api.results) == 1
+    # eine neu signierte Fassung derselben Version (gleiche Bytes, neues Zertifikat) wird wieder versucht
+    key, cert = world.neues_zertifikat(von=ZERTIFIKAT_BIS, bis=ZERTIFIKAT_BIS + timedelta(days=365))
+    world.api.desired_answer["signature"] = world.sign(world.served[BASE + "manifest.json"], key=key, cert=cert)
+    assert world.abgelehnt() != ersteres
+    assert world.updater.run_once() == "aktualisiert"
+    assert world.state().current == "0.3.0" and world.api.results[-1] == ("0.3.0", "ok", "")
+
+
+def test_eine_neu_signierte_fassung_wird_auch_nach_einem_rueckweg_wieder_versucht(tmp_path):
+    """Der Eintrag eines Rueckwegs traegt die Signatur des installierten Bundles, nicht die des spaeteren Angebots."""
+    world = World(tmp_path, healthy=False)
+    assert world.updater.run_once() == "zurueckgerollt"
+    erstes = world.abgelehnt()
+    assert world.state().rejected == [erstes]
+    key, cert = world.neues_zertifikat(von=ZERTIFIKAT_VON, bis=ZERTIFIKAT_BIS)
+    world.api.desired_answer["signature"] = world.sign(world.served[BASE + "manifest.json"], key=key, cert=cert)
+    world.healthy = True
+    assert world.updater.run_once() == "aktualisiert"
+
+
+def test_neues_release_zertifikat_derselben_root_braucht_kein_geraeteupdate(tmp_path):
+    """Der Schluesselbund im Image bleibt: ein spaeteres Release-Zertifikat derselben Root (neuer Schluessel, spaeterer
+    Beginn) wird mit demselben `release-roots.pem` angenommen, auch von einem neu gestarteten Updater."""
+    world = World(tmp_path)
+    assert world.updater.run_once() == "aktualisiert"
+    key, cert = world.neues_zertifikat(von=ZERTIFIKAT_VON + timedelta(days=100), bis=ZERTIFIKAT_BIS + timedelta(days=100))
+    world.api.desired_answer = {**world.api.desired_answer, "version": "0.4.0"}
+    manifest = json.loads(world.served[BASE + "manifest.json"])
+    manifest["version"] = "0.4.0"
+    raw = json.dumps(manifest).encode()
+    world.served[BASE + "manifest.json"] = raw
+    world.api.desired_answer.update(manifest_sha256=hashlib.sha256(raw).hexdigest(),
+                                    signature=world.sign(raw, key=key, cert=cert))
+    world.now = ZERTIFIKAT_VON + timedelta(days=101)
+    assert world.rebuild(version="0.2.0").run_once() == "aktualisiert"
+    assert world.state().current == "0.4.0"
+    assert world.state().zertifikat_untergrenze == (ZERTIFIKAT_VON + timedelta(days=100)).isoformat()
+
+
+def test_nach_annahme_eines_neueren_zertifikats_wird_das_aeltere_abgelehnt(tmp_path):
+    """FR-25: ein gestohlener Schluessel (aelteres Zertifikat, noch gueltig) kann nach dem Wechsel auf ein neueres
+    Zertifikat kein Bundle mehr unterschieben; Gegenprobe: das neuere Zertifikat selbst bleibt annehmbar."""
+    world = World(tmp_path)
+    neu_von = ZERTIFIKAT_VON + timedelta(days=30)
+    neu_key, neu_cert = world.neues_zertifikat(von=neu_von, bis=ZERTIFIKAT_BIS)
+    manifest_030 = world.served[BASE + "manifest.json"]
+    world.api.desired_answer["signature"] = world.sign(manifest_030, key=neu_key, cert=neu_cert)
+    world.now = neu_von + timedelta(days=1)
+    assert world.updater.run_once() == "aktualisiert"
+    assert world.state().zertifikat_untergrenze == neu_von.isoformat()
+    # Angebot 0.4.0, signiert mit dem aelteren (gestohlenen) Zertifikat: abgelehnt, nichts geladen ausser dem Manifest
+    manifest = json.loads(manifest_030)
+    manifest["version"] = "0.4.0"
+    raw = json.dumps(manifest).encode()
+    world.served[BASE + "manifest.json"] = raw
+    world.fetched.clear()
+    world.compose.calls.clear()
+    world.api.desired_answer.update(version="0.4.0", manifest_sha256=hashlib.sha256(raw).hexdigest(),
+                                    signature=world.sign(raw))
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results[-1] == ("0.4.0", "rollback", "signatur_ungueltig")
+    assert world.fetched == [BASE + "manifest.json"] and world.compose.calls == []
+    assert world.state().current == "0.3.0"
+    # Gegenprobe: dasselbe Angebot mit dem neueren Zertifikat geht durch
+    world.api.desired_answer["signature"] = world.sign(raw, key=neu_key, cert=neu_cert)
+    assert world.updater.run_once() == "aktualisiert"
+    assert world.state().current == "0.4.0"
+
+
+def _untergrenze_setzen(world, wert):
+    state = world.state()
+    state.zertifikat_untergrenze = wert
+    state.save(world.state_path)
+
+
+def _interrupted_gesund(world, *, ab, untergrenze=None):
+    """Ein unterbrochenes Update auf 0.3.0 (Zertifikat ab `ab`), das beim Wiederaufnehmen gesund wird."""
+    _interrupted(world, zertifikat_ab=ab.isoformat() if isinstance(ab, datetime) else ab)
+    _untergrenze_setzen(world, untergrenze)
+    world.updater.recover()
+    assert world.state().current == "0.3.0" and world.state().in_progress is None
+
+
+def test_untergrenze_steigt_nur(tmp_path):
+    spaeter = ZERTIFIKAT_VON + timedelta(days=60)
+    for name in "abcd":
+        (tmp_path / name).mkdir()
+    # ein Wechsel mit einem Zertifikat ab ZERTIFIKAT_VON senkt eine hoehere Untergrenze nie
+    niedriger = World(tmp_path / "a")
+    _interrupted_gesund(niedriger, ab=ZERTIFIKAT_VON, untergrenze=spaeter.isoformat())
+    assert niedriger.state().zertifikat_untergrenze == spaeter.isoformat()
+    # ein Zertifikat ab einem spaeteren Zeitpunkt hebt sie
+    hoeher = World(tmp_path / "b")
+    _interrupted_gesund(hoeher, ab=spaeter + timedelta(days=1), untergrenze=spaeter.isoformat())
+    assert hoeher.state().zertifikat_untergrenze == (spaeter + timedelta(days=1)).isoformat()
+    # ohne bisherige Untergrenze setzt der erste Wechsel sie
+    erste = World(tmp_path / "c")
+    _interrupted_gesund(erste, ab=ZERTIFIKAT_VON)
+    assert erste.state().zertifikat_untergrenze == ZERTIFIKAT_VON.isoformat()
+    # ein unbrauchbarer Wert im Auftrag aendert sie nicht
+    kaputt = World(tmp_path / "d")
+    _interrupted_gesund(kaputt, ab="kaputt", untergrenze=spaeter.isoformat())
+    assert kaputt.state().zertifikat_untergrenze == spaeter.isoformat()
+
+
+@pytest.mark.parametrize("wert", ["gestern", 5, "2026-03-01T00:00:00", ["x"]])
+def test_eine_unbrauchbare_untergrenze_in_der_zustandsdatei_gilt_als_leer(tmp_path, wert):
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"current": "0.2.0", "zertifikat_untergrenze": wert}))
+    state = updater.State.load(path)
+    assert state.current == "0.2.0" and state.zertifikat_untergrenze is None
+
+
+def test_eine_untergrenze_mit_zeitzone_wird_geladen(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"current": "0.2.0", "zertifikat_untergrenze": "2026-03-01T00:00:00+00:00"}))
+    assert updater.State.load(path).zertifikat_untergrenze == "2026-03-01T00:00:00+00:00"
 
 
 def test_state_from_an_older_file_without_context_loads(tmp_path):
@@ -688,7 +1008,7 @@ def test_reachable_but_unhealthy_still_rolls_back_after_ten_minutes(tmp_path):
     _offline_until(world, 0)
     assert world.updater.run_once() == "zurueckgerollt"
     assert updater.HEALTH_SECONDS <= world.clock[0] < updater.HEALTH_SECONDS + updater.HEALTH_POLL_SECONDS
-    assert world.state().rejected == ["0.3.0"]
+    assert world.state().rejected == [world.abgelehnt()]
     assert world.api.reach_calls > 1  # Erreichbarkeit wird je Takt geprueft
     assert world.api.results == [("0.3.0", "rollback", "ungesund")]  # abgelehnt, nicht server_unerreichbar
 
@@ -878,9 +1198,9 @@ def test_bundle_dir_keeps_manifest_and_signature(tmp_path):
     assert world.updater.run_once() == "aktualisiert"
     target = world.store.dir("0.3.0")
     assert (target / "manifest.json").read_bytes() == world.served[BASE + "manifest.json"]
-    assert (target / "manifest.json.minisig").read_text() == world.api.desired_answer["signature"]
+    assert (target / "manifest.json.sig").read_text() == world.api.desired_answer["signature"]
     assert sorted(p.name for p in target.iterdir()) == [
-        "docker-compose.yml", "manifest.json", "manifest.json.minisig", "mosquitto.conf"]
+        "docker-compose.yml", "manifest.json", "manifest.json.sig", "mosquitto.conf"]
 
 
 HEALTHY = {"runtime": "healthy"}
@@ -1646,7 +1966,7 @@ def test_the_health_deadline_follows_the_monotonic_clock_not_the_wall_clock(tmp_
         monotonic[0] += seconds
 
     short = updater.Updater(kanal=world.api, store=world.store, compose=world.compose, fetch=world.fetch,
-                            public_key_text=world.public, state_path=world.state_path, version="0.2.0",
+                            roots_text=world.roots, uhr=lambda: world.now, state_path=world.state_path, version="0.2.0",
                             health=lambda version: False, sleep=sleep, health_seconds=30)  # Standard-Uhr
     assert short.run_once() == "zurueckgerollt"
     assert waits == [10, 10, 10] and monotonic[0] == 30.0
@@ -1741,9 +2061,20 @@ def _main_environment(monkeypatch, root: Path, *, offer=None) -> updater.Einstel
     (root / "data").mkdir(parents=True, exist_ok=True)
     if offer is not None:
         (root / "data" / "software_soll.json").write_text(json.dumps(offer))
-    (root / "release.pub").write_text("untrusted comment: x\nAAAA\n")
+    wurzel_key, wurzel = neue_root(von=datetime.now(UTC) - timedelta(days=10))
+    (root / "release-roots.pem").write_text(roots_pem(wurzel))
+    _host_status(root, zeit_synchron=True)
     monkeypatch.setenv("SHG_ROOT", str(root))
-    return updater.Einstellungen(release_pub=root / "release.pub")
+    return updater.Einstellungen(release_roots=root / "release-roots.pem")
+
+
+def _host_status(root: Path, *, zeit_synchron: bool, ts: datetime | None = None) -> None:
+    """`host/status.json` wie der Hoststatus-Dienst sie schreibt (hoststatus.collect/write), Zeitstempel `ts` (Standard:
+    jetzt)."""
+    stempel = ts or datetime.now(UTC)
+    hoststatus.write(root / "host" / "status.json", hoststatus.collect(
+        route_file=root / "keine-route", resolve=lambda *args: [], api_host=None, sync_flag=root / "kein-flag",
+        timedatectl=lambda: zeit_synchron, now=lambda: stempel))
 
 
 class _Stop(Exception):
@@ -1849,7 +2180,8 @@ def test_main_keeps_the_state_and_the_data_under_shg_root(tmp_path, monkeypatch,
     settings = _main_environment(monkeypatch, tmp_path, offer=offer)
     updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == "abgelehnt\n"
-    assert json.loads((tmp_path / "updater" / "state.json").read_text())["rejected"] == ["0.3.0"]
+    assert json.loads((tmp_path / "updater" / "state.json").read_text())["rejected"] == [
+        "0.3.0@" + hashlib.sha256(b"x").hexdigest()]
     assert json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"][0]["version"] == "0.3.0"
 
 
@@ -1885,9 +2217,9 @@ def test_main_accepts_an_http_offer_only_with_allow_http_in_the_settings(tmp_pat
 
 @pytest.mark.parametrize("value", ["1", "true", "0", ""])
 def test_main_ignores_every_environment_switch_of_the_old_names(tmp_path, monkeypatch, capsys, site, value):
-    """`SHG_UPDATER_ALLOW_HTTP`, `SHG_UPDATER_HEALTH_URL`, `SHG_UPDATER_HEALTH_SECONDS`, `SHG_RELEASE_PUB` und
-    `SHG_COMPOSE_PROJECT` gelten nicht mehr: in einer Umgebung, die sie setzt (etwa einer gateway.env mit
-    `SHG_UPDATER_ALLOW_HTTP=1`), bleibt http abgelehnt, das Projekt `smartheat`, der Schluessel der Einstellungen."""
+    """`SHG_UPDATER_ALLOW_HTTP`, `SHG_UPDATER_HEALTH_URL`, `SHG_UPDATER_HEALTH_SECONDS`, `SHG_RELEASE_PUB`,
+    `SHG_RELEASE_ROOTS` und `SHG_COMPOSE_PROJECT` gelten nicht mehr: in einer Umgebung, die sie setzt (etwa einer gateway.env mit
+    `SHG_UPDATER_ALLOW_HTTP=1`), bleibt http abgelehnt, das Projekt `smartheat`, der Schluesselbund der Einstellungen."""
     offer = {"version": "0.3.0", "manifest_url": site.url + "/0.3.0/manifest.json", "manifest_sha256": "a" * 64,
              "signature": "x"}
     settings = _main_environment(monkeypatch, tmp_path, offer=offer)
@@ -1895,18 +2227,41 @@ def test_main_ignores_every_environment_switch_of_the_old_names(tmp_path, monkey
     monkeypatch.setenv("SHG_UPDATER_HEALTH_URL", site.url + "/gesundheit")
     monkeypatch.setenv("SHG_UPDATER_HEALTH_SECONDS", "0.05")
     monkeypatch.setenv("SHG_RELEASE_PUB", str(tmp_path / "gibt-es-nicht.pub"))
+    monkeypatch.setenv("SHG_RELEASE_ROOTS", str(tmp_path / "gibt-es-nicht.pem"))
     monkeypatch.setenv("SHG_COMPOSE_PROJECT", "anders")
-    updater.main(["--once"], einstellungen=settings)  # liest release.pub aus den Einstellungen, sonst FileNotFoundError
+    updater.main(["--once"], einstellungen=settings)  # liest release-roots.pem aus den Einstellungen, sonst FileNotFoundError
     assert capsys.readouterr().out == "abgelehnt\n" and site.hits == []
     reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
     assert [(m["version"], m["reason"]) for m in reports] == [("0.3.0", "manifest_ungueltig")]
+
+
+@pytest.mark.parametrize(("synchron", "alter"), [(False, timedelta(0)), (True, timedelta(minutes=16))])
+def test_main_wartet_ohne_synchrone_uhr_aus_dem_hoststatus(tmp_path, monkeypatch, capsys, site, synchron, alter):
+    """`main` liest die Uhr aus `<SHG_ROOT>/host/status.json`: unsynchron oder veraltet heisst kein Versuch und keine
+    Ablehnung (das Angebot waere sonst als http-Adresse abgelehnt worden)."""
+    offer = {"version": "0.3.0", "manifest_url": site.url + "/0.3.0/manifest.json", "manifest_sha256": "a" * 64,
+             "signature": "x"}
+    settings = _main_environment(monkeypatch, tmp_path, offer=offer)
+    _host_status(tmp_path, zeit_synchron=synchron, ts=datetime.now(UTC) - alter)
+    updater.main(["--once"], einstellungen=settings)
+    assert capsys.readouterr().out == "wartet_auf_zeit\n" and site.hits == []
+    assert not (tmp_path / "data" / "software_meldungen.json").exists()
+
+
+def test_main_ohne_hoststatus_wartet_auf_die_zeit(tmp_path, monkeypatch, capsys):
+    offer = {"version": "0.3.0", "manifest_url": "https://x.example.test/m.json", "manifest_sha256": "a" * 64,
+             "signature": "x"}
+    settings = _main_environment(monkeypatch, tmp_path, offer=offer)
+    (tmp_path / "host" / "status.json").unlink()
+    updater.main(["--once"], einstellungen=settings)
+    assert capsys.readouterr().out == "wartet_auf_zeit\n"
 
 
 def test_the_default_settings_are_the_production_values():
     """Die Standardwerte von `Einstellungen` sind die des Geraets (install.sh: Schluessel unter /opt/smartheat/host,
     Projekt `smartheat`, Gesundheitsserver des Gateways auf 127.0.0.1:8081, nicht die Diagnoseseite auf Port 80); http bleibt aus."""
     assert updater.Einstellungen() == updater.Einstellungen(
-        release_pub=Path("/opt/smartheat/host/release.pub"), allow_http=False, health_url="http://127.0.0.1:8081/healthz",
+        release_roots=Path("/opt/smartheat/host/release-roots.pem"), allow_http=False, health_url="http://127.0.0.1:8081/healthz",
         health_seconds=600, compose_project="smartheat")
     assert updater.Einstellungen().health_seconds == updater.HEALTH_SECONDS == 600
     assert updater.Einstellungen().compose_project == bundles.COMPOSE_PROJECT
@@ -1979,24 +2334,27 @@ HEALTHY_BODY = json.dumps({"server_ok": True, "runtime_status": None}).encode()
 UNHEALTHY_BODY = json.dumps({"server_ok": False, "runtime_status": None}).encode()
 
 
-def _main_update(monkeypatch, root, site, *, signed_by_other_key=False, release_pub_of_other_key=False,
+def _main_update(monkeypatch, root, site, *, signed_by_other_root=False, release_roots_of_other_root=False,
                  health_path="/healthz", health_body=HEALTHY_BODY, project=None, health_seconds=None,
                  min_updater_version="0.1.0") -> updater.Einstellungen:
     """Bereitet einen echten `main --once` vor: ein signiertes Bundle 0.3.0 auf dem lokalen Server, das Angebot in
-    `data/software_soll.json`, `release.pub`, ein erreichbarer Broker (der Server selbst) und die Einstellungen (Rueckgabe)."""
-    secret, key_id, public = keypair()
-    other_secret, other_id, other_public = keypair()
+    `data/software_soll.json`, `release-roots.pem`, ein erreichbarer Broker (der Server selbst) und die Einstellungen
+    (Rueckgabe). Zertifikate gelten um die echte Zeit, `host/status.json` meldet eine synchrone Uhr."""
+    jetzt = datetime.now(UTC)
+    roots = [neue_root(cn=name, von=jetzt - timedelta(days=10)) for name in ("Root", "Andere Root")]
+    keys = [release(*pair, von=jetzt - timedelta(days=1), bis=jetzt + timedelta(days=30)) for pair in roots]
+    signer = keys[1 if signed_by_other_root else 0]
     files = {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ}
     raw = json.dumps({"version": "0.3.0", "min_updater_version": min_updater_version,
                       "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()},
                       "images": {"gateway": "ghcr.io/x/gw@sha256:" + "a" * 64}}).encode()
-    signature = sign(*((other_secret, other_id) if signed_by_other_key else (secret, key_id)), raw)
+    signature = signiere(*signer, raw)
     site.routes.update({"/0.3.0/manifest.json": raw, **{f"/0.3.0/{name}": data for name, data in files.items()},
                         health_path: health_body})
     offer = {"version": "0.3.0", "manifest_url": site.url + "/0.3.0/manifest.json", "signature": signature,
              "manifest_sha256": hashlib.sha256(raw).hexdigest()}
     settings = _main_environment(monkeypatch, root, offer=offer)
-    (root / "release.pub").write_text(other_public if release_pub_of_other_key else public)
+    (root / "release-roots.pem").write_text(roots_pem(roots[1][1] if release_roots_of_other_root else roots[0][1]))
     (root / "data" / "device").mkdir()
     (root / "data" / "device" / "endpoint.json").write_text(json.dumps({"host": "127.0.0.1", "port": site.port}))
     settings = dataclasses.replace(settings, allow_http=True, health_url=site.url + health_path)
@@ -2007,12 +2365,12 @@ def _main_update(monkeypatch, root, site, *, signed_by_other_key=False, release_
     return settings
 
 
-@pytest.mark.parametrize(("release_pub_of_other_key", "outcome"), [(False, "aktualisiert"), (True, "abgelehnt")])
-def test_main_verifies_the_bundle_with_the_key_of_the_release_pub_setting(
-        tmp_path, monkeypatch, capsys, site, docker, fast_sleep, release_pub_of_other_key, outcome):
-    """`Einstellungen.release_pub` nennt den Schluessel: ein Bundle, das ein anderer Schluessel signiert hat (hier: die Datei traegt
-    einen anderen oeffentlichen Schluessel), wird abgelehnt und nie gestartet, mit dem richtigen angenommen."""
-    settings = _main_update(monkeypatch, tmp_path, site, release_pub_of_other_key=release_pub_of_other_key)
+@pytest.mark.parametrize(("release_roots_of_other_root", "outcome"), [(False, "aktualisiert"), (True, "abgelehnt")])
+def test_main_verifies_the_bundle_with_the_roots_of_the_release_roots_setting(
+        tmp_path, monkeypatch, capsys, site, docker, fast_sleep, release_roots_of_other_root, outcome):
+    """`Einstellungen.release_roots` nennt den Schluesselbund: ein Bundle, dessen Zertifikat eine andere Root ausgestellt hat
+    (hier: die Datei traegt nur diese andere Root), wird abgelehnt und nie gestartet, mit der richtigen angenommen."""
+    settings = _main_update(monkeypatch, tmp_path, site, release_roots_of_other_root=release_roots_of_other_root)
     updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == outcome + "\n"
     started = [call for call in docker.calls if "up" in call]
@@ -2111,7 +2469,7 @@ def test_older_desired_version_is_refused_without_download(tmp_path, current):
     assert world.updater.run_once() == "abgelehnt"
     assert world.api.results == [("0.3.0", "rollback", "version_zu_alt")]
     state = world.state()
-    assert state.current == current and "0.3.0" in state.rejected
+    assert state.current == current and state.rejected == [world.abgelehnt()]
     assert world.compose.calls == []
     assert world.updater.run_once() == "aktuell"  # bleibt abgelehnt, keine zweite Meldung
     assert len(world.api.results) == 1
@@ -2166,13 +2524,13 @@ def test_reachability_is_the_broker_not_the_bundle(tmp_path):
     # ist der Broker nicht erreichbar, ruht die Frist und die Version wird nicht abgelehnt.
     world = World(tmp_path, healthy=False)
     assert world.updater.run_once() == "zurueckgerollt"
-    assert world.api.results[-1] == ("0.3.0", "rollback", "ungesund") and "0.3.0" in world.state().rejected
+    assert world.api.results[-1] == ("0.3.0", "rollback", "ungesund") and world.state().rejected == [world.abgelehnt()]
     (tmp_path / "zwei").mkdir()
     offline = World(tmp_path / "zwei", healthy=False)
     offline.api.offline = True
     assert offline.updater.run_once() == "zurueckgerollt"
     assert offline.api.results[-1] == ("0.3.0", "rollback", updater.RETRY_REASON)
-    assert "0.3.0" not in offline.state().rejected
+    assert offline.state().rejected == []
 
 
 def test_only_the_runtime_container_must_be_healthy():

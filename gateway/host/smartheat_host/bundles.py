@@ -1,6 +1,6 @@
 """Bundles des Updaters: Manifest, Pruefung der Compose-Datei, Ablage unter bundles/<version>/
 und Compose-Aufrufe. Ein Bundle = Compose-Datei (nur Images mit Digest) + mosquitto.conf; im Bundle-Ordner liegen
-zusaetzlich manifest.json und manifest.json.minisig (Nachweis, was signiert war; exists() verlangt sie nicht, damit
+zusaetzlich manifest.json und manifest.json.sig (Nachweis, was signiert war; exists() verlangt sie nicht, damit
 aeltere Ordner gueltig bleiben)."""
 import json
 import os
@@ -12,7 +12,7 @@ from pathlib import Path
 
 MANIFEST_FILES = ("docker-compose.yml", "mosquitto.conf")
 MANIFEST_NAME = "manifest.json"
-SIGNATURE_NAME = "manifest.json.minisig"
+SIGNATURE_NAME = "manifest.json.sig"
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 _SHA = re.compile(r"[0-9a-f]{64}")
 _IMAGE = re.compile(r"^\s*image:\s*(.*?)\s*$", re.MULTILINE)
