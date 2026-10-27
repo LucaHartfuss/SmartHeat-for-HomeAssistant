@@ -29,10 +29,10 @@ ignore = ["E501"]
 "vulture_ausnahmen.py" = ["B018", "F821"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["build_bundle", "verify_bundle", "ca", "signieren", "smartheat_host", "smartheat_gateway"]
+known-first-party = ["build_bundle", "verify_bundle", "ca", "signieren", "rauc_signieren", "smartheat_host", "smartheat_gateway"]
 
 [tool.pyright]
-include = ["build_bundle.py", "verify_bundle.py", "ca.py", "signieren.py"]
+include = ["build_bundle.py", "verify_bundle.py", "ca.py", "signieren.py", "rauc_signieren.py"]
 extraPaths = ["../host", "../src"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
