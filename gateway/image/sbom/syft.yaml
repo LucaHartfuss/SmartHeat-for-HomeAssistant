@@ -1,0 +1,24 @@
+# syft-Konfiguration fuer die SBOM des Images (rpi-image-gen, Variable sbom.syft_config in config/smartheat-gateway.yaml).
+# Wie die Vorlage layer/sbom/syft.yaml von rpi-image-gen v2.9.0, aber Ausgabe CycloneDX-JSON statt SPDX-JSON: S-10 verlangt
+# je Artefakt eine SBOM im Format CycloneDX (wie bei Add-on und Container-Images).
+file:
+  metadata:
+    selection: all
+    digests:
+      - sha256
+
+output:
+  - cyclonedx-json
+
+format:
+  pretty: true
+
+source:
+  file:
+    digests:
+      - sha256
+
+package:
+  cataloger:
+    scope:
+      - squashed

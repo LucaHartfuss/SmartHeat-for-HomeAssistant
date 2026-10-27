@@ -272,6 +272,18 @@ def test_config_builds_the_pi5_nvme_image_with_image_rota():
         assert gone not in config, gone
 
 
+def test_image_sbom_is_cyclonedx():
+    """S-10: je Artefakt eine SBOM im Format CycloneDX; rpi-image-gen schreibt sonst SPDX-JSON (layer/sbom/syft.yaml)."""
+    assert _config_value("sbom", "syft_config") == "${@SRCROOT}/sbom/syft.yaml"
+    syft = (IMAGE / "sbom" / "syft.yaml").read_text()
+    outputs = re.search(r"^output:\n((?:  - .+\n)+)", syft, re.MULTILINE)
+    assert outputs and re.findall(r"^  - (.+)$", outputs.group(1), re.MULTILINE) == ["cyclonedx-json"]
+    assert not [ln for ln in syft.splitlines() if "spdx" in ln.lower() and not ln.startswith("#")]
+    build = (IMAGE / "build.sh").read_text()
+    assert "SPDX" not in build and "CycloneDX" in build
+    assert "SPDX" not in (GW / "CHANGELOG.md").read_text().split("## 0.8.0")[0]
+
+
 def test_pins_are_the_same_everywhere():
     """Basis-Image per Digest und rpi-image-gen per Commit (v2.9.0), ueberall dieselben Werte."""
     digests = set()
@@ -554,7 +566,7 @@ def test_overlay_declares_the_shared_paths_the_watchdog_and_the_werk_mount():
     mount = [ln for ln in (overlay / "systemd/system/werk.mount").read_text().splitlines()
              if ln and not ln.startswith("#")]
     assert "What=/dev/disk/by-partlabel/werk" in mount and "Where=/werk" in mount and "Type=ext4" in mount
-    assert "Options=ro,nodev,nosuid,noexec,noatime" in mount
+    assert "Options=ro,nodev,nosuid,noexec,noatime,nofail" in mount  # nofail: keine 90 s Wartezeit ohne werk
     assert "WantedBy=multi-user.target" in mount  # nicht local-fs.target: eine fehlende Partition haelt den Start nicht auf
     assert not any(ln.startswith(("Requires", "Before=local-fs")) for ln in mount)
 

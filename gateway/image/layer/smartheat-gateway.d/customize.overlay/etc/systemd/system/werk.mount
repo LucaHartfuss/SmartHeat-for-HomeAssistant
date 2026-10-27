@@ -1,13 +1,14 @@
 [Unit]
 Description=SmartHeat-Gateway Werkspartition (nur lesend)
-# Kein Teil von local-fs.target: fehlt die Partition oder ist sie beschaedigt, startet das System trotzdem
-# (smartheat-werk.service meldet dann keine gueltige Werksdatei, Anmeldung nicht moeglich).
+# Kein Teil von local-fs.target, dazu nofail: fehlt die Partition oder ist sie beschaedigt, startet das System trotzdem
+# und wartet nicht bis zu 90 s auf das Geraet (smartheat-werk.service meldet dann keine gueltige Werksdatei,
+# Anmeldung nicht moeglich).
 
 [Mount]
 What=/dev/disk/by-partlabel/werk
 Where=/werk
 Type=ext4
-Options=ro,nodev,nosuid,noexec,noatime
+Options=ro,nodev,nosuid,noexec,noatime,nofail
 
 [Install]
 WantedBy=multi-user.target

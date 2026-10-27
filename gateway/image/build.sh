@@ -3,7 +3,7 @@
 # (linux/arm64, make_image.sh) mit /src (Repo, nur lesend), /stage (prepare.sh, nur lesend) und /out. rpi-image-gen
 # per Commit gepinnt (v2.9.0). Aufbau laut v2.9.0: -S = Quellbaum mit config/, layer/ und hooks/ (hier gateway/image),
 # -B = Arbeitsordner (muss existieren). Ergebnis der Deploy-Hooks: <B>/deploy-<IGconf_artefact_version>/ mit
-# <Image-Name>.img.zst, der SBOM (syft, SPDX-JSON; im Deploy-Ordner filesystem-<version>.sbom.zst, erster Bau 2026-10-27) und
+# <Image-Name>.img.zst, der SBOM (syft, CycloneDX-JSON laut sbom/syft.yaml; im Deploy-Ordner filesystem-<version>.sbom.zst, erster Bau 2026-10-27) und
 # - von hooks/deploy50-slot-images - system-<version>.ext4 und boot-<version>.vfat (rohe Slot-Images fuer das System-Bundle).
 # Nach /out kommen je Datei eine Kopie und eine .sha256: smartheat-gateway-<version>.img.zst, system-<version>.ext4,
 # boot-<version>.vfat und smartheat-gateway-<version>.sbom[.zst].

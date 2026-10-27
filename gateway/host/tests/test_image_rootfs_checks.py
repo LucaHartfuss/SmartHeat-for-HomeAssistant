@@ -32,7 +32,7 @@ GOOD_SHARED = (
 )
 GOOD_WERK_MOUNT = (
     "[Unit]\nDescription=Werk\n\n[Mount]\nWhat=/dev/disk/by-partlabel/werk\nWhere=/werk\nType=ext4\n"
-    "Options=ro,nodev,nosuid,noexec,noatime\n\n[Install]\nWantedBy=multi-user.target\n"
+    "Options=ro,nodev,nosuid,noexec,noatime,nofail\n\n[Install]\nWantedBy=multi-user.target\n"
 )
 GOOD_WATCHDOG = "[Manager]\nRuntimeWatchdogSec=10s\nRebootWatchdogSec=5min\n"
 GOOD_RAUC_CONF = "[system]\ncompatible=smartheat-gateway-pi5\n\n[slot.rootfs.0]\nbootname=A\n\n[slot.rootfs.1]\nbootname=B\n"
@@ -741,6 +741,7 @@ def _replace(path: Path, old: str, new: str) -> None:
     (lambda r: _replace(r / WERK_MOUNT, "nodev,", ""), "Option nodev fehlt"),
     (lambda r: _replace(r / WERK_MOUNT, "nosuid,", ""), "Option nosuid fehlt"),
     (lambda r: _replace(r / WERK_MOUNT, "noexec,", ""), "Option noexec fehlt"),
+    (lambda r: _replace(r / WERK_MOUNT, ",nofail", ""), "Option nofail fehlt"),
     (lambda r: (r / WANTS / "werk.mount").unlink(), "werk.mount nicht aktiviert"),
     (lambda r: (r / "werk").rmdir(), "/werk fehlt"),
     # Watchdog
@@ -771,7 +772,7 @@ def _replace(path: Path, old: str, new: str) -> None:
      "52smartheat-unattended"),
 ], ids=["no-shared", "shared-no-version", "shared-no-smartheat", "shared-no-docker", "shared-no-containerd",
         "shared-no-rauc", "shared-no-timesync", "no-werk-mount", "werk-where", "werk-what", "werk-not-ro",
-        "werk-no-nodev", "werk-no-nosuid", "werk-no-noexec", "werk-not-enabled", "no-werk-dir", "no-watchdog",
+        "werk-no-nodev", "werk-no-nosuid", "werk-no-noexec", "werk-no-nofail", "werk-not-enabled", "no-werk-dir", "no-watchdog",
         "watchdog-30s", "reboot-watchdog-10min", "reboot-watchdog-missing", "no-rauc-conf", "empty-rauc-conf",
         "rauc-bootname", "rauc-not-enabled", "mark-good-linked", "mark-good-enabled",
         "usbboot-rule", "usbboot-hook", "unattended-upgrades", "docker-io", "docker-compose-v1", "apt-conf"])

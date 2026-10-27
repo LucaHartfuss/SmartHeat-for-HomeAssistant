@@ -157,7 +157,7 @@ else
   grep -qx 'Where=/werk' "$WERK_MOUNT" || fail "werk.mount: Where=/werk fehlt"
   grep -qx 'What=/dev/disk/by-partlabel/werk' "$WERK_MOUNT" || fail "werk.mount: What=/dev/disk/by-partlabel/werk fehlt"
   options="$(sed -n 's/^Options=//p' "$WERK_MOUNT")"
-  for opt in ro nodev nosuid noexec; do
+  for opt in ro nodev nosuid noexec nofail; do
     case ",$options," in *",$opt,"*) ;; *) fail "werk.mount: Option $opt fehlt (Options=$options)" ;; esac
   done
   [ -L "$WANTS/werk.mount" ] || fail "werk.mount nicht aktiviert"

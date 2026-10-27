@@ -37,6 +37,10 @@ locale:
   keyboard_layout: German
   timezone: Europe/Berlin
 
+# SBOM als CycloneDX-JSON (S-10); rpi-image-gen schreibt sonst SPDX-JSON.
+sbom:
+  syft_config: ${@SRCROOT}/sbom/syft.yaml
+
 layer:
   base: trixie-minbase
   shg: smartheat-gateway

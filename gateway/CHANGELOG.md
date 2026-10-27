@@ -32,7 +32,7 @@
   (`host/apt/` entfaellt, der Paketstand aendert sich nur mit einem neuen System-Bundle). Die Pruefungen des Bauergebnisses
   laufen als Hooks (`hooks/postbuild50-rootfs-checks`, `hooks/finalize10-bootfs-checks`; v2.9.0 ignoriert den alten
   `post-build.sh` ohne Meldung). `make_image.sh` liefert zusaetzlich `system-<Version>.ext4`, `boot-<Version>.vfat` und die
-  SBOM (`smartheat-gateway-<Version>.sbom.zst`, syft/SPDX-JSON), je mit `.sha256`; `--pilot-ssh` bricht bis AP-05b ab.
+  SBOM (`smartheat-gateway-<Version>.sbom.zst`, syft, CycloneDX-JSON laut `image/sbom/syft.yaml`, S-10), je mit `.sha256`; `--pilot-ssh` bricht bis AP-05b ab.
 
 ## 0.8.0
 
