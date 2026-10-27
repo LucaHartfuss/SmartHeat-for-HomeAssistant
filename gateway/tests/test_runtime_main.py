@@ -1,5 +1,6 @@
 """Ein Prozess aus Geraetekern und Laufzeit - Neustart bei neuer Konfiguration mit sauberem
 Trennen, Aufraeumen nach dem Entfernen, Raum im Prozess, Bedienung beim Start, Lebenszeichen."""
+import http.client
 import json
 import urllib.request
 from pathlib import Path
@@ -13,7 +14,7 @@ from world import GatewayWorld
 
 from smartheat_core import dateien
 from smartheat_device import prozess
-from smartheat_gateway import runtime_main
+from smartheat_gateway import anmeldung, runtime_main
 from smartheat_gateway.bus import BUS_PORT
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
@@ -542,8 +543,29 @@ def test_vorbereiten_returns_host_and_device_with_the_diagnosis_page_up(world, v
         geraet, device = runtime_main.vorbereiten(world.paths, vor_dem_start.mirror)
         assert geraet.device is device and device.host is geraet
         port = server[0].server_address[1]
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as antwort:
+        # Die Seite auf Port 80 verlangt die Anmeldung mit dem Passwort aus werk.json der Host-Kopie (GW 8, echtes scrypt)
+        with pytest.raises(urllib.error.HTTPError) as ohne_sitzung:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5)
+        assert ohne_sitzung.value.code == 401
+        eintrag = anmeldung.passwort_eintrag("Etikett-Passwort", bytes(16))
+        dateien.schreiben_json(world.host_dir / "werk.json", {
+            "format": "smartheat-werk-1", "seriennummer": "SHG-0001", "hostname": "smartheat-0001",
+            "passwort": eintrag, "bespielt": "2026-10-27", "hardware": "Raspberry Pi 5"}, modus=dateien.LESBAR)
+        verbindung = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        verbindung.request("POST", "/anmelden", "passwort=Etikett-Passwort",
+                           {"Content-Type": "application/x-www-form-urlencoded"})
+        antwort = verbindung.getresponse()
+        antwort.read()
+        assert antwort.status == 303
+        cookie = antwort.getheader("Set-Cookie", "").split(";")[0]
+        verbindung.close()
+        sitzung = {"Cookie": cookie}
+        anfrage = urllib.request.Request(f"http://127.0.0.1:{port}/healthz", headers=sitzung)
+        with urllib.request.urlopen(anfrage, timeout=5) as antwort:
             assert json.loads(antwort.read())["server_ok"] is False  # Geraete-Thread laeuft noch nicht
+        seite = urllib.request.Request(f"http://127.0.0.1:{port}/", headers=sitzung)
+        with urllib.request.urlopen(seite, timeout=5) as antwort:
+            assert "SHG-0001" in antwort.read().decode()
         health_port = server[1].server_address[1]  # der zweite Server ist der Gesundheitsserver (nur /healthz)
         assert health_port != port
         with urllib.request.urlopen(f"http://127.0.0.1:{health_port}/healthz", timeout=5) as antwort:

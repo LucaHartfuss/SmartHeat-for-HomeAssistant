@@ -1,11 +1,14 @@
 """Diagnoseseite auf dem Geraetekern - Zustand statt Uebernahmestatus, Hinweise, eigene Meldungen,
-abgelehnte Konfiguration, QR-Code nur solange nicht eingerichtet. Schutz gegen DNS-Rebinding und fremde Clients."""
+abgelehnte Konfiguration, Code nur solange nicht eingerichtet und nach einem Knopfdruck. Schutz gegen DNS-Rebinding und
+fremde Clients. Die Seite verlangt eine Sitzung (Anmeldung: test_anmeldung.py); die Tests hier fragen mit einer
+gueltigen Sitzung (COOKIE), der Gesundheitsserver braucht keine."""
 import http.client
 import json
 import socket
 import threading
 import time
 import urllib.request
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +18,7 @@ from smartheat_core import dateien
 from smartheat_device import wire
 from smartheat_device.host import Anzeige
 from smartheat_gateway import diagnose as diagnostics
+from smartheat_gateway.anmeldung import Zugang
 from smartheat_gateway.diagnose import (
     ZUSTAND_TEXTE,
     host_allowed,
@@ -25,6 +29,8 @@ from smartheat_gateway.diagnose import (
 )
 from smartheat_gateway.paths import Paths
 
+ZUGANG = Zugang(Path("/gibt/es/nicht/werk.json"))  # ohne Werk; die Sitzung genuegt fuer die Seite
+COOKIE = f"shg_sitzung={ZUGANG.sitzungen.neu()}"
 SNAPSHOT = {
     "geraet": "shg-abcdefghijklmnop", "zustand": "nicht_uebernommen", "eingerichtet": False,
     "versionen": {"gateway": "0.6.0"}, "server_ok": True, "laufzeit": None, "zigbee_stick": True, "host": {},
@@ -91,12 +97,17 @@ def test_page_lists_hints_own_messages_and_a_rejected_configuration():
 
 
 def test_healthz_and_page_over_http():
-    server = start_server(0, lambda: SNAPSHOT)
+    server = start_server(0, lambda: SNAPSHOT, zugang=ZUGANG)
     port = server.server_address[1]
+
+    def abrufen(pfad):
+        return urllib.request.urlopen(
+            urllib.request.Request(f"http://127.0.0.1:{port}{pfad}", headers={"Cookie": COOKIE}), timeout=5)
+
     try:
-        health = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5))
+        health = json.load(abrufen("/healthz"))
         assert health == {"server_ok": True, "runtime_status": None, "zustand": "nicht_uebernommen"}
-        response = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5)
+        response = abrufen("/")
         page = response.read().decode()
         assert "shg-abcdefghijklmnop" in page and 'http-equiv="refresh"' in page
         assert response.headers["Cache-Control"] == "no-store"
@@ -158,6 +169,7 @@ def _get(port: int, path: str, host: str) -> tuple[int, bytes, http.client.HTTPM
     try:
         connection.putrequest("GET", path, skip_host=True)
         connection.putheader("Host", host)
+        connection.putheader("Cookie", COOKIE)
         connection.endheaders()
         response = connection.getresponse()
         return response.status, response.read(), response.headers
@@ -184,7 +196,8 @@ def test_docker_bridge_and_zone_scoped_clients_are_local():
 
 def test_foreign_client_gets_403_without_content_on_every_route(monkeypatch):
     monkeypatch.setattr(diagnostics, "client_allowed", lambda address: False)
-    server = start_server(0, lambda: {"server_ok": True, "laufzeit": "regelt", "uebernommen": False, "code": "ABCDEFGHJKLM"})
+    server = start_server(0, lambda: {"server_ok": True, "laufzeit": "regelt", "uebernommen": False, "code": "ABCDEFGHJKLM"},
+                          zugang=ZUGANG)
     port = server.server_address[1]
     try:
         for path in ("/", "/healthz", "/unbekannt"):
@@ -197,7 +210,7 @@ def test_foreign_client_gets_403_without_content_on_every_route(monkeypatch):
 
 @pytest.mark.parametrize("path", ["/", "/healthz"])
 def test_dns_rebinding_host_is_refused_on_every_route(path):
-    server = start_server(0, lambda: SNAPSHOT, parse_hostnames("shg.lan"))
+    server = start_server(0, lambda: SNAPSHOT, parse_hostnames("shg.lan"), zugang=ZUGANG)
     port = server.server_address[1]
     try:
         status, body, headers = _get(port, path, f"evil.example:{port}")
@@ -235,7 +248,7 @@ def _lan_server_module():
         calls.append(1)
         return SNAPSHOT
 
-    server = start_server(0, snapshot)
+    server = start_server(0, snapshot, zugang=ZUGANG)
     try:
         yield SimpleNamespace(port=server.server_address[1], calls=calls)
     finally:
@@ -259,7 +272,8 @@ def lan_server(_lan_server_module):
 def _anfrage(port: int, method: str, path: str, body: bytes | None = None, timeout: float = 5) -> tuple[int, bytes]:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     try:
-        connection.request(method, path, body=body, headers={"Content-Type": "application/json"} if body else {})
+        kopf = {"Cookie": COOKIE, **({"Content-Type": "application/json"} if body else {})}
+        connection.request(method, path, body=body, headers=kopf)
         response = connection.getresponse()
         return response.status, response.read()
     finally:
@@ -297,7 +311,7 @@ def test_a_silent_or_half_sent_connection_does_not_block_a_second_request(lan_se
     lan_server.sockets.append(socket.create_connection(("127.0.0.1", lan_server.port), timeout=5))
     halb = socket.create_connection(("127.0.0.1", lan_server.port), timeout=5)
     lan_server.sockets.append(halb)
-    halb.sendall(b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n")  # kein Zeilenende am Kopf: nie fertig
+    halb.sendall(f"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: {COOKIE}\r\n".encode())  # kein Zeilenende am Kopf: nie fertig
     beginn = time.monotonic()
     status, antwort = _anfrage(lan_server.port, "GET", "/healthz", timeout=2)
     assert status == 200 and json.loads(antwort)["zustand"] == "nicht_uebernommen"
@@ -325,7 +339,7 @@ def test_fifty_simultaneous_requests_are_all_answered():
         barriere.wait()
         return SNAPSHOT
 
-    server = start_server(0, snapshot)
+    server = start_server(0, snapshot, zugang=ZUGANG)
     port = server.server_address[1]
     ergebnisse: list[int] = []
 
@@ -361,7 +375,7 @@ def server_mit_grenzen(monkeypatch):
     def starten(frist: float, maximum: int, *, nur_health: bool = False):
         monkeypatch.setattr(diagnostics, "VERBINDUNG_FRIST_SECONDS", frist)
         monkeypatch.setattr(diagnostics, "MAX_VERBINDUNGEN", maximum)
-        server = start_server(0, lambda: SNAPSHOT, nur_health=nur_health)
+        server = start_server(0, lambda: SNAPSHOT, nur_health=nur_health, zugang=None if nur_health else ZUGANG)
         gestartet.append(server)
         return SimpleNamespace(port=server.server_address[1], sockets=sockets)
 
@@ -445,3 +459,35 @@ def test_the_health_server_answers_while_every_place_of_the_diagnostic_page_is_t
 def test_the_health_server_serves_nothing_but_healthz(server_mit_grenzen, path):
     health = server_mit_grenzen(5.0, 3, nur_health=True)
     assert _anfrage(health.port, "GET", path) == (404, b"")
+
+
+def test_code_und_geraete_id_kommen_nie_ohne_sitzung(geraet):
+    """S-2, S-13: auch bei offenem Code-Fenster an einem nicht uebernommenen Geraet liefert der Server Code und
+    Geraete-ID nur mit Sitzung - nie auf der Anmeldeseite, nie in einer Weiterleitung, nie auf /healthz."""
+    geraet.letzte_anzeige = _anzeige("nicht_uebernommen", device_state="nicht_uebernommen", eingerichtet=False)
+    geraet.code_fenster_bis = geraet._clock() + 100.0
+    code, kennung = geraet.device.identity.claim_code, geraet.device.identity.device_id
+    assert seite(geraet, geraet.device)["code"] == code  # das Fenster ist offen
+    server = start_server(0, lambda: seite(geraet, geraet.device), zugang=ZUGANG)
+    port = server.server_address[1]
+    try:
+        for pfad in ("/", "/healthz", "/anmelden", "/x"):
+            status, koerper, kopf = _anfrage_ohne_sitzung(port, pfad)
+            text = koerper + str(kopf).encode()
+            assert code.encode() not in text and kennung.encode() not in text, pfad
+        assert _anfrage_ohne_sitzung(port, "/")[0] == 303
+        mit = _anfrage(port, "GET", "/")
+        assert mit[0] == 200 and code.encode() in mit[1] and kennung.encode() in mit[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _anfrage_ohne_sitzung(port: int, path: str) -> tuple[int, bytes, http.client.HTTPMessage]:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        connection.request("GET", path)
+        response = connection.getresponse()
+        return response.status, response.read(), response.headers
+    finally:
+        connection.close()

@@ -73,19 +73,41 @@ device_id="$(curl -fsS http://127.0.0.1:18090/_e2e/state \
 # (Anzeige.code_zeigen).
 ok=0
 for _ in $(seq 1 30); do
-  curl -fsS http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '"server_ok": true' && { ok=1; break; }; sleep 2
+  curl -fsS http://127.0.0.1:8081/healthz 2>/dev/null | grep -q '"server_ok": true' && { ok=1; break; }; sleep 2
 done
 [ "$ok" = 1 ] || fail "/healthz meldet keinen Serverkontakt"
-healthz="$(curl -fsS http://127.0.0.1:8080/healthz 2>/dev/null)"
+healthz="$(curl -fsS http://127.0.0.1:8081/healthz 2>/dev/null)"
 printf '%s' "$healthz" | grep -q '"zustand": "wartet_auf_einrichtung"' \
   || fail "/healthz: Zustand nicht wartet_auf_einrichtung ($healthz)"
 # Ruhezustand ohne Konfiguration: kein Laufzeitstatus (runtime_main.attach), Hinweis im Log (host.NOT_CONFIGURED_HINT).
 printf '%s' "$healthz" | grep -q '"runtime_status": null' || fail "/healthz: Laufzeit ruht nicht ($healthz)"
 "${COMPOSE[@]}" logs runtime 2>/dev/null | grep -q "noch nicht eingerichtet" || fail "Laufzeit nicht im Ruhezustand"
 # Gesundheitsserver (Compose-Healthcheck und Updater): nur /healthz, eigener Port, auf dem Loopback des Hosts veroeffentlicht.
-[ "$(curl -fsS http://127.0.0.1:8081/healthz 2>/dev/null)" = "$healthz" ] || fail "Gesundheitsserver auf 8081 antwortet anders als /healthz"
 [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/ 2>/dev/null)" = 404 ] || fail "Gesundheitsserver zeigt mehr als /healthz"
-page="$(curl -fsS http://127.0.0.1:8080/ 2>/dev/null)"
+# Die Seite auf Port 80 (Container 8080) verlangt die Anmeldung mit dem Passwort aus werk.json (GW 8, SG-05): ohne Sitzung
+# nur das Formular (Seite 303, /healthz 401), mit falschem Passwort 401, mit dem richtigen Cookie und Seite.
+[ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz 2>/dev/null)" = 401 ] || fail "/healthz auf Port 80 ohne Sitzung nicht 401"
+[ "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://127.0.0.1:8080/ 2>/dev/null)" = "303 http://127.0.0.1:8080/anmelden" ] \
+  || fail "Seite ohne Sitzung leitet nicht auf /anmelden"
+python3 - "$DATA/host/werk.json" <<'PY'
+import base64, hashlib, json, sys
+salz = bytes(range(16))
+hash_ = hashlib.scrypt(b"Etikett-Passwort", salt=salz, n=131072, r=8, p=1, maxmem=268435456, dklen=32)
+b64 = lambda roh: base64.b64encode(roh).decode()
+werk = {"format": "smartheat-werk-1", "seriennummer": "SHG-0001", "hostname": "smartheat-0001",
+        "passwort": {"verfahren": "scrypt", "n": 131072, "r": 8, "p": 1, "salz": b64(salz), "hash": b64(hash_)},
+        "bespielt": "2026-10-27", "hardware": "Test"}
+open(sys.argv[1], "w").write(json.dumps(werk))
+PY
+chmod 0644 "$DATA/host/werk.json"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -d 'passwort=falsch' http://127.0.0.1:8080/anmelden 2>/dev/null)" = 401 ] \
+  || fail "falsches Passwort nicht 401"
+jar="$DATA/cookies.txt"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -c "$jar" -d 'passwort=Etikett-Passwort' http://127.0.0.1:8080/anmelden 2>/dev/null)" = 303 ] \
+  || fail "richtiges Passwort nicht 303"
+grep -q "shg_sitzung" "$jar" || fail "kein Sitzungs-Cookie nach der Anmeldung"
+page="$(curl -fsS -b "$jar" http://127.0.0.1:8080/ 2>/dev/null)"
+printf '%s' "$page" | grep -q "SHG-0001" || fail "Diagnoseseite zeigt die Seriennummer nicht"
 printf '%s' "$page" | grep -q "SmartHeat-Gateway" || fail "Diagnoseseite antwortet nicht"
 ! printf '%s' "$page" | grep -q "Übernahme-Code" || fail "Diagnoseseite zeigt nach der Uebernahme den Code"
 printf '%s' "$page" | grep -q "übernommen und wartet auf die Einrichtung" || fail "Diagnoseseite ohne Zustandstext"
@@ -102,7 +124,7 @@ printf '%s' "$hello" | grep -q '"host": *"gateway"' || fail "hello ohne host gat
 python3 -c 'import json,sys; sys.exit(0 if json.loads(sys.argv[1]).get("konfiguration_version") == 0 else 1)' "$hello" \
   2>/dev/null || fail "hello: Konfigurationsversion nicht 0 ($hello)"
 # Fremder Host-Name (DNS-Rebinding): 403, die Seite antwortet nur unter IP, localhost und SHG_DIAG_HOSTNAMES.
-[ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: rebind.example.test' http://127.0.0.1:8080/)" = "403" ] \
+[ "$(curl -s -o /dev/null -w '%{http_code}' -b "$jar" -H 'Host: rebind.example.test' http://127.0.0.1:8080/)" = "403" ] \
   || fail "Diagnoseseite antwortet unter fremdem Host-Namen"
 run_in_image --user "$GATEWAY_UID" -v "$DATA/zigbee2mqtt:/app/data" "$IMAGE" \
   sh -c 'test -r /app/data/configuration.yaml && test -w /app/data/configuration.yaml && test -w /app/data' \

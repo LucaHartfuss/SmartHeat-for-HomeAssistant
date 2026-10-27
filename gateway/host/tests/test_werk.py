@@ -10,6 +10,7 @@ import subprocess
 
 import pytest
 
+from smartheat_gateway import anmeldung
 from smartheat_host import werk
 
 SALZ = base64.b64encode(bytes(range(16))).decode()
@@ -348,3 +349,68 @@ def test_nur_start_ist_ein_gueltiger_aufruf(umgebung, argv, capsys):
 
 def test_der_dienst_nutzt_den_standardpfad_auf_werk():
     assert str(werk.WERK_PFAD) == "/werk/werk.json" and werk.MAX_BYTES == 4096
+
+
+# --- Spiegel im Container (smartheat_gateway.anmeldung.werk_lesen): dieselben Faelle, dieselbe Entscheidung ----------
+
+_PFADE = [("format",), ("seriennummer",), ("hostname",), ("passwort",), ("bespielt",), ("hardware",),
+          ("passwort", "verfahren"), ("passwort", "n"), ("passwort", "r"), ("passwort", "p"), ("passwort", "salz"),
+          ("passwort", "hash")]
+_WERTE = [
+    (("format",), 1), (("format",), "smartheat-werk-2"), (("seriennummer",), "abcd"), (("seriennummer",), "ABC"),
+    (("seriennummer",), "A" * 33), (("seriennummer",), "ABCD\n"), (("hostname",), "Smartheat"), (("hostname",), ""),
+    (("hostname",), "a" * 64), (("hostname",), "smart.heat"), (("hostname",), "smartheat\n"), (("hostname",), "a" * 63),
+    (("passwort",), "scrypt"), (("bespielt",), "2026-02-30"), (("bespielt",), "2026-1-1"), (("bespielt",), "2000-02-29"),
+    (("hardware",), "x" * 32), (("hardware",), "x" * 33), (("hardware",), 5),
+    (("passwort", "verfahren"), "argon2"), (("passwort", "n"), 65536), (("passwort", "n"), True),
+    (("passwort", "n"), 131072.0), (("passwort", "r"), 4), (("passwort", "p"), 2), (("passwort", "p"), True),
+    (("passwort", "salz"), SALZ + "\n"), (("passwort", "salz"), SALZ[:-1]), (("passwort", "salz"), "!!!!"),
+    (("passwort", "hash"), HASH[:-2]), (("passwort", "hash"), base64.b64encode(bytes(33)).decode()),
+    (("passwort", "salz"), base64.b64encode(bytes(16)).decode()[:-3] + "B=="),
+    (("passwort", "salz"), 5), (("passwort", "hash"), "\u00e4" * 44), (("passwort", "hash"), [HASH]),
+    (("passwort", "verfahren"), 1), (("passwort", "n"), "131072"), (("passwort", "r"), 8.0), (("passwort", "r"), True),
+    (("bespielt",), 20261027), (("bespielt",), "2026-13-01"), (("bespielt",), "2026-10-27\n"),
+    (("seriennummer",), 1234), (("hostname",), 1), (("hostname",), "sm\u00e4rt"), (("hardware",), None),
+    (("passwort",), []), (("format",), None),
+]
+_VOLL = json.dumps(GUT).encode()
+_ROH = [_VOLL[:-1] + b" " * (4096 - len(_VOLL)) + b"}", _VOLL + b" " * (4096 - len(_VOLL)), _VOLL + b" " * (4097 - len(_VOLL)), _VOLL + b" " * (4095 - len(_VOLL)),
+        b"", b"{", b"[]", b"null", b"\xff\xfe{}", b'{"a": NaN}', json.dumps(GUT).encode() + b" " * 4000,
+        json.dumps(GUT).encode(), json.dumps(GUT).replace('"hostname"', '"hostname": "x", "hostname"').encode(),
+        json.dumps(GUT, ensure_ascii=False).replace("Raspberry Pi 5", "\u00e4" * 32).encode()]
+
+
+def _faelle():
+    faelle = [json.dumps(GUT).encode()]
+    faelle += [json.dumps(_ohne(GUT, *pfad)).encode() for pfad in _PFADE]
+    faelle += [json.dumps(_mit(GUT, wert, *pfad)).encode() for pfad, wert in _WERTE]
+    faelle += [json.dumps(_mit(GUT, "x", *ort, "pilot")).encode() for ort in ((), ("passwort",))]
+    return faelle + _ROH
+
+
+def test_der_container_spiegel_entscheidet_in_jedem_fall_wie_der_host(tmp_path):
+    """Der Container prueft die Kopie von werk.json mit eigenem Code (Paketgrenze); dieselben Faelle laufen gegen beide
+    und muessen gleich entscheiden: gleiches Ergebnis (gueltig mit denselben Werten oder ungueltig)."""
+    pfad = tmp_path / "werk.json"
+    gueltig = 0
+    for roh in _faelle():
+        pfad.write_bytes(roh)
+        assert anmeldung.werk_lesen(pfad) == werk.lesen(pfad), roh[:80]
+        gueltig += werk.lesen(pfad) is not None
+    assert 0 < gueltig < len(_faelle())
+
+
+def test_der_container_spiegel_lehnt_symlink_ordner_fifo_und_riesendatei_ab(tmp_path):
+    echt = _schreiben(tmp_path / "echt.json", GUT)
+    link = tmp_path / "link.json"
+    link.symlink_to(echt)
+    ordner = tmp_path / "ordner"
+    ordner.mkdir()
+    fifo = tmp_path / "fifo"
+    os.mkfifo(fifo)
+    gross = tmp_path / "gross.json"
+    with open(gross, "wb") as handle:
+        handle.truncate(64 * 1024 * 1024)
+    for pfad in (link, ordner, fifo, gross, tmp_path / "fehlt.json"):
+        assert anmeldung.werk_lesen(pfad) is None and werk.lesen(pfad) is None, pfad
+    assert anmeldung.werk_lesen(echt) == werk.lesen(echt) == GUT

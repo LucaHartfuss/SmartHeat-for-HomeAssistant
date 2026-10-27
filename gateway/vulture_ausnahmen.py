@@ -17,7 +17,18 @@ _.userdata  # smartheat_gateway/bus.py: Parameter der paho-Callback-Signatur
 
 # --- http.server: BaseHTTPRequestHandler ruft die Methoden ueber ihren Namen ---
 _.do_GET  # smartheat_gateway/diagnose.py: Antwort auf GET
+_.do_POST  # smartheat_gateway/diagnose.py: Antwort auf POST (nur /anmelden)
 _.log_message  # smartheat_gateway/diagnose.py: ueberschreibt das Zugriffslog (still)
+_.send_response  # smartheat_gateway/diagnose.py: ueberschreibt die Antwort ohne Server-Kopf (kein Banner, S-13)
+_.send_error  # smartheat_gateway/diagnose.py: ueberschreibt die Fehlerseite der Basisklasse (nennt Methode und Version)
+_.explain  # smartheat_gateway/diagnose.py: Parameter der send_error-Signatur der Basisklasse
+_.server_version  # smartheat_gateway/diagnose.py: leer, die Basisklasse liest es fuer den Server-Kopf (S-13)
+_.sys_version  # smartheat_gateway/diagnose.py: leer, wie server_version
+_.close_connection  # smartheat_gateway/diagnose.py: Attribut der Basisklasse (keine Weiterverwendung der Verbindung)
+_.request_queue_size  # smartheat_gateway/diagnose.py: Attribut von socketserver.TCPServer (Rueckstau des Listen-Sockets)
+
+# --- Bespiel-Station (AP-05b) und Tests: erzeugt das Feld passwort von werk.json ---
+_.passwort_eintrag  # smartheat_gateway/anmeldung.py: Aufrufer sind die Station (AP-05b) und gateway/tests/test_anmeldung.py
 
 # --- Signalhandler: signal.signal ruft handler(signum, frame) ---
 _.signum  # smartheat_gateway/runtime_main.py _terminate

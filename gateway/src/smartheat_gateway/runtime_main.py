@@ -34,6 +34,7 @@ from smartheat_device.device import Device
 from smartheat_device.documents import KONFIGURATION, DocumentStore
 from smartheat_gateway import befehle, diagnose
 from smartheat_gateway import geraet_host as geraet_host_module
+from smartheat_gateway.anmeldung import WERK_DATEI, Zugang
 from smartheat_gateway.bus import BUS_PORT, LocalBus, credentials_from_env
 from smartheat_gateway.geraet_host import GatewayDeviceHost
 from smartheat_gateway.host import GatewayHost
@@ -174,13 +175,16 @@ def _vorbereiten(paths: Paths, mirror: ZigbeeMirror,
                  angelegt: Callable[[GatewayDeviceHost], None]) -> tuple[GatewayDeviceHost, Device]:
     """Die Host-Schritte vor laufen; angelegt bekommt den Geraete-Host, sobald es ihn gibt (fuer vor_der_pause)."""
     ausstehend = aufraeumen(paths)  # vor dem Geraetekern: kein Rennen mit driver_login oder inventory nach hello
-    geraet = GatewayDeviceHost(paths, mirror, host_dir=Path(os.environ.get("SHG_HOST_DIR", "/host")))
+    host_dir = Path(os.environ.get("SHG_HOST_DIR", "/host"))
+    geraet = GatewayDeviceHost(paths, mirror, host_dir=host_dir)
     geraet.start_markierung = ausstehend
     angelegt(geraet)
     device = Device(geraet, paths.data, os.environ["SHG_DEVICE_API_URL"], befehl_fehler=befehle.fehler_uebersetzen)
     geraet.verbinden(device)
     hostnames = diagnose.parse_hostnames(os.environ.get("SHG_DIAG_HOSTNAMES", ""))
-    diagnose.start_server(DIAG_PORT, lambda: diagnose.seite(geraet, device), hostnames)
+    # Die Seite auf Port 80 verlangt die Anmeldung mit dem Etikett-Passwort aus werk.json (Kopie des Hosts, GW 8)
+    diagnose.start_server(DIAG_PORT, lambda: diagnose.seite(geraet, device), hostnames,
+                          zugang=Zugang(host_dir / WERK_DATEI))
     # Dieselben erlaubten Host-Namen: der Docker-Test des Updaters fragt den Dienst `runtime` im Test-Netz.
     diagnose.start_server(HEALTH_PORT, lambda: diagnose.seite(geraet, device), hostnames, nur_health=True)
     software_soll_nachholen(geraet, device)  # vor dem Geraete-Thread: kein Rennen mit einer neuen Konfiguration
