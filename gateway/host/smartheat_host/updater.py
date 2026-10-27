@@ -1509,6 +1509,7 @@ class Einstellungen:
     health_url: str = "http://127.0.0.1:8081/healthz"
     health_seconds: float = HEALTH_SECONDS
     compose_project: str = bundles.COMPOSE_PROJECT
+    env_datei: Path = bundles.GATEWAY_ENV
     startauswahl: Callable[[], Startauswahl] = RaucTryboot
 
 
@@ -1520,7 +1521,7 @@ def main(argv: list[str] | None = None, *, einstellungen: Einstellungen | None =
     roots_text = settings.release_roots.read_text()
 
     store = bundles.BundleStore(root)
-    compose = bundles.ComposeRunner(root, project=settings.compose_project)
+    compose = bundles.ComposeRunner(root, project=settings.compose_project, env_datei=settings.env_datei)
     run = Updater(
         kanal=kanal.LokalerKanal(root / "data"), store=store, compose=compose,
         fetch=lambda url, limit: fetch_url(url, limit, settings.allow_http),

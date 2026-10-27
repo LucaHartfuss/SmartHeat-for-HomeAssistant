@@ -33,6 +33,19 @@
   laufen als Hooks (`hooks/postbuild50-rootfs-checks`, `hooks/finalize10-bootfs-checks`; v2.9.0 ignoriert den alten
   `post-build.sh` ohne Meldung). `make_image.sh` liefert zusaetzlich `system-<Version>.ext4`, `boot-<Version>.vfat` und die
   SBOM (`smartheat-gateway-<Version>.sbom.zst`, syft, CycloneDX-JSON laut `image/sbom/syft.yaml`, S-10), je mit `.sha256`; `--pilot-ssh` bricht bis AP-05b ab.
+- Ablage im System, erster Start auf `daten`, Partition `werk` (AP-05a, GW 6.1, FR-26, GPC31): Das Image legt System-Teile nur
+  unter `/opt/smartheat/` ab (Host-Paket, `release-roots.pem`, `rauc-backend`, `probestart-frist`, `gateway.env` als einzige Quelle
+  fuer Units und Compose, `werkseinstellung/` mit erstem Bundle, `state.json`-Vorlage und den Container-Archiven als
+  `images/<SHA-256>.tar`); `host/gateway.env` unter `SHG_ROOT` entfaellt. Unter `SHG_ROOT` (= `daten`) legt der Bau nichts ab:
+  `smartheat-ablage.service` gleicht bei jedem Start Ordner, Besitzer und Modi an (`bus/mosquitto-daten` neu, Symlinks werden
+  nicht durchschritten) und legt beim ersten Start das erste Bundle und `updater/state.json` aus der Werkseinstellung an.
+  `smartheat-firstboot.service` laedt jedes Archiv einmal (Merker `host/geladen/<SHA-256>`, Archive bleiben liegen) und ruft bei
+  jedem Start `compose up` fuer das laufende Bundle; der Updater wartet nicht auf das Laden (nur auf Docker, Netz und Ablage:
+  die Probestart-Frist). `smartheat-werk.service` prueft vor dem Netz `/werk/werk.json` (streng: ein Feld mehr, falscher Typ,
+  Symlink oder ueber 4 KiB sind ungueltig), kopiert die Werte nach `SHG_ROOT/host/werk.json` (0644) und setzt den fluechtigen
+  Hostnamen; ungueltig oder fehlend loescht die Kopie. `smartheat-probestart-frist.timer` ist im Image aktiviert. `prepare.sh`
+  nimmt das eigene Image aus `gateway-image.oci.tar` des Bundles (Groesse, SHA-256 und Index-Digest gegen `manifest.json`) und holt
+  nur Mosquitto und Zigbee2MQTT per `skopeo`; die Pilotzweige der Bau-Skripte entfallen.
 
 ## 0.8.0
 

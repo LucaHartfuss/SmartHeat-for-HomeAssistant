@@ -1,6 +1,8 @@
 """Image-Bau-Skripte ohne Docker: prepare.sh und make_image.sh lehnen fremde Adressen (IP, AWS,
 http, Port, Pfad) ab, bevor sie etwas tun; prepare.sh legt mit einer Docker-Attrappe die Stage richtig an; Layer,
 Konfiguration und Installer passen zusammen (alle Pakete aus dem Layer, kein apt im chroot)."""
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -14,10 +16,12 @@ from kette_helper import root, roots_pem
 from test_boundaries import SHIPPED, SHIPPED_CORE, TENANT_ID
 
 GW = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(GW / "release"), str(GW / "release" / "tests")]  # Bundle-Bau und OCI-Archive der Release-Tests
+from build_bundle import build  # noqa: E402
+from oci_helper import make_oci_archive  # noqa: E402
+
 IMAGE = GW / "image"
 REPO = GW.parent
-MOSQ = "eclipse-mosquitto:2@sha256:" + "b" * 64
-GATEWAY = "ghcr.io/lucahartfuss/smartheat-gateway@sha256:" + "a" * 64
 GOOD = ["--device-api-url", "https://accounts.hartfussha.org", "--portal-base-url", "https://portal.hartfussha.org"]
 BAD_URLS = ["https://192.168.2.154", "http://accounts.hartfussha.org",
             "https://abc.execute-api.eu-central-1.amazonaws.com", "https://x.eu-central-1.elb.amazonaws.com",
@@ -48,14 +52,19 @@ exit 0
 
 
 def _bundle(path: Path) -> Path:
-    path.mkdir(parents=True)
-    compose = (f"services:\n  init:\n    image: {GATEWAY}\n  runtime:\n    image: {GATEWAY}\n"
-               f"  mosquitto:\n    image: {MOSQ}\n")
-    (path / "docker-compose.yml").write_text(compose)
-    (path / "mosquitto.conf").write_text("listener 1883\n")
-    (path / "manifest.json").write_text('{"version": "0.3.0"}\n')
+    """Ein Bundle des Betreibers wie von build_bundle.py (echte Compose-Datei, Manifest, OCI-Archiv) plus Signatur."""
+    archive = path.parent / (path.name + "-quelle.oci.tar")
+    make_oci_archive(archive)
+    build(GW / "compose" / "docker-compose.yml", GW / "compose" / "mosquitto.conf", archive, "0.3.0", path)
+    archive.unlink()
     (path / "manifest.json.sig").write_text("sig\n")
     return path
+
+
+def _extern(bundle: Path) -> list[str]:
+    """Die Images des Bundles, die nicht im Archiv liegen (Mosquitto, Zigbee2MQTT)."""
+    images = json.loads((bundle / "manifest.json").read_text())["images"]
+    return sorted(ref for name, ref in images.items() if name != "gateway")
 
 
 def _env(tmp_path: Path) -> dict[str, str]:
@@ -114,8 +123,7 @@ def test_make_image_rejects_foreign_urls_before_any_work(tmp_path, option, url):
     ["--stage", "x", *GOOD],
     ["--bundle", "b", *GOOD],
     ["--bundle", "b", "--stage", "/", *GOOD],
-    ["--bundle", "b", "--stage", "s", "--pilot-ssh", "kein schluessel", *GOOD],
-    ["--bundle", "b", "--stage", "s", "--pilot-ssh", "ssh-ed25519 AAAA test\nssh-rsa BBBB", *GOOD],
+    ["--bundle", "b", "--stage", "s", "--pilot-ssh", "ssh-ed25519 AAAA test-key", *GOOD],
     ["--bundle", "b", "--stage", "s", "--unbekannt", *GOOD],
 ])
 def test_prepare_rejects_bad_arguments(tmp_path, args):
@@ -141,16 +149,15 @@ def test_prepare_rejects_an_incomplete_bundle(tmp_path):
     assert result.returncode == 2 and "manifest.json.sig" in result.stderr
 
 
-@pytest.mark.parametrize("pilot", [False, True])
-def test_prepare_builds_the_stage(tmp_path, pilot):
-    stage = tmp_path / "stage"
-    extra = ["--pilot-ssh", "ssh-ed25519 AAAA test-key"] if pilot else []
-    result = _script("prepare.sh", tmp_path, "--bundle", str(_bundle(tmp_path / "b")), "--stage", str(stage),
-                     *GOOD, *extra)
+def test_prepare_builds_the_stage(tmp_path):
+    stage, bundle = tmp_path / "stage", _bundle(tmp_path / "b")
+    result = _script("prepare.sh", tmp_path, "--bundle", str(bundle), "--stage", str(stage), *GOOD)
     assert result.returncode == 0, result.stderr
     installer = stage / "installer" / "gateway"
     assert (installer / "host" / "install.sh").is_file() and not (installer / "host" / "tests").exists()
     assert (installer / "host" / "pilot_ssh_tunnel.sh").is_file()
+    for name in ("rauc-backend", "probestart-frist"):
+        assert (installer / "host" / name).is_file(), name
     for name in ("rootfs_checks.sh", "own_url.sh", "customize.sh"):
         assert (installer / "image" / name).is_file(), name
     shipped = {str(p.relative_to(installer / "src" / "smartheat_gateway")) for p in
@@ -160,16 +167,104 @@ def test_prepare_builds_the_stage(tmp_path, pilot):
             (installer / "src" / "smartheat_core").rglob("*") if p.is_file()}
     assert core == set(SHIPPED_CORE)
     assert (installer / "VERSION").read_text() == (GW / "VERSION").read_text()
+    assert sorted(p.name for p in (stage / "bundle").iterdir()) == [
+        "docker-compose.yml", "manifest.json", "manifest.json.sig", "mosquitto.conf"]
     for name in ("docker-compose.yml", "mosquitto.conf", "manifest.json", "manifest.json.sig"):
-        assert (stage / "bundle" / name).is_file(), name
-    # jedes Image genau einmal exportiert (init und runtime teilen sich das Gateway-Image)
-    assert sorted(p.read_text() for p in (stage / "images").glob("*.tar")) == sorted([GATEWAY, MOSQ])
-    lines = (stage / "install.args").read_text().splitlines()
-    assert lines[:4] == GOOD
-    assert lines[4:] == (["--pilot-ssh", "ssh-ed25519 AAAA test-key"] if pilot else [])
-    assert (stage / "pilot").exists() == pilot
+        assert (stage / "bundle" / name).read_bytes() == (bundle / name).read_bytes(), name
+    # das eigene Image aus dem Bundle, Byte fuer Byte, als <SHA-256>.tar; dazu je fremdes Image ein Archiv (hier: die
+    # Attrappe schreibt die Referenz hinein), ebenfalls nach der SHA-256 benannt
+    archiv = (bundle / "gateway-image.oci.tar").read_bytes()
+    gateway = stage / "images" / (hashlib.sha256(archiv).hexdigest() + ".tar")
+    assert gateway.read_bytes() == archiv
+    fremde = sorted(p for p in (stage / "images").glob("*.tar") if p != gateway)
+    assert [p.read_text() for p in fremde] == _extern(bundle)
+    assert len(fremde) == 2
+    for pfad in (gateway, *fremde):
+        assert pfad.name == hashlib.sha256(pfad.read_bytes()).hexdigest() + ".tar"
+    assert (stage / "install.args").read_text().splitlines() == GOOD
+    assert not (stage / "pilot").exists()
     [call] = _docker_calls(tmp_path)
     assert call.startswith("run --rm") and "--privileged" not in call and "linux/arm64" in call
+
+
+def test_prepare_never_fetches_its_own_image_with_skopeo(tmp_path):
+    """Das eigene Image kommt aus dem Archiv des Bundles; per skopeo holt prepare.sh nur Mosquitto und Zigbee2MQTT."""
+    bundle = _bundle(tmp_path / "b")
+    result = _script("prepare.sh", tmp_path, "--bundle", str(bundle), "--stage", str(tmp_path / "s"), *GOOD)
+    assert result.returncode == 0, result.stderr
+    [call] = _docker_calls(tmp_path)
+    exportiert = call.split(" _ ", 1)[1].split()
+    assert sorted(exportiert) == _extern(bundle) and len(exportiert) == 2
+    assert "smartheat-gateway" not in call
+
+
+def _verfaelschen(bundle: Path, wie: str) -> None:
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    archiv = bundle / "gateway-image.oci.tar"
+    if wie == "archiv-byte":  # gleiche Groesse, andere SHA-256
+        daten = bytearray(archiv.read_bytes())
+        daten[-1] ^= 0xFF
+        archiv.write_bytes(bytes(daten))
+    elif wie == "archiv-laenger":
+        archiv.write_bytes(archiv.read_bytes() + b"\0")
+    elif wie == "archiv-kuerzer":
+        archiv.write_bytes(archiv.read_bytes()[:-512])
+    elif wie == "archiv-sha":
+        manifest["archiv"]["sha256"] = "0" * 64
+    elif wie == "archiv-groesse":
+        manifest["archiv"]["bytes"] += 1
+    elif wie == "index-digest":  # Archiv und SHA-256 stimmen, nur der Digest im Manifest nicht
+        manifest["archiv"]["digest"] = "sha256:" + "0" * 64
+        manifest["images"]["gateway"] = "smartheat-gateway@sha256:" + "0" * 64
+    elif wie == "images-gateway":
+        manifest["images"]["gateway"] = "smartheat-gateway@sha256:" + "0" * 64
+    elif wie == "compose":
+        (bundle / "docker-compose.yml").write_text((bundle / "docker-compose.yml").read_text() + "# fremd\n")
+    elif wie == "mosquitto":
+        (bundle / "mosquitto.conf").write_text("listener 1883\nallow_anonymous true\n")
+    elif wie == "manifest-kaputt":
+        (bundle / "manifest.json").write_text("{")
+        return
+    (bundle / "manifest.json").write_text(json.dumps(manifest))
+
+
+@pytest.mark.parametrize("wie", ["archiv-byte", "archiv-laenger", "archiv-kuerzer", "archiv-sha", "archiv-groesse",
+                                 "index-digest", "images-gateway", "compose", "mosquitto", "manifest-kaputt"])
+def test_prepare_rejects_a_bundle_that_does_not_match_its_manifest(tmp_path, wie):
+    """Das Bundle ist Daten vom Bau-Rechner: falsche Pruefsumme oder Groesse des Archivs, falscher Index-Digest, eine
+    veraenderte Compose- oder Mosquitto-Datei lassen prepare.sh abbrechen, bevor es irgendetwas anlegt oder holt."""
+    bundle = _bundle(tmp_path / "b")
+    _verfaelschen(bundle, wie)
+    stage = tmp_path / "stage"
+    result = _script("prepare.sh", tmp_path, "--bundle", str(bundle), "--stage", str(stage), *GOOD)
+    assert result.returncode == 2 and "FEHLER: Bundle" in result.stderr, result.stderr
+    assert not stage.exists() and _docker_calls(tmp_path) == []
+
+
+def test_prepare_rejects_a_bundle_without_the_image_archive(tmp_path):
+    bundle = _bundle(tmp_path / "b")
+    (bundle / "gateway-image.oci.tar").unlink()
+    result = _script("prepare.sh", tmp_path, "--bundle", str(bundle), "--stage", str(tmp_path / "s"), *GOOD)
+    assert result.returncode == 2 and "gateway-image.oci.tar" in result.stderr and _docker_calls(tmp_path) == []
+
+
+def test_the_image_scripts_have_no_pilot_branch_left():
+    """make_image.sh bricht --pilot-ssh bis AP-05b ab (eigener Test unten); sonst gibt es im Bau keinen Pilotzweig mehr."""
+    for name in ("prepare.sh", "customize.sh", "build.sh", "hooks/postbuild50-rootfs-checks", "layer/smartheat-gateway.yaml"):
+        assert "pilot" not in (IMAGE / name).read_text().lower(), name
+    assert "--pilot" not in (IMAGE / "rootfs_checks.sh").read_text()
+    assert "-pilot" not in (IMAGE / "build.sh").read_text() and "suffix" not in (IMAGE / "build.sh").read_text()
+
+
+def test_gateway_env_lives_only_in_opt_smartheat():
+    """Eine Quelle fuer Units und Compose: /opt/smartheat/gateway.env. `host/gateway.env` unter SHG_ROOT gibt es nicht mehr."""
+    for ordner in ("host", "image", "compose", "src"):
+        for pfad in (GW / ordner).rglob("*"):
+            teile = pfad.relative_to(GW).parts
+            if pfad.is_file() and "tests" not in teile and not any(t.startswith(".") or t == "__pycache__" for t in teile):
+                assert "host/gateway.env" not in pfad.read_text(errors="ignore"), pfad
+    assert "/opt/smartheat/gateway.env" in (GW / "host" / "install.sh").read_text() or "OPTBASE/gateway.env" in (
+        GW / "host" / "install.sh").read_text()
 
 
 def test_make_image_runs_prepare_then_the_arm64_build(tmp_path):

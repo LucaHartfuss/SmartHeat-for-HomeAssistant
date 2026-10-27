@@ -1,5 +1,5 @@
 #!/bin/bash
-# customize-Hook des Layers smartheat-gateway: WLAN aus in jedem Image (Serie und Pilot; Nutzer-Vorgabe 2026-10-07,
+# customize-Hook des Layers smartheat-gateway: WLAN aus in jedem Image (Nutzer-Vorgabe 2026-10-07,
 # das Gateway laeuft nur am Ethernet). rpi-image-gen v2.9.0 bringt WLAN ueber zwei Layer mit: trixie-minbase verlangt
 # den Layer iwd (Paket iwd, enable-units aktiviert iwd.service), rpi-device-base schreibt
 # /etc/systemd/network/02-wlan0.network (DHCP auf wlan0). Dieser Hook

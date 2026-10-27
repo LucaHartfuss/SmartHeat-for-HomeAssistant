@@ -208,7 +208,7 @@ updater() {
     -v "$CORE/dateien.py:/core/smartheat_core/dateien.py:ro" \
     -e PYTHONPATH=/gw/host:/gw/src:/core -e SHG_ROOT="$DATA" \
     "$UPDATER_IMAGE" python3 /gw/host/tests/updater_testlauf.py --release-roots "$DATA/release/test-roots.pem" \
-    --health-host runtime --health-seconds 180 --compose-project "$PROJECT" --once
+    --health-host runtime --health-seconds 180 --compose-project "$PROJECT" --env-datei "$DATA/host/gateway.env" --once
 }
 expect_word() {  # $1 erwartetes Ergebnis, $2 Version; Log des Updaters (stderr) nur bei Abweichung
   # Ergebniswort nur aus stdout: docker run kopiert stdout und stderr getrennt, ihre Reihenfolge ist nicht garantiert.

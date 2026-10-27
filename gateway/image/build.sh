@@ -22,8 +22,6 @@ git -C /rig checkout -q FETCH_HEAD
 [ "$(git -C /rig rev-parse HEAD)" = "$RIG_COMMIT" ] || { echo "rpi-image-gen: falscher Commit" >&2; exit 1; }
 (cd /rig && ./install_deps.sh)
 cp -a /src/gateway/image /work-src
-suffix=""
-if [ -f /stage/pilot ]; then suffix="-pilot"; fi
 mkdir -p /work
 (cd /rig && ./rpi-image-gen build -S /work-src -c "$NAME.yaml" -B /work -- "IGconf_artefact_version=$version")
 deploy="/work/deploy-$version"
@@ -46,7 +44,7 @@ if [ ${#sboms[@]} -ne 1 ]; then
 fi
 sbom_ext="${sboms[0]#"$deploy"/}"
 sbom_ext="${sbom_ext#*.sbom}"  # leer oder .zst
-out_names=("$NAME-$version$suffix.img.zst" "system-$version.ext4" "boot-$version.vfat" "$NAME-$version$suffix.sbom$sbom_ext")
+out_names=("$NAME-$version.img.zst" "system-$version.ext4" "boot-$version.vfat" "$NAME-$version.sbom$sbom_ext")
 sources=("$deploy/$NAME.img.zst" "$deploy/system-$version.ext4" "$deploy/boot-$version.vfat" "${sboms[0]}")
 for i in "${!out_names[@]}"; do
   cp --sparse=always "${sources[$i]}" "/out/${out_names[$i]}"

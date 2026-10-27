@@ -1,19 +1,24 @@
 #!/bin/bash
-# Host-Installer des SmartHeat-Gateways: idempotent, eine Quelle fuer das Image (G2b-2,
-# chroot mit --image) und fuer Bastler auf frischem Raspberry Pi OS Lite 64 bit (Debian 13 trixie).
+# Host-Installer des SmartHeat-Gateways: idempotent, eine Quelle fuer das Image (chroot mit --image, AP-05a) und fuer die
+# Docker-Tests (ohne --image). System-Teile liegen unter /opt/smartheat/ (Host-Paket, release-roots.pem, rauc-backend,
+# probestart-frist, gateway.env als einzige Quelle fuer Units und Compose, werkseinstellung/ mit erstem Bundle und
+# state.json-Vorlage); die Container-Archive legt customize.sh nach werkseinstellung/images/. Unter --root (SHG_ROOT =
+# daten) legt der Installer im Image nichts ab: den Ordnerbaum und den Zustand legt der erste Start an
+# (smartheat-ablage, firstboot.py); ohne --image ruft install.sh denselben Schritt selbst auf.
 # Aufruf: install.sh --device-api-url URL [--portal-base-url URL] [--diag-hostnames NAMEN] [--timezone ZONE]
 #                    [--bundle ORDNER] [--pilot-ssh PUBKEY] [--root PFAD] [--no-docker] [--no-activate] [--image]
 # ACHTUNG: Ohne --pilot-ssh bleibt Port 22 in der Firewall zu und ssh wird deaktiviert (laufende Sitzungen bestehen bis
 # zu ihrem Ende weiter, neue sind nicht mehr moeglich). --bundle: Ordner mit docker-compose.yml, mosquitto.conf,
-# manifest.json und (optional) manifest.json.sig. --image: Image-Bau im chroot: wie --no-activate,
-# aktiviert die Units aber offline (systemctl enable, nichts startet; der erste Boot startet smartheat-firstboot).
+# manifest.json und (optional) manifest.json.sig. --image: Image-Bau im chroot: wie --no-activate, legt unter --root nichts an,
+# aktiviert die Units aber offline (systemctl enable, nichts startet; der erste Boot startet smartheat-ablage und -firstboot).
 # Pilotgeraete in fremden Netzen: zusaetzlich pilot_ssh_tunnel.sh (eigener Cloudflare-Tunnel fuer SSH, ausserhalb von
 # Docker). Solange er eingerichtet ist, bricht install.sh ohne --pilot-ssh ab (Schutz vor dem Aussperren).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GW="$(cd "$HERE/.." && pwd)"
-ROOT=/var/lib/smartheat OPT=/opt/smartheat/host API_URL="" PORTAL_URL="" DIAG_NAMES="" TZ_NAME="Europe/Berlin"
+ROOT=/var/lib/smartheat OPTBASE=/opt/smartheat API_URL="" PORTAL_URL="" DIAG_NAMES="" TZ_NAME="Europe/Berlin"
 BUNDLE="" PILOT_KEY="" DOCKER=1 ACTIVATE=1 IMAGE=0
+OPT="$OPTBASE/host" WERK="$OPTBASE/werkseinstellung"
 while [ $# -gt 0 ]; do
   case "$1" in
     --device-api-url) API_URL="$2"; shift ;;
@@ -46,29 +51,10 @@ if [ -z "$PILOT_KEY" ]; then
 fi
 CHANGED=0 WROTE=0 FIREWALL_CHANGED=0
 
-# Bricht ab, wenn $1 (unter ROOT) oder eine Komponente zwischen ROOT und $1 ein Symlink ist. Ordner unter ROOT
-# gehoeren zum Teil uid 1000 (Container): ein dort angelegter Symlink duerfte den Installer (root) nie auf einen
-# Systempfad umlenken (chown/chmod/Schreiben). Restrisiko: Wettlauf zwischen Pruefung und Zugriff.
-refuse_symlinks() {
-  local path=$1 cur rest part
-  case "$path" in "$ROOT"|"$ROOT"/*) ;; *) return 0 ;; esac
-  cur="$ROOT"
-  rest="${path#"$ROOT"}"
-  while :; do
-    if [ -L "$cur" ]; then echo "FEHLER: $cur ist ein Symlink, Installer bricht ab" >&2; exit 1; fi
-    rest="${rest#/}"
-    [ -n "$rest" ] || break
-    part="${rest%%/*}"
-    cur="$cur/$part"
-    case "$rest" in */*) rest="${rest#*/}" ;; *) rest="" ;; esac
-  done
-}
-
 # Schreibt stdin nach $1 (Modus $2, Eigentuemer $3), nur wenn sich der Inhalt aendert (WROTE=1 bei jeder Aenderung).
 # Nie hinter einer Pipe aufrufen (CHANGED ginge in der Unter-Shell verloren): Eingabe per Umleitung oder < <(...).
 put() {
   local target=$1 mode=$2 owner=$3 tmp
-  refuse_symlinks "$target"
   tmp="$(mktemp)"; cat >"$tmp"
   mkdir -p "$(dirname "$target")"
   if [ -f "$target" ] && cmp -s "$tmp" "$target"; then rm -f "$tmp"
@@ -78,7 +64,6 @@ put() {
   fi
 }
 dir() {  # Ordner $1 mit Modus $2 und Eigentuemer $3
-  refuse_symlinks "$1"
   if [ ! -d "$1" ]; then mkdir -p "$1"; CHANGED=1; fi
   if [ "$(stat -c '%a %u:%g' "$1")" != "${2#0} $3" ]; then chmod "$2" "$1"; chown -h "$3" "$1"; CHANGED=1; fi
 }
@@ -116,18 +101,10 @@ packages() {
   fi
 }
 
-layout() {
-  local path
-  dir "$ROOT" 0755 0:0
-  dir "$ROOT/data" 0755 1000:1000          # die Laufzeit liest/schreibt als uid 1000 (G2a-Restpunkt)
-  # Bind-Quellen vor dem ersten Start mit uid 1000 anlegen: fehlende Quellen legte Docker als root an, der Init-Schritt
-  # (uid 1000) koennte dann nichts schreiben.
-  for path in zigbee2mqtt bus bus/mosquitto bus/credentials bus/credentials/runtime \
-              bus/credentials/zigbee2mqtt; do dir "$ROOT/$path" 0700 1000:1000; done
-  dir "$ROOT/host" 0755 0:0
-  dir "$ROOT/bundles" 0755 0:0
-  dir "$ROOT/updater" 0755 0:0
-  put "$ROOT/host/gateway.env" 0644 0:0 < <(printf \
+# Die eine Quelle fuer Units und Compose (--env-file); SHG_ROOT steht hier, die Units tragen nur Pfade (@ROOT@).
+gateway_env() {
+  dir "$OPTBASE" 0755 0:0
+  put "$OPTBASE/gateway.env" 0644 0:0 < <(printf \
     'SHG_ROOT=%s\nSHG_DEVICE_API_URL=%s\nSHG_PORTAL_BASE_URL=%s\nSHG_DIAG_HOSTNAMES=%s\nZIGBEE_ADAPTER=ember\nTZ=%s\n' \
     "$ROOT" "$API_URL" "$PORTAL_URL" "$DIAG_NAMES" "$TZ_NAME")
 }
@@ -151,11 +128,14 @@ host_package() {
   done
   put "$OPT/release-roots.pem" 0644 0:0 <"$HERE/release-roots.pem"
   put "$OPT/VERSION" 0644 0:0 <"$GW/VERSION"
+  # Startauswahl (RAUC-Backend) und Probestart-Frist: ohne Python, root-eigen, ausfuehrbar
+  put "$OPTBASE/rauc-backend" 0755 0:0 <"$HERE/rauc-backend"
+  put "$OPTBASE/probestart-frist" 0755 0:0 <"$HERE/probestart-frist"
 }
 
 system_files() {
   local unit ssh_rule=""
-  for unit in "$HERE"/systemd/*.service; do
+  for unit in "$HERE"/systemd/*.service "$HERE"/systemd/*.timer; do
     WROTE=0
     put "/etc/systemd/system/$(basename "$unit")" 0644 0:0 < <(subst "$unit")
     if [ "$WROTE" = 1 ] && [ "$(basename "$unit")" = smartheat-firewall.service ]; then FIREWALL_CHANGED=1; fi
@@ -179,34 +159,45 @@ system_files() {
   if [ -f /etc/ssh/sshd_config.d/smartheat.conf ]; then rm -f /etc/ssh/sshd_config.d/smartheat.conf; CHANGED=1; fi
 }
 
+# Werkseinstellung: das erste Bundle und die state.json-Vorlage unter /opt/smartheat/werkseinstellung (die Container-Archive
+# kommen von customize.sh nach images/). Der erste Start legt daraus unter SHG_ROOT an (firstboot.anlegen), nur ohne
+# updater/state.json.
 first_bundle() {
   [ -n "$BUNDLE" ] || return 0
-  local version name
+  local version name grenze=""
   version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$BUNDLE/manifest.json")"
-  for name in docker-compose.yml mosquitto.conf manifest.json; do
-    put "$ROOT/bundles/$version/$name" 0644 0:0 <"$BUNDLE/$name"
-  done
-  # Signatur des Manifests - ein Release-Bundle hat sie, Test-Fixtures nicht.
+  # Untergrenze fuer Release-Zertifikate (Widerruf, FR-25): notBefore des Zertifikats im mitgelieferten Bundle. Ohne sie
+  # nahme der erste Update auch ein aelteres, vor dem Erstbundle ausgestelltes (gestohlenes) Zertifikat an.
   if [ -f "$BUNDLE/manifest.json.sig" ]; then
-    put "$ROOT/bundles/$version/manifest.json.sig" 0644 0:0 <"$BUNDLE/manifest.json.sig"
-  fi
-  if [ ! -f "$ROOT/updater/state.json" ]; then
-    # Untergrenze fuer Release-Zertifikate (Widerruf, FR-25): notBefore des Zertifikats im mitgelieferten Bundle. Ohne sie
-    # nahme der erste Update auch ein aelteres, vor dem Erstbundle ausgestelltes (gestohlenes) Zertifikat an.
-    local grenze=""
-    if [ -f "$BUNDLE/manifest.json.sig" ]; then
-      grenze="$(python3 -c 'import json, sys
+    grenze="$(python3 -c 'import json, sys
 from cryptography import x509
 text = json.load(open(sys.argv[1]))["zertifikat"]
 print(x509.load_pem_x509_certificate(text.encode()).not_valid_before_utc.isoformat())' "$BUNDLE/manifest.json.sig")" \
-        || { echo "FEHLER: $BUNDLE/manifest.json.sig traegt kein lesbares Zertifikat (notBefore fuer die Untergrenze)" >&2; exit 1; }
-    fi
-    put "$ROOT/updater/state.json" 0644 0:0 < <(python3 -c 'import json, sys
+      || { echo "FEHLER: $BUNDLE/manifest.json.sig traegt kein lesbares Zertifikat (notBefore fuer die Untergrenze)" >&2; exit 1; }
+  fi
+  dir "$WERK" 0755 0:0
+  dir "$WERK/bundle" 0755 0:0
+  for name in docker-compose.yml mosquitto.conf manifest.json; do
+    put "$WERK/bundle/$name" 0644 0:0 <"$BUNDLE/$name"
+  done
+  # Signatur des Manifests - ein Release-Bundle hat sie, Test-Fixtures nicht.
+  if [ -f "$BUNDLE/manifest.json.sig" ]; then
+    put "$WERK/bundle/manifest.json.sig" 0644 0:0 <"$BUNDLE/manifest.json.sig"
+  elif [ -e "$WERK/bundle/manifest.json.sig" ]; then
+    rm -f "$WERK/bundle/manifest.json.sig"; CHANGED=1
+  fi
+  put "$WERK/state.json" 0644 0:0 < <(python3 -c 'import json, sys
 state = {"current": sys.argv[1], "in_progress": None, "previous": None, "rejected": []}
 if sys.argv[2]:
     state["zertifikat_untergrenze"] = sys.argv[2]
 print(json.dumps(state), end="")' "$version" "$grenze")
-  fi
+}
+
+# Ohne --image: Ordnerbaum, Besitzer und Modi unter ROOT und das erste Bundle, wie smartheat-ablage es bei jedem Start tut
+# (firstboot.ordner_angleichen, firstboot.anlegen); scheitert laut, z. B. bei einem Symlink an einer Ordnerstelle.
+ablage() {
+  [ "$IMAGE" = 0 ] || return 0
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$OPT" SHG_ROOT="$ROOT" python3 -m smartheat_host.firstboot ablage
 }
 
 activate() {
@@ -215,7 +206,8 @@ activate() {
   udevadm control --reload
   udevadm trigger --subsystem-match=tty
   systemctl restart systemd-journald
-  systemctl enable --now smartheat-firewall.service smartheat-hoststatus.service smartheat-led.service
+  systemctl enable --now smartheat-ablage.service smartheat-werk.service smartheat-firewall.service \
+    smartheat-hoststatus.service smartheat-led.service
   # Oneshot mit RemainAfterExit: geaenderte Regeln (z. B. Pilot-SSH an/aus) greifen erst nach einem Neustart der Unit.
   if [ "$FIREWALL_CHANGED" = 1 ]; then systemctl restart smartheat-firewall.service; fi
   # smartheat-firstboot hat Requires=docker.service: nur mit Docker aktivieren (sonst bricht enable --now ab).
@@ -232,7 +224,8 @@ activate() {
 # Image-Bau (--image): Units offline aktivieren; gestartet wird erst beim ersten Boot (smartheat-firstboot).
 enable_offline() {
   [ "$IMAGE" = 1 ] || return 0
-  systemctl enable smartheat-firewall.service smartheat-hoststatus.service smartheat-led.service
+  systemctl enable smartheat-ablage.service smartheat-werk.service smartheat-firewall.service \
+    smartheat-hoststatus.service smartheat-led.service smartheat-probestart-frist.timer
   if [ "$DOCKER" = 1 ]; then systemctl enable docker.service smartheat-updater.service smartheat-firstboot.service; fi
   if [ -n "$PILOT_KEY" ]; then systemctl enable ssh.service
   else systemctl disable ssh.service ssh.socket 2>/dev/null || true; fi
@@ -269,15 +262,16 @@ print(" ".join(p for p in bundles.compose_devices(open(sys.argv[1]).read()) if n
       "Stick einstecken und install.sh mit denselben Optionen erneut ausfuehren."
     return 0
   fi
-  docker compose -p smartheat --env-file "$ROOT/host/gateway.env" -f "$compose" up -d
+  docker compose -p smartheat --env-file "$OPTBASE/gateway.env" -f "$compose" up -d
 }
 
 docker_daemon_config
 packages
-layout
+gateway_env
 host_package
 system_files
 first_bundle
+ablage
 activate
 enable_offline
 if [ "$CHANGED" = 0 ]; then echo "Nichts zu tun (bereits installiert)"; fi

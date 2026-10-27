@@ -1,0 +1,23 @@
+[Unit]
+Description=SmartHeat-Gateway Werk: werk.json pruefen, fuer den Container nach @ROOT@/host kopieren, Hostnamen setzen
+# Vor dem Netz: der Hostname soll gelten, bevor DHCP ihn meldet. werk.mount hat nofail (fehlende Partition haelt den Start
+# nicht auf): dann gibt es keine werk.json, die Kopie wird geloescht, keine Anmeldung, der Hostname bleibt der des Images.
+After=werk.mount dbus.service systemd-hostnamed.service smartheat-ablage.service
+Before=network-pre.target
+Wants=network-pre.target smartheat-ablage.service
+RequiresMountsFor=@ROOT@
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PYTHONPATH=/opt/smartheat/host
+EnvironmentFile=/opt/smartheat/gateway.env
+ExecStart=/usr/bin/python3 -m smartheat_host.werk start
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=@ROOT@/host
+
+[Install]
+WantedBy=multi-user.target

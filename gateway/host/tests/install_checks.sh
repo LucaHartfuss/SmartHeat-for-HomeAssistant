@@ -56,22 +56,35 @@ bash "$SRC/install.sh" "${ARGS[@]}" >/tmp/run2.log 2>&1 || fail "zweiter Lauf"
 snapshot >/tmp/after
 diff /tmp/before /tmp/after >/dev/null || { diff /tmp/before /tmp/after; fail "zweiter Lauf hat etwas geaendert"; }
 grep -q "Nichts zu tun" /tmp/run2.log || fail "zweiter Lauf meldet Aenderungen"
-for unit in updater led hoststatus firewall firstboot; do
+for unit in updater led hoststatus firewall firstboot ablage werk probestart-frist; do
   # Nur die fehlende docker.service-Abhaengigkeit (Container ohne Docker) wird ausgefiltert, Syntaxfehler nicht.
   systemd-analyze verify "/etc/systemd/system/smartheat-$unit.service" 2>&1 | grep -v "^$" | grep -vi "docker.service" \
     && fail "Unit smartheat-$unit ungueltig"
 done
+systemd-analyze verify /etc/systemd/system/smartheat-probestart-frist.timer 2>&1 | grep -v "^$" \
+  && fail "Timer smartheat-probestart-frist ungueltig"
+grep -q '^OnBootSec=20min$' /etc/systemd/system/smartheat-probestart-frist.timer || fail "Timer nicht 20 min nach dem Start"
+grep -q '^WantedBy=timers.target$' /etc/systemd/system/smartheat-probestart-frist.timer || fail "Timer ohne [Install]"
 for unit in updater led hoststatus; do
   grep -q '^Restart=always$' "/etc/systemd/system/smartheat-$unit.service" || fail "Restart= fehlt in smartheat-$unit"
 done
-for unit in updater hoststatus; do
-  grep -q '^EnvironmentFile=/var/lib/smartheat/host/gateway.env$' "/etc/systemd/system/smartheat-$unit.service" \
+# gateway.env unter /opt/smartheat ist die einzige Quelle fuer Units und Compose; unter SHG_ROOT gibt es sie nicht mehr.
+for unit in updater led hoststatus firstboot ablage werk; do
+  grep -q '^EnvironmentFile=/opt/smartheat/gateway.env$' "/etc/systemd/system/smartheat-$unit.service" \
     || fail "EnvironmentFile= fehlt in smartheat-$unit"
+  grep -q '^Environment=SHG_ROOT' "/etc/systemd/system/smartheat-$unit.service" && fail "SHG_ROOT doppelt in smartheat-$unit"
+  grep -q '^RequiresMountsFor=/var/lib/smartheat$' "/etc/systemd/system/smartheat-$unit.service" \
+    || fail "RequiresMountsFor= fehlt in smartheat-$unit"
 done
-for unit in updater led hoststatus; do
-  grep -q '^Environment=SHG_ROOT=/var/lib/smartheat$' "/etc/systemd/system/smartheat-$unit.service" || fail "SHG_ROOT fehlt in smartheat-$unit"
+for unit in updater led hoststatus firstboot ablage werk firewall; do
   grep -q '@ROOT@' "/etc/systemd/system/smartheat-$unit.service" && fail "@ROOT@ nicht ersetzt in smartheat-$unit"
 done
+grep -q '^SHG_ROOT=/var/lib/smartheat$' /opt/smartheat/gateway.env || fail "SHG_ROOT fehlt in gateway.env"
+grep -q '^ReadWritePaths=/var/lib/smartheat/host$' /etc/systemd/system/smartheat-werk.service || fail "ReadWritePaths der Werk-Unit"
+grep -q '^After=.*smartheat-ablage.service' /etc/systemd/system/smartheat-updater.service || fail "Updater nicht nach der Ablage"
+grep -Eq '^(After|Requires|Wants)=.*smartheat-firstboot' /etc/systemd/system/smartheat-updater.service \
+  && fail "Updater wartet auf den Erststart"
+grep -q '^Before=network-pre.target$' /etc/systemd/system/smartheat-werk.service || fail "Werk-Unit nicht vor dem Netz"
 grep -q '^DefaultDependencies=no$' /etc/systemd/system/smartheat-firewall.service || fail "Firewall-Unit ohne DefaultDependencies=no"
 grep -q '^After=nftables.service$' /etc/systemd/system/smartheat-firewall.service || fail "Firewall-Unit nicht nach nftables.service"
 # Der Test-Einstieg des Updaters (schaltet allow_http ein) gehoert nicht auf das Geraet.
@@ -86,7 +99,22 @@ if udevadm --help 2>&1 | grep -q verify; then udevadm verify /etc/udev/rules.d/9
 grep -q "/var/lib/smartheat/host/zigbee_adapter" /etc/udev/rules.d/99-smartheat-zigbee.rules || fail "@ROOT@ nicht ersetzt"
 [ "$(stat -c '%u:%g %a' /var/lib/smartheat/bus/credentials/runtime)" = "1000:1000 700" ] || fail "bus/credentials/runtime"
 [ "$(stat -c '%u:%g' /var/lib/smartheat/data)" = "1000:1000" ] || fail "data gehoert nicht uid 1000"
-grep -q '^SHG_DEVICE_API_URL=https://api.example.test$' /var/lib/smartheat/host/gateway.env || fail "gateway.env"
+grep -q '^SHG_DEVICE_API_URL=https://api.example.test$' /opt/smartheat/gateway.env || fail "gateway.env"
+[ "$(stat -c '%a %u:%g' /opt/smartheat/gateway.env)" = "644 0:0" ] || fail "gateway.env Rechte"
+[ ! -e /var/lib/smartheat/host/gateway.env ] || fail "host/gateway.env unter SHG_ROOT angelegt (gibt es nicht mehr)"
+for file in rauc-backend probestart-frist; do
+  [ "$(stat -c '%a %u:%g' "/opt/smartheat/$file")" = "755 0:0" ] || fail "$file nicht root-eigen und ausfuehrbar"
+  cmp -s "$SRC/$file" "/opt/smartheat/$file" || fail "$file weicht vom Repo ab"
+done
+# Werkseinstellung: erstes Bundle und Vorlage unter /opt (nicht unter SHG_ROOT); der Ordnerbaum gleicht der Installer-Lauf an.
+for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.sig; do
+  cmp -s "$SIGNED_BUNDLE/$name" "/opt/smartheat/werkseinstellung/bundle/$name" || fail "Werkseinstellung ohne $name"
+done
+[ "$(stat -c '%a %u:%g' /opt/smartheat/werkseinstellung/state.json)" = "644 0:0" ] || fail "Werkseinstellung state.json Rechte"
+[ "$(stat -c '%u:%g %a' /var/lib/smartheat/bus/mosquitto-daten)" = "1000:1000 700" ] || fail "bus/mosquitto-daten"
+[ "$(stat -c '%u:%g %a' /var/lib/smartheat/host/geladen)" = "0:0 755" ] || fail "host/geladen"
+[ ! -e /var/lib/smartheat/images ] || fail "images/ unter SHG_ROOT angelegt (die Archive liegen unter /opt)"
+[ -z "$(find /etc/systemd/system -name 'smartheat-*.timer' ! -name smartheat-probestart-frist.timer)" ] || fail "fremder Timer"
 grep -q '"current": "0.2.0"' /var/lib/smartheat/updater/state.json || fail "erstes Bundle nicht als current"
 for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.sig; do
   cmp -s "$SIGNED_BUNDLE/$name" "/var/lib/smartheat/bundles/0.2.0/$name" || fail "Bundle-Ordner ohne $name (Spec 2.2)"
@@ -141,10 +169,10 @@ grep -q "Nichts zu tun" /tmp/run4.log || fail "Wiederholung ohne Pilot-SSH melde
 # Symlinks unter ROOT (dort schreibt uid 1000): Installer bricht ab und fasst das Ziel nicht an.
 SYM_TARGET=/tmp/symlink-target
 mkdir -p "$SYM_TARGET" && chmod 0755 "$SYM_TARGET" && echo keep >"$SYM_TARGET/file" && chmod 0644 "$SYM_TARGET/file"
-for plant in bus/credentials/runtime bus data host/gateway.env; do
+for plant in bus/credentials/runtime bus data host; do
   victim=/var/lib/smartheat/$plant
   mv "$victim" "$victim.orig"
-  if [ "$plant" = host/gateway.env ]; then ln -s "$SYM_TARGET/file" "$victim"; else ln -s "$SYM_TARGET" "$victim"; fi
+  ln -s "$SYM_TARGET" "$victim"
   if bash "$SRC/install.sh" "${ARGS_NOPILOT[@]}" >/tmp/sym.log 2>&1; then fail "Symlink $plant: Installer lief durch"; fi
   grep -q "Symlink" /tmp/sym.log || { cat /tmp/sym.log; fail "Symlink $plant: keine klare Fehlermeldung"; }
   [ "$(stat -c '%a %u:%g' "$SYM_TARGET")" = "755 0:0" ] || fail "Symlink $plant: Ziel veraendert"
@@ -158,7 +186,7 @@ done
 # steht diese implizite Regel hier als Drop-in explizit. Ein Gegenbeispiel (After=multi-user.target bei
 # WantedBy=multi-user.target) muss den Test ausloesen, sonst taugt er nichts.
 mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/multi-user.target.d
-for unit in updater led hoststatus firewall firstboot; do
+for unit in updater led hoststatus firewall firstboot ablage werk; do
   ln -sf "/etc/systemd/system/smartheat-$unit.service" "/etc/systemd/system/multi-user.target.wants/smartheat-$unit.service"
 done
 cycle_check() {  # Ausgabe von verify fuer multi-user.target mit der impliziten Reihenfolge fuer die Units $*
@@ -166,7 +194,7 @@ cycle_check() {  # Ausgabe von verify fuer multi-user.target mit der impliziten 
   systemd-analyze verify --man=no multi-user.target 2>&1
 }
 cycle_check smartheat-updater.service smartheat-led.service smartheat-hoststatus.service smartheat-firewall.service \
-  smartheat-firstboot.service >/tmp/cycle.log
+  smartheat-firstboot.service smartheat-ablage.service smartheat-werk.service >/tmp/cycle.log
 if grep -qi 'ordering cycle' /tmp/cycle.log; then grep -i cycle /tmp/cycle.log; fail "Ordnungszyklus in den Gateway-Units"; fi
 sed 's|^After=local-fs.target|After=multi-user.target|' /etc/systemd/system/smartheat-led.service \
   >/etc/systemd/system/smartheat-cycle.service
@@ -199,6 +227,8 @@ activate_run "ohne Stick"
 grep -q "Geraet fehlt: $STICK" /tmp/act.log || { cat /tmp/act.log; fail "Aktivierung ohne Stick: keine klare Meldung"; }
 compose_started && fail "Aktivierung ohne Stick: compose up trotzdem aufgerufen"
 grep -q "^systemctl enable --now docker.service smartheat-updater.service" /tmp/stub.log || fail "Updater nicht aktiviert"
+grep -q "^systemctl enable --now smartheat-ablage.service smartheat-werk.service" /tmp/stub.log || fail "Ablage und Werk nicht aktiviert"
+grep -q "probestart-frist" /tmp/stub.log && fail "Probestart-Frist ausserhalb des Images aktiviert (kein A/B-System)"
 cmp -s "$SRC/docker-daemon.json" /etc/docker/daemon.json || fail "docker daemon.json (Speicherweg fuer den Erststart) fehlt"
 touch "$STICK"
 activate_run "mit Stick"
@@ -216,16 +246,21 @@ compose_started && fail "offener Updater-Auftrag: compose up trotzdem aufgerufen
 # Vorher die Symlinks des Zyklustests (oben) entfernen, sonst wuerde ein "aktiviert" von dort stammen.
 rm -f /etc/systemd/system/multi-user.target.wants/smartheat-*.service /etc/systemd/system/multi-user.target.d/*.conf \
   /etc/systemd/system/smartheat-cycle.service
-IMAGE_ARGS=("${ARGS[@]/--no-activate/--image}")
+# Unter --root legt --image nichts an (der Bau liesse es unter dem Bind-Mount liegen): das erledigt der erste Start.
+IMAGE_ROOT=/var/lib/smartheat-img
+IMAGE_ARGS=(--image --no-docker --device-api-url https://api.example.test --root "$IMAGE_ROOT" --bundle "$SIGNED_BUNDLE")
 bash "$SRC/install.sh" "${IMAGE_ARGS[@]}" >/tmp/run-image.log 2>&1 || { cat /tmp/run-image.log; fail "Lauf mit --image"; }
-for unit in smartheat-firewall smartheat-hoststatus smartheat-led ssh; do
+[ ! -e "$IMAGE_ROOT" ] || fail "--image hat $IMAGE_ROOT angelegt"
+for unit in smartheat-ablage smartheat-werk smartheat-firewall smartheat-hoststatus smartheat-led; do
   [ -L "/etc/systemd/system/multi-user.target.wants/$unit.service" ] || fail "$unit mit --image nicht aktiviert"
 done
+[ -L /etc/systemd/system/timers.target.wants/smartheat-probestart-frist.timer ] \
+  || fail "Probestart-Frist-Timer mit --image nicht aktiviert"
 # Ohne Docker (--no-docker) bleibt smartheat-firstboot aus: die Unit hat Requires=docker.service.
 [ -L /etc/systemd/system/multi-user.target.wants/smartheat-firstboot.service ] \
   && fail "firstboot mit --image --no-docker aktiviert"
-grep -q '^ConditionDirectoryNotEmpty=/var/lib/smartheat/images$' /etc/systemd/system/smartheat-firstboot.service \
-  || fail "Firstboot-Bedingung fehlt oder @ROOT@ nicht ersetzt"
+grep -q '^ConditionDirectoryNotEmpty' /etc/systemd/system/smartheat-firstboot.service \
+  && fail "Firstboot-Bedingung vorhanden (jeder Start ruft compose.up)"
 # Docker-Speicherweg: daemon.json liegt VOR der Installation von docker-ce, eine abweichende
 # bestehende Datei bricht ab und bleibt unberuehrt, identischer Inhalt ist ein No-op.
 ORD_STUBS=/tmp/stubs-order

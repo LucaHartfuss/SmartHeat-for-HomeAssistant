@@ -2,6 +2,7 @@
 Verletzung (geteilte Identitaet, Passwort, SSH im Serien-Image, Tunnel-Token, fehlende Archive, fremde
 Geraete-API-Adresse) laesst es scheitern. Dazu die Adress-Regel own_url.sh (Nutzer-Vorgabe 2026-10-07: eigener
 DNS-Name per https in der eigenen Zone hartfussha.org, keine IP-Adresse, keine AWS-Adresse) direkt."""
+import hashlib
 import os
 import shutil
 import subprocess
@@ -13,9 +14,13 @@ IMAGE = Path(__file__).resolve().parents[2] / "image"
 SCRIPT = IMAGE / "rootfs_checks.sh"
 OWN_URL = IMAGE / "own_url.sh"
 WANTS = "etc/systemd/system/multi-user.target.wants"
-UNITS = ("smartheat-firewall", "smartheat-hoststatus", "smartheat-led", "smartheat-firstboot", "smartheat-updater",
-         "docker")
-ENV = "var/lib/smartheat/host/gateway.env"
+UNITS = ("smartheat-ablage", "smartheat-werk", "smartheat-firewall", "smartheat-hoststatus", "smartheat-led",
+         "smartheat-firstboot", "smartheat-updater", "docker")
+TIMER = "etc/systemd/system/timers.target.wants/smartheat-probestart-frist.timer"
+ENV = "opt/smartheat/gateway.env"  # die einzige Quelle fuer Units und Compose (kein host/gateway.env unter SHG_ROOT)
+WERK = "opt/smartheat/werkseinstellung"
+ARCHIV_A = "a" * 64  # der Name eines Archivs ist die SHA-256 seines Inhalts; die Fixtures tragen den Inhalt dazu
+ARCHIV_INHALT = b"archiv-inhalt"
 USB_RULE = "etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules"  # Altlast des Pi-4-Images (usbboot.sh, geloescht)
 USB_HOOK = "etc/initramfs-tools/hooks/smartheat-usbboot"
 DPKG_STATUS = "var/lib/dpkg/status"
@@ -235,7 +240,11 @@ def test_own_url_restores_the_callers_locale():
     assert result.stdout == "C.UTF-8"
 
 
-def _good(root: Path, pilot: bool = False) -> Path:
+def _archiv_name(inhalt: bytes) -> str:
+    return hashlib.sha256(inhalt).hexdigest() + ".tar"
+
+
+def _good(root: Path) -> Path:
     files = {
         "etc/machine-id": "",
         "etc/shadow": "root:*:20000:0:99999:7:::\npi:!:20000:0:99999:7:::\n",
@@ -244,10 +253,15 @@ def _good(root: Path, pilot: bool = False) -> Path:
         "etc/apt/sources.list.d/raspi.sources": "URIs: http://archive.raspberrypi.com/debian/\n",
         ENV: "SHG_ROOT=/var/lib/smartheat\nSHG_DEVICE_API_URL=https://accounts.hartfussha.org\n"
              "SHG_PORTAL_BASE_URL=https://portal.hartfussha.org\nTZ=Europe/Berlin\n",
-        "var/lib/smartheat/updater/state.json": '{"current": "0.3.0", "in_progress": null}',
-        "var/lib/smartheat/bundles/0.3.0/manifest.json.sig": "sig",
+        # Werkseinstellung: erstes Bundle (signiert) und state.json-Vorlage; die Archive schreibt der Test unten
+        f"{WERK}/state.json": '{"current": "0.3.0", "in_progress": null}',
+        f"{WERK}/bundle/manifest.json": '{"version": "0.3.0"}',
+        f"{WERK}/bundle/manifest.json.sig": "sig",
+        f"{WERK}/bundle/docker-compose.yml": "services: {}\n",
+        f"{WERK}/bundle/mosquitto.conf": "listener 1883\n",
+        "opt/smartheat/rauc-backend": "#!/bin/sh\n",
+        "opt/smartheat/probestart-frist": "#!/bin/sh\n",
         "opt/smartheat/host/release-roots.pem": "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
-        "var/lib/smartheat/images/01.tar": "x",
         "home/pi/.ssh/authorized_keys": "",
         "opt/smartheat/installer/gateway/host/install.sh": "#!/bin/bash\n",
         "opt/smartheat/host/VERSION": "0.3.0\n",
@@ -272,12 +286,16 @@ def _good(root: Path, pilot: bool = False) -> Path:
         "usr/bin/ip": "#!/bin/sh\n",
         "usr/bin/vcgencmd": "#!/bin/sh\n",
     }
-    if pilot:
-        files["root/.ssh/authorized_keys"] = "ssh-ed25519 AAAA test-key\n"
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text)
-    (root / "var/lib/smartheat/data").mkdir(parents=True)
+    (root / WERK / "images").mkdir(parents=True)
+    (root / WERK / "images" / _archiv_name(ARCHIV_INHALT)).write_bytes(ARCHIV_INHALT)
+    (root / "var/lib/smartheat").mkdir(parents=True)  # der Mountpunkt: leer, der Bau legt dort nichts ab
+    for programm in ("rauc-backend", "probestart-frist"):
+        (root / "opt/smartheat" / programm).chmod(0o755)
+    (root / TIMER).parent.mkdir(parents=True)
+    (root / TIMER).symlink_to("/lib/systemd/system/smartheat-probestart-frist.timer")
     (root / WANTS).mkdir(parents=True)
     (root / "werk").mkdir()
     (root / WANTS / "werk.mount").symlink_to("../werk.mount")
@@ -289,11 +307,10 @@ def _good(root: Path, pilot: bool = False) -> Path:
     (root / "etc/localtime").symlink_to("/usr/share/zoneinfo/Europe/Berlin")
     (root / "etc/default").mkdir(parents=True, exist_ok=True)
     (root / "etc/default/locale").symlink_to("../locale.conf")
-    for unit in UNITS + (("ssh",) if pilot else ()):
+    for unit in UNITS:
         (root / WANTS / f"{unit}.service").symlink_to(f"/lib/systemd/system/{unit}.service")
-    for tree in ("opt/smartheat", "var/lib/smartheat/images"):  # wie im Image: nicht gruppen-/weltbeschreibbar
-        for path in [root / tree, *(root / tree).rglob("*")]:
-            path.chmod(path.stat().st_mode & ~0o022)
+    for path in [root / "opt/smartheat", *(root / "opt/smartheat").rglob("*")]:  # wie im Image: nicht gruppen-/weltbeschreibbar
+        path.chmod(path.stat().st_mode & ~0o022)
     return root
 
 
@@ -308,8 +325,6 @@ def _run(root: Path, *extra: str, owner_uid: int | None = None) -> subprocess.Co
 def test_good_rootfs_passes(tmp_path):
     result = _run(_good(tmp_path / "serial"))
     assert result.returncode == 0, result.stdout
-    pilot = _run(_good(tmp_path / "pilot", pilot=True), "--pilot")
-    assert pilot.returncode == 0, pilot.stdout
 
 
 def test_uninitialized_machine_id_is_fine(tmp_path):
@@ -322,11 +337,14 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     lambda r: (r / "etc/machine-id").write_text("0123456789abcdef0123456789abcdef\n"),
     lambda r: (r / "var/lib/dbus").mkdir(parents=True) or (r / "var/lib/dbus/machine-id").write_text("0123abcd\n"),
     lambda r: (r / "etc/ssh").mkdir() or (r / "etc/ssh/ssh_host_ed25519_key").write_text("k"),
-    lambda r: (r / "var/lib/smartheat/data/device").mkdir(),
+    lambda r: (r / "var/lib/smartheat/data/device").mkdir(parents=True),
     lambda r: (r / "var/lib/smartheat/bus/credentials/runtime").mkdir(parents=True)
     or (r / "var/lib/smartheat/bus/credentials/runtime/bus.json").write_text("{}"),
     lambda r: (r / "var/lib/smartheat/zigbee2mqtt").mkdir()
     or (r / "var/lib/smartheat/zigbee2mqtt/configuration.yaml").write_text("x"),
+    lambda r: (r / "var/lib/smartheat/images").mkdir(),
+    lambda r: (r / "var/lib/smartheat/updater").mkdir() or (r / "var/lib/smartheat/updater/state.json").write_text("{}"),
+    lambda r: (r / "var/lib/smartheat/host").mkdir() or (r / "var/lib/smartheat/host/gateway.env").write_text("x"),
     lambda r: (r / "etc/shadow").write_text("root:*:1::::::\npi::1::::::\n"),
     lambda r: (r / "etc/shadow").write_text("root:$y$j9T$abc:1::::::\n"),
     lambda r: (r / "etc/shadow").unlink(),
@@ -336,11 +354,23 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     lambda r: (r / "root/.ssh").mkdir(parents=True) or (r / "root/.ssh/authorized_keys").write_text("ssh-ed25519 A"),
     lambda r: (r / "home/pi/.ssh/authorized_keys").write_text("ssh-ed25519 AAAA test-key\n"),
     lambda r: (r / "etc/smartheat").mkdir() or (r / "etc/smartheat/pilot-ssh-tunnel.env").write_text("TUNNEL_TOKEN=x"),
-    lambda r: (r / "var/lib/smartheat/images/01.tar").unlink(),
-    lambda r: (r / "var/lib/smartheat/bundles/0.3.0/manifest.json.sig").unlink(),
+    lambda r: (r / WERK / "images" / _archiv_name(ARCHIV_INHALT)).unlink(),
+    lambda r: (r / WERK / "images" / ("0" * 64 + ".tar")).write_bytes(b"anderer inhalt"),
+    lambda r: (r / WERK / "images" / "01.tar").write_bytes(b"x"),
+    lambda r: (r / WERK / "images" / "README").write_text("x"),
+    lambda r: (r / WERK / "bundle/manifest.json.sig").unlink(),
+    lambda r: (r / WERK / "bundle/manifest.json").unlink(),
+    lambda r: (r / WERK / "bundle/docker-compose.yml").unlink(),
+    lambda r: (r / WERK / "bundle/mosquitto.conf").unlink(),
+    lambda r: (r / WERK / "state.json").unlink(),
+    lambda r: (r / WERK / "state.json").write_text('{"current": "0.9.9"}'),
+    lambda r: (r / "opt/smartheat/rauc-backend").chmod(0o644),
+    lambda r: (r / "opt/smartheat/probestart-frist").unlink(),
+    lambda r: (r / TIMER).unlink(),
+    lambda r: (r / WANTS / "smartheat-ablage.service").unlink(),
+    lambda r: (r / WANTS / "smartheat-werk.service").unlink(),
     lambda r: (r / "opt/smartheat/host/release-roots.pem").unlink(),
     lambda r: (r / "opt/smartheat/host/release-roots.pem").write_text(""),
-    lambda r: (r / "var/lib/smartheat/updater/state.json").write_text('{"current": null}'),
     lambda r: (r / WANTS / "smartheat-updater.service").unlink(),
     lambda r: (r / WANTS / "docker.service").unlink(),
     lambda r: (r / "etc/apt/sources.list.d/raspi.sources").unlink(),
@@ -353,8 +383,8 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     or (r / "var/lib/smartheat/bus/mosquitto/passwd").write_text("runtime:$7$x\n"),
     lambda r: (r / "opt/smartheat/installer/gateway/host/install.sh").chmod(0o666),
     lambda r: (r / "opt/smartheat/installer").chmod(0o775),
-    lambda r: (r / "var/lib/smartheat/images/01.tar").chmod(0o664),
-    lambda r: (r / "var/lib/smartheat/images").chmod(0o777),
+    lambda r: (r / WERK / "images" / _archiv_name(ARCHIV_INHALT)).chmod(0o664),
+    lambda r: (r / WERK / "images").chmod(0o777),
     lambda r: __import__("shutil").rmtree(r / "opt/smartheat"),
 ])
 def test_each_violation_fails(tmp_path, breakit):
@@ -586,7 +616,7 @@ def test_owner_other_than_root_fails(tmp_path):
     root = _good(tmp_path)
     result = _run(root, owner_uid=os.getuid() + 1)
     assert result.returncode != 0
-    assert "/opt/smartheat" in result.stdout and "/var/lib/smartheat/images" in result.stdout
+    assert "/opt/smartheat" in result.stdout
 
 
 def test_default_expected_owner_is_root(tmp_path):
@@ -605,20 +635,9 @@ def test_invalid_expected_owner_is_rejected(tmp_path):
     assert result.returncode == 2
 
 
-def test_pilot_image_needs_its_key_and_ssh(tmp_path):
-    root = _good(tmp_path, pilot=True)
-    (root / "root/.ssh/authorized_keys").write_text("")
-    assert _run(root, "--pilot").returncode != 0
-    root = _good(tmp_path / "nossh", pilot=True)
-    (root / WANTS / "ssh.service").unlink()
-    assert _run(root, "--pilot").returncode != 0
-
-
-def test_pilot_image_has_no_host_keys_either(tmp_path):
-    root = _good(tmp_path, pilot=True)
-    (root / "etc/ssh").mkdir()
-    (root / "etc/ssh/ssh_host_rsa_key").write_text("k")
-    assert _run(root, "--pilot").returncode != 0
+def test_pilot_option_is_gone(tmp_path):
+    """Das Pilot-Image (SSH-Schluessel im Image) gibt es bis AP-05b nicht: --pilot ist keine Option mehr."""
+    assert _run(_good(tmp_path), "--pilot").returncode == 2
 
 
 def test_customize_mode_leaves_only_the_machine_ids_to_the_final_check(tmp_path):

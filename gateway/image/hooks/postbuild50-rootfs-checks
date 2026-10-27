@@ -8,9 +8,7 @@
 set -euo pipefail
 R="${1:?Root-Dateisystem fehlt}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"  # <SRCROOT>: der Runner startet den Hook in seinem eigenen Ordner
-STAGE="${IGconf_shg_stage:?IGconf_shg_stage fehlt}"
-check=(env -u SHG_ROOTFS_CHECK_UID bash "$HERE/rootfs_checks.sh" "$R")  # Variable nur fuer Tests
-if [ -f "$STAGE/pilot" ]; then check+=(--pilot); fi
+: "${IGconf_shg_stage:?IGconf_shg_stage fehlt}"  # die Stage braucht der Hook nicht, aber ohne sie laeuft kein Bau
 echo "postbuild50-rootfs-checks: pruefe $R"
-"${check[@]}"
+env -u SHG_ROOTFS_CHECK_UID bash "$HERE/rootfs_checks.sh" "$R"  # Variable nur fuer Tests
 echo "postbuild50-rootfs-checks: bestanden"

@@ -1,12 +1,13 @@
 [Unit]
 Description=SmartHeat-Gateway Hoststatus (Spec SHG G2b-1 5)
-After=network-online.target
+After=network-online.target smartheat-ablage.service
 Wants=network-online.target
+Requires=smartheat-ablage.service
+RequiresMountsFor=@ROOT@
 
 [Service]
 Environment=PYTHONPATH=/opt/smartheat/host
-Environment=SHG_ROOT=@ROOT@
-EnvironmentFile=@ROOT@/host/gateway.env
+EnvironmentFile=/opt/smartheat/gateway.env
 ExecStart=/usr/bin/python3 -m smartheat_host.hoststatus
 Restart=always
 RestartSec=30

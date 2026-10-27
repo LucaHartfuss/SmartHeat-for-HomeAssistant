@@ -1,31 +1,30 @@
 #!/bin/bash
 # Pruefungen am Root-Dateisystem des Gateway-Images: bricht den Image-Bau ab, wenn ein Geraet aus
 # dem Image eine geteilte Identitaet (machine-id, SSH-Hostschluessel, Geraeteschluessel, Bus-Zugangsdaten), ein
-# Passwort, ein Tunnel-Token oder im Serien-Image SSH bekaeme, wenn der Erststart ohne Pull nicht moeglich waere, wenn
+# Passwort, ein Tunnel-Token oder SSH bekaeme, wenn der Erststart ohne Pull nicht moeglich waere, wenn
 # WLAN an waere, Zeitzone oder Standard-Locale nicht den Vorgaben entsprechen oder die Geraete-API-/Portal-Adresse
 # kein eigener DNS-Name per https in der eigenen Zone ist (own_url.sh) oder ss, ip, vcgencmd fehlen (Diagnose), und wenn
 # das A/B-System nicht vollstaendig ist (slot-shared.d, werk.mount, /werk, Watchdog, RAUC, Docker-Pins) oder Altlasten
 # des Pi-4-Images (usbboot, unattended-upgrades, docker.io) im Image stecken.
 # config.txt und cmdline.txt entstehen erst in der Phase preimage und stehen hier noch nicht; sie prueft
 # hooks/finalize10-bootfs-checks.
-# Aufruf: rootfs_checks.sh ROOTFS [--pilot] [--customize]
+# Aufruf: rootfs_checks.sh ROOTFS [--customize]
 #   --customize: Lauf im customize-Hook (customize.sh). Die machine-ids (systemd, dbus) bestehen dort noch;
 #                zurueckgesetzt werden sie erst beim Aufraeumen von mmdebstrap, geprueft dann im postbuild-Hook
 #                (hooks/postbuild50-rootfs-checks, voller Lauf). Der volle Lauf prueft auch die Docker-Pakete
 #                gegen docker-apt/version (neben diesem Skript; im Installer-Baum der Stage fehlt der Ordner).
 # Exit 0 = in Ordnung, 1 = Verstoesse (je Zeile "FAIL: ..."), 2 = falscher Aufruf.
-# Eigentuemer: alles unter /opt/smartheat und /var/lib/smartheat/images gehoert uid 0 (root fuehrt es aus bzw. laedt es;
-# uid 1000 waere auf dem Geraet der Benutzer pi bzw. die Container). SHG_ROOTFS_CHECK_UID setzt die erwartete uid -
+# Eigentuemer: alles unter /opt/smartheat gehoert uid 0 (root fuehrt es aus bzw. laedt es; uid 1000 waere auf dem Geraet
+# der Benutzer pi bzw. die Container). SHG_ROOTFS_CHECK_UID setzt die erwartete uid -
 # NUR fuer die Tests (deren Fixtures gehoeren dem Testbenutzer, eine Gegenprobe mit fremdem Eigentuemer geht ohne root
 # nur so); customize.sh und der postbuild-Hook rufen dieses Skript ausdruecklich ohne die Variable auf.
 # shellcheck source-path=SCRIPTDIR
 set -u
 R="${1:?ROOTFS fehlt}"
 shift
-PILOT=0 CUSTOMIZE=0
+CUSTOMIZE=0
 for arg in "$@"; do
   case "$arg" in
-    --pilot) PILOT=1 ;;
     --customize) CUSTOMIZE=1 ;;
     *) echo "Unbekannte Option: $arg" >&2; exit 2 ;;
   esac
@@ -56,10 +55,9 @@ if [ "$CUSTOMIZE" = 0 ]; then
   fi
 fi
 if compgen -G "$R/etc/ssh/ssh_host_*" >/dev/null; then fail "SSH-Hostschluessel im Image"; fi
-[ -z "$(ls -A "$SH/data" 2>/dev/null)" ] || fail "data/ nicht leer (Geraeteschluessel, Laufzeit-Zustand)"
-if compgen -G "$SH/bus/credentials/*/bus.json" >/dev/null; then fail "Bus-Zugangsdaten im Image"; fi
-[ ! -e "$SH/bus/mosquitto/passwd" ] || fail "Mosquitto-passwd im Image"
-[ ! -e "$SH/zigbee2mqtt/configuration.yaml" ] || fail "Zigbee2MQTT-Konfiguration im Image"
+# Der Bau legt unter SHG_ROOT (= daten, ein Bind-Mount ueberdeckt es) nichts ab: weder Geraeteschluessel und Laufzeit-Zustand
+# noch Bus-Zugangsdaten, Mosquitto-passwd oder Zigbee2MQTT-Konfiguration; Ordner, Zustand und erstes Bundle legt der erste Start an.
+[ -z "$(ls -A "$SH" 2>/dev/null)" ] || fail "var/lib/smartheat nicht leer (der Bau legt unter SHG_ROOT nichts ab)"
 [ ! -e "$R/etc/smartheat/pilot-ssh-tunnel.env" ] || fail "Tunnel-Token im Image"
 
 # Keine Anmeldung per Passwort (leeres Feld = ohne Passwort, also ebenfalls verboten)
@@ -82,7 +80,7 @@ else
 fi
 
 # Eigentuemer und Rechte: root fuehrt den Installer aus und laedt die Archive (Links ausgenommen: immer 777)
-for tree in "$R/opt/smartheat" "$SH/images"; do
+for tree in "$R/opt/smartheat"; do
   rel="${tree#"$R"}"
   if [ ! -d "$tree" ]; then fail "$rel fehlt"; continue; fi
   bad="$(find "$tree" ! -uid "$OWNER_UID" -print -quit 2>/dev/null)"
@@ -92,28 +90,49 @@ for tree in "$R/opt/smartheat" "$SH/images"; do
 done
 
 # Dienste
-for unit in smartheat-firewall smartheat-hoststatus smartheat-led smartheat-firstboot smartheat-updater docker; do
+for unit in smartheat-ablage smartheat-werk smartheat-firewall smartheat-hoststatus smartheat-led smartheat-firstboot \
+            smartheat-updater docker; do
   [ -L "$WANTS/$unit.service" ] || fail "$unit nicht aktiviert"
 done
-if [ "$PILOT" = 1 ]; then
-  [ -L "$WANTS/ssh.service" ] || fail "ssh im Pilot-Image nicht aktiviert"
-  [ -s "$R/root/.ssh/authorized_keys" ] || fail "Pilot-Schluessel fehlt"
-else
-  # -L statt -e: die Links zeigen absolut ins Image (/lib/systemd/...) und waeren vom Build-Host aus oft "kaputt".
-  if [ -L "$WANTS/ssh.service" ] || [ -e "$WANTS/ssh.service" ]; then fail "ssh im Serien-Image aktiviert"; fi
-  if [ -L "$R/etc/systemd/system/sockets.target.wants/ssh.socket" ]; then
-    fail "ssh.socket im Serien-Image aktiviert"
-  fi
-  for keys in "$R"/root/.ssh/authorized_keys "$R"/home/*/.ssh/authorized_keys; do
-    [ ! -s "$keys" ] || fail "authorized_keys im Serien-Image (${keys#"$R"})"
-  done
+# Probestart-Frist (ohne Updater schaltet sie 20 min nach dem Start zurueck, GW 6.3): Timer aktiviert, Programme root-eigen
+[ -L "$R/etc/systemd/system/timers.target.wants/smartheat-probestart-frist.timer" ] \
+  || fail "smartheat-probestart-frist.timer nicht aktiviert"
+for prog in rauc-backend probestart-frist; do
+  [ -x "$R/opt/smartheat/$prog" ] || fail "opt/smartheat/$prog fehlt oder ist nicht ausfuehrbar"
+done
+# Kein SSH im Image (ein SSH-Zugang kommt mit AP-05b). -L statt -e: die Links zeigen absolut ins Image
+# (/lib/systemd/...) und waeren vom Build-Host aus oft "kaputt".
+if [ -L "$WANTS/ssh.service" ] || [ -e "$WANTS/ssh.service" ]; then fail "ssh im Image aktiviert"; fi
+if [ -L "$R/etc/systemd/system/sockets.target.wants/ssh.socket" ]; then
+  fail "ssh.socket im Image aktiviert"
 fi
+for keys in "$R"/root/.ssh/authorized_keys "$R"/home/*/.ssh/authorized_keys; do
+  [ ! -s "$keys" ] || fail "authorized_keys im Image (${keys#"$R"})"
+done
 
-# Erststart ohne Pull, signiertes laufendes Bundle
-if ! compgen -G "$SH/images/*.tar" >/dev/null; then fail "keine Image-Archive fuer den Erststart"; fi
-current="$(sed -n 's/.*"current": *"\([^"]*\)".*/\1/p' "$SH/updater/state.json" 2>/dev/null)"
-if [ -z "$current" ] || [ ! -f "$SH/bundles/$current/manifest.json.sig" ]; then
-  fail "laufendes Bundle fehlt oder ist nicht signiert"
+# Werkseinstellung (unter /opt/smartheat, nicht unter SHG_ROOT): Container-Archive fuer den Erststart ohne Pull, jedes
+# nach der SHA-256 seines Inhalts benannt (der Start laedt je Name einmal), und das signierte erste Bundle mit der Vorlage
+# der state.json.
+WERK="$R/opt/smartheat/werkseinstellung"
+if ! compgen -G "$WERK/images/*.tar" >/dev/null; then fail "keine Image-Archive fuer den Erststart"; fi
+for archive in "$WERK"/images/*; do
+  [ -e "$archive" ] || continue
+  name="$(basename "$archive")"
+  case "$name" in
+    *.tar) ;;
+    *) fail "opt/smartheat/werkseinstellung/images/$name ist kein Archiv (<SHA-256>.tar erwartet)"; continue ;;
+  esac
+  sum="$(sha256sum <"$archive")"
+  [ "$name" = "${sum%% *}.tar" ] || fail "Archiv $name heisst nicht nach der SHA-256 seines Inhalts"
+done
+for name in docker-compose.yml mosquitto.conf manifest.json; do
+  [ -s "$WERK/bundle/$name" ] || fail "Werkseinstellung: bundle/$name fehlt"
+done
+[ -s "$WERK/bundle/manifest.json.sig" ] || fail "Werkseinstellung: erstes Bundle nicht signiert (manifest.json.sig fehlt)"
+current="$(sed -n 's/.*"current": *"\([^"]*\)".*/\1/p' "$WERK/state.json" 2>/dev/null)"
+version="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$WERK/bundle/manifest.json" 2>/dev/null | head -n 1)"
+if [ -z "$current" ] || [ "$current" != "$version" ]; then
+  fail "Werkseinstellung: state.json nennt current '${current}' statt der Version '${version}' des ersten Bundles"
 fi
 # Schluesselbund der Release-Roots: ohne ihn kann der Updater kein Bundle pruefen (install.sh legt ihn ab)
 if [ ! -s "$R/opt/smartheat/host/release-roots.pem" ]; then
@@ -296,7 +315,7 @@ fi
 # Geraete-API und Portal: eigener DNS-Name per https. Genau eine Zuweisung KEY=... am Zeilenanfang; jede andere Zeile,
 # die den Schluessel nennt (Leerzeichen, export, Kommentar, doppelt), koennte je nach Leser (Docker, systemd, Shell)
 # einen anderen Wert ergeben als den hier geprueften.
-ENV_FILE="$SH/host/gateway.env"
+ENV_FILE="$R/opt/smartheat/gateway.env"
 for pair in "SHG_DEVICE_API_URL:Geraete-API" "SHG_PORTAL_BASE_URL:Portal"; do
   key="${pair%%:*}" name="${pair#*:}"
   plain="$(grep -c "^$key=" "$ENV_FILE" 2>/dev/null)"

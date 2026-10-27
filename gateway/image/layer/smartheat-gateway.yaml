@@ -13,7 +13,7 @@
 # X-Env-VarPrefix: shg
 #
 # X-Env-Var-stage: /stage
-# X-Env-Var-stage-Desc: Ordner von prepare.sh (installer/, bundle/, images/, install.args, pilot)
+# X-Env-Var-stage-Desc: Ordner von prepare.sh (installer/, bundle/, images/, install.args)
 # X-Env-Var-stage-Required: y
 # X-Env-Var-stage-Valid: string
 # X-Env-Var-stage-Set: y
@@ -24,7 +24,7 @@
 # docker.io 26 und kein Docker 29, die Quelle bindet der Mirror ein, docker_apt.sh vertraut dem Schluessel und
 # nagelt die vier Pakete auf docker-apt/version fest. Kein docker.io, kein unattended-upgrades: der Paketstand
 # aendert sich nur mit einem neuen System-Bundle (Release-Takt, S-10). rauc und rauc-service: A/B-Systemwechsel (GW 6.3);
-# /etc/rauc/system.conf legt customize.sh ab. openssh-server (Pilot-Image) bringt trixie-minbase mit.
+# /etc/rauc/system.conf legt customize.sh ab. openssh-server bringt trixie-minbase mit (install.sh --image schaltet es ab).
 # locales und tzdata fuer Locale und Zeitzone (Abschnitt locale der Konfiguration): trixie-minbase laedt locale-base
 # (debconf-Vorbelegung), aber nicht locale-gen. iproute2 (ss, ip) und raspi-utils (vcgencmd, nur aus dem Raspberry-Pi-
 # Archiv, das das Image einbindet; install.sh auf einem fremden Debian verlangt es nicht) fuer die Diagnose am Geraet;

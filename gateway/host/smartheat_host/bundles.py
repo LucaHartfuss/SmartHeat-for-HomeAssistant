@@ -333,16 +333,18 @@ def docker_load(archive: Path, timeout: float = LOAD_TIMEOUT_SECONDS) -> None:
 
 
 COMPOSE_PROJECT = "smartheat"  # Projektname von install.sh (`docker compose -p smartheat`), Updater und Erststart
+#: Die eine Quelle fuer Units und Compose (`--env-file`): install.sh legt sie im Image ab (root, nur lesend im System).
+GATEWAY_ENV = Path("/opt/smartheat/gateway.env")
 
 
 class ComposeRunner:
-    def __init__(self, root: Path, project: str = COMPOSE_PROJECT, run=subprocess.run) -> None:
-        self._root, self._project, self._run = root, project, run
+    def __init__(self, root: Path, project: str = COMPOSE_PROJECT, run=subprocess.run,
+                 env_datei: Path = GATEWAY_ENV) -> None:
+        self._root, self._project, self._run, self._env_datei = root, project, run, env_datei
 
     def _command(self, version: str, *args: str) -> list[str]:
         compose = self._root / "bundles" / version / "docker-compose.yml"
-        return ["docker", "compose", "-p", self._project, "--env-file", str(self._root / "host" / "gateway.env"),
-                "-f", str(compose), *args]
+        return ["docker", "compose", "-p", self._project, "--env-file", str(self._env_datei), "-f", str(compose), *args]
 
     def _compose(self, version: str, *args: str, timeout: float) -> None:
         try:

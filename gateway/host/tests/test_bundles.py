@@ -254,9 +254,21 @@ def test_compose_runner_commands(tmp_path):
     runner.pull("0.3.0")
     runner.up("0.3.0")
     compose = str(tmp_path / "bundles" / "0.3.0" / "docker-compose.yml")
-    env = str(tmp_path / "host" / "gateway.env")
-    base = ["docker", "compose", "-p", "smartheat", "--env-file", env, "-f", compose]
+    base = ["docker", "compose", "-p", "smartheat", "--env-file", "/opt/smartheat/gateway.env", "-f", compose]
     assert calls == [base + ["pull"], base + ["up", "-d", "--remove-orphans"]]
+
+
+def test_compose_runner_nimmt_die_env_datei_aus_dem_system_nicht_aus_shg_root(tmp_path):
+    """gateway.env unter /opt/smartheat ist die einzige Quelle; `host/gateway.env` unter SHG_ROOT gibt es nicht mehr."""
+    assert str(bundles.GATEWAY_ENV) == "/opt/smartheat/gateway.env"
+    calls = []
+    runner = bundles.ComposeRunner(tmp_path, run=lambda cmd, **kw: calls.append(cmd) or _Done(0, ""))
+    runner.up("0.3.0")
+    assert calls[0][calls[0].index("--env-file") + 1] == "/opt/smartheat/gateway.env"
+    anders = bundles.ComposeRunner(tmp_path, run=lambda cmd, **kw: calls.append(cmd) or _Done(0, ""),
+                                   env_datei=tmp_path / "test.env")
+    anders.up("0.3.0")
+    assert calls[1][calls[1].index("--env-file") + 1] == str(tmp_path / "test.env")
 
 
 def test_compose_health_reads_both_output_formats(tmp_path):
