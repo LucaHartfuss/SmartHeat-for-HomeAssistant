@@ -31,13 +31,23 @@ AUSNAHMEN = {
     ("bundles.py", "os.replace"): (
         1, "BundleStore.install (um Zeile 266): atomarer Tausch des ganzen Bundle-Verzeichnisses, nicht ueber "
            "dateien.schreiben abbildbar"),
+    ("bundles.py", "O_CREAT"): (
+        1, "ComposeRunner.sperre: legt updater/compose.lock als leere Sperrdatei an (O_RDONLY|O_CREAT, kein Inhalt, flock); "
+           "es wird nichts geschrieben, dateien.schreiben (Tausch per .tmp) taugte als flock-Ziel nicht"),
     ("updater.py", "open schreibend"): (
         1, "_open_teil (um Zeile 514): das Archiv des Images (bis 512 MiB) wird in Bloecken nach <ziel>.part gestreamt, "
            "dateien.schreiben nimmt nur Bytes im Speicher; fsync am Ende von fetch_url_to_file"),
     ("updater.py", "os.replace"): (
         2, "fetch_url_to_file (um Zeile 599): <ziel>.part wird erst nach vollstaendigem Abruf zu <ziel>; "
-           "_hole_archiv (um Zeile 919): ein zu kurz beendeter Abruf wird wieder zum .part, das der naechste Durchlauf "
+           "_hole_datei (um Zeile 1051): ein zu kurz beendeter Abruf wird wieder zum .part, das der naechste Durchlauf "
            "fortsetzt; beide innerhalb von archive/, nie unter bundles/"),
+    ("startauswahl.py", "os.replace"): (
+        1, "schreibe_primaer (um Zeile 108): /bootfs/autoboot.txt (FAT) wird ueber autoboot.txt.neu, fsync, rename, fsync "
+           "des Ordners und Zuruecklesen ersetzt; dateien.schreiben setzt per fchmod einen Modus, den FAT nicht kennt"),
+    ("startauswahl.py", "O_CREAT"): (
+        1, "schreibe_primaer (um Zeile 100): legt autoboot.txt.neu an, Begruendung wie bei os.replace in derselben Datei"),
+    ("startauswahl.py", "O_WRONLY"): (
+        1, "schreibe_primaer (um Zeile 100): schreibt autoboot.txt.neu, Begruendung wie bei os.replace in derselben Datei"),
     ("led.py", "write_text"): (
         3, "Led.take/set/restore (um Zeilen 58-65): sysfs-Attribute (trigger, brightness) werden direkt beschrieben; "
            "ein Tausch per .tmp und os.replace ist dort nicht moeglich"),

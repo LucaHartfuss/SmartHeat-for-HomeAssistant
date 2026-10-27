@@ -8,6 +8,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from startauswahl_fake import FakeStartauswahl
+
 from smartheat_host import updater
 
 
@@ -17,6 +19,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--health-host", required=True, help="Host im Test-Netz statt 127.0.0.1 in der Standardadresse")
     parser.add_argument("--health-seconds", type=float, required=True)
     parser.add_argument("--compose-project", required=True)
+    parser.add_argument("--env-datei", type=Path, required=True, help="gateway.env des Tests (auf dem Geraet /opt/smartheat)")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     standard = updater.Einstellungen().health_url
@@ -27,7 +30,8 @@ def main(argv: list[str] | None = None) -> None:
         ["--once"] if args.once else [],
         einstellungen=updater.Einstellungen(
             release_roots=args.release_roots, allow_http=True, health_url=health_url,
-            health_seconds=args.health_seconds, compose_project=args.compose_project),
+            health_seconds=args.health_seconds, compose_project=args.compose_project, env_datei=args.env_datei,
+            startauswahl=FakeStartauswahl),  # kein A/B-System im Container: nie RaucTryboot
     )
 
 

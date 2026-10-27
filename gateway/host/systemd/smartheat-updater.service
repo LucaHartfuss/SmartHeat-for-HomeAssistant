@@ -1,13 +1,17 @@
 [Unit]
 Description=SmartHeat-Gateway Updater (Spec SHG G2b-1 4)
-After=network-online.target docker.service
-Wants=network-online.target
+# Wartet nur auf Docker, das Netz und die Ablage, nie auf smartheat-firstboot (Laden der Archive): nach einem Systemwechsel
+# laeuft die lokale Gesundheitsfrist ab dem Start des Updaters, der Frist-Timer schaltet 20 min nach dem Boot zurueck.
+After=network-online.target docker.service smartheat-ablage.service
+Wants=network-online.target smartheat-ablage.service
 Requires=docker.service
+# Die Ablage nur mit Wants=: scheitert sie an einem untergeschobenen Eintrag im Container-Bereich, darf der Updater (der
+# Weg fuer Sicherheitsupdates) trotzdem laufen. Er braucht nur die root-eigenen Ordner updater/, bundles/ und host/.
+RequiresMountsFor=@ROOT@
 
 [Service]
 Environment=PYTHONPATH=/opt/smartheat/host
-Environment=SHG_ROOT=@ROOT@
-EnvironmentFile=@ROOT@/host/gateway.env
+EnvironmentFile=/opt/smartheat/gateway.env
 ExecStart=/usr/bin/python3 -m smartheat_host.updater
 Restart=always
 RestartSec=30

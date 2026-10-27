@@ -44,7 +44,7 @@ else COMPOSE=(docker run --rm --security-opt label=disable -v /var/run/docker.so
               "$COMPOSE_IMAGE" docker compose); fi
 COMPOSE+=(-p "$PROJECT" -f "$REPO/gateway/compose/docker-compose.yml" -f "$REPO/gateway/compose/docker-compose.dev.yml")
 mkdir -p "$DATA/data" "$DATA/zigbee2mqtt" "$DATA/host"
-mkdir -p "$DATA/bus/mosquitto" "$DATA/bus/credentials/runtime" "$DATA/bus/credentials/zigbee2mqtt"
+mkdir -p "$DATA/bus/mosquitto" "$DATA/bus/mosquitto-daten" "$DATA/bus/credentials/runtime" "$DATA/bus/credentials/zigbee2mqtt"
 chmod -R 777 "$DATA"
 # Die Container legen Ordner und Dateien als uid 1000 mit 0700/0600 an (device/, secrets/, configuration.yaml); ein
 # Skript unter anderer uid (CI-Runner 1001) kann sie nicht loeschen. Deshalb raeumt ein Wegwerf-Container als root.

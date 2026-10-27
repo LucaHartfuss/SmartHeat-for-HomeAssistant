@@ -139,7 +139,7 @@ for _ in $(seq 1 30); do curl -fsS "$API_URL/_e2e/state" >/dev/null 2>&1 && { ok
 [ "$ok" = 1 ] || die "Fake-Bootstrap antwortet nicht"
 
 # 4. Datenordner wie install.sh (die Container schreiben als uid 1000, daher 777 wie im Compose-Test)
-mkdir -p "$DATA/data" "$DATA/zigbee2mqtt" "$DATA/host" "$DATA/bus/mosquitto" \
+mkdir -p "$DATA/data" "$DATA/zigbee2mqtt" "$DATA/host" "$DATA/bus/mosquitto" "$DATA/bus/mosquitto-daten" \
          "$DATA/bus/credentials/runtime" "$DATA/bus/credentials/zigbee2mqtt" "$DATA/bundles" "$DATA/updater"
 printf 'SHG_ROOT=%s\nSHG_DEVICE_API_URL=http://%s:8090\nSHG_DIAG_HOSTNAMES=runtime\nTZ=Europe/Berlin\n' \
   "$DATA" "$BOOT" >"$DATA/host/gateway.env"
@@ -208,7 +208,7 @@ updater() {
     -v "$CORE/dateien.py:/core/smartheat_core/dateien.py:ro" \
     -e PYTHONPATH=/gw/host:/gw/src:/core -e SHG_ROOT="$DATA" \
     "$UPDATER_IMAGE" python3 /gw/host/tests/updater_testlauf.py --release-roots "$DATA/release/test-roots.pem" \
-    --health-host runtime --health-seconds 180 --compose-project "$PROJECT" --once
+    --health-host runtime --health-seconds 180 --compose-project "$PROJECT" --env-datei "$DATA/host/gateway.env" --once
 }
 expect_word() {  # $1 erwartetes Ergebnis, $2 Version; Log des Updaters (stderr) nur bei Abweichung
   # Ergebniswort nur aus stdout: docker run kopiert stdout und stderr getrennt, ihre Reihenfolge ist nicht garantiert.

@@ -1,25 +1,33 @@
-# SmartHeat-Gateway-Image, rpi-image-gen v2.8.0 (Commit 262d4df, gepinnt in build.sh). Aufbau
-# wie das mitgelieferte config/trixie-minbase.yaml, Geraet Raspberry Pi 4 mit SSD am USB. /stage stellt build.sh
-# bereit (Inhalt von prepare.sh).
+# SmartHeat-Gateway-Image, rpi-image-gen v2.9.0 (Commit d2d5705, gepinnt in build.sh). Aufbau wie das mitgelieferte
+# config/trixie-minbase-ab.yaml: Raspberry Pi 5 mit NVMe, A/B-Layout image-rota (GW 6.1). /stage stellt build.sh bereit
+# (Inhalt von prepare.sh).
 device:
-  layer: rpi4
-  # sd statt usb: v2.8.0 nimmt usb im Geraete-Layer an, die Pruefung der Image-Beschreibung (IDP-Schema v2, post-image)
-  # kennt aber nur sd/emmc/nvme und bricht den Bau ab (CI-Spike 2026-10-07). Der Wert geht nur in diese Beschreibung
-  # und als RPI_BOOT_MEDIA in die initramfs-Konfiguration; den Start vom USB macht usbboot.sh (siehe image.disksig).
-  storage_type: sd
+  layer: rpi5
+  # nvme verlangt die Eigenschaft hw:storage:nvme (siehe trait); USB-Start gibt es auf dem Pi 5 hier nicht.
+  storage_type: nvme
   hostname: smartheat-gateway
 
-image:
-  layer: image-rpios
-  boot_part_size: 200%
-  # Feste Groesse: v2.8.0 vergroessert die Root-Partition beim ersten Start nicht (kein resize/growpart im Layer).
-  root_part_size: 8G
-  name: smartheat-gateway
-  # Feste MBR-Disk-Signatur (statt random): usbboot.sh erkennt daran die Partitionen des Images am USB (PARTUUID
-  # 5348470a-01/-02), damit /dev/disk/by-slot/{boot,system} (cmdline.txt, fstab von image-rpios) auch dort entstehen.
-  disksig: "0x5348470a"
+# Die zwei Zeilen von config/device/pi5.yaml (Pi 5 mit M.2-HAT und NVMe), ausgeschrieben.
+trait:
+  hw:storage:nvme: true
+  hw:pcie:m2: true
 
-# Layer locale-config (v2.8.0, Standard en_GB.UTF-8 / gb / English (UK) / Europe/London; Nutzer-Vorgabe 2026-10-07).
+image:
+  layer: image-rota
+  # Partitionen (GPT): bootconfig (32M, fest), boot_a/boot_b, system_a/system_b, persistent (= daten); die Partition
+  # werk (16M) fuegt hooks/preimage50-werk vor persistent ein. Feste Groessen: das Image vergroessert nichts beim ersten
+  # Start (die Station vergroessert daten, AP-05b). Dateisysteme mit 16-K-Seiten (Kernel rpi-linux-2712).
+  boot_part_size: 256M
+  system_part_size: 6G
+  data_part_size: 4G
+  rootfs_type: ext4
+  pmap: clear
+  # Kein IDP-Dokument (image.json, <name>.idp.tar.zst): das Werks-Image wird als Ganzes geschrieben, die Provisionierung
+  # per Raspberry-Pi-Werkzeuge nutzt das Gateway nicht, und die Provisionierungs-Map kennt die Partition werk nicht.
+  idp_enable: n
+  name: smartheat-gateway
+
+# Layer locale-config (v2.9.0, Standard en_GB.UTF-8 / gb / English (UK) / Europe/London; Nutzer-Vorgabe 2026-10-07).
 # Die Zeitzone setzt tzdata aus der Vorbelegung (locale-base), die Locale erzeugt locales (beide Pakete aus dem Layer
 # smartheat-gateway); den Standard (LANG) setzt locale_default.sh, weil locale-base LANG=C.UTF-8 schreibt.
 # rootfs_checks.sh prueft beides.
@@ -29,12 +37,16 @@ locale:
   keyboard_layout: German
   timezone: Europe/Berlin
 
+# SBOM als CycloneDX-JSON (S-10); rpi-image-gen schreibt sonst SPDX-JSON.
+sbom:
+  syft_config: ${@SRCROOT}/sbom/syft.yaml
+
 layer:
   base: trixie-minbase
   shg: smartheat-gateway
 
 deploy:
-  # Standard von v2.8.0, hier ausdruecklich: build.sh erwartet work/deploy-<version>/smartheat-gateway.img.zst
+  # Standard von v2.9.0, hier ausdruecklich: deploy05-raw legt work/deploy-<version>/smartheat-gateway.img.zst an.
   compression: zstd
 
 shg:

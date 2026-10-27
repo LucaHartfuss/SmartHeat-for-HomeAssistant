@@ -1,0 +1,54 @@
+#!/bin/bash
+# finalize-Hook: prueft nach dem Image-Bau, was erst in der Phase preimage entsteht und darum nicht in rootfs_checks.sh
+# (postbuild) steht: /boot/firmware/cmdline.txt (aus den cmdline.d-Fragmenten) und /boot/firmware/config.txt (aus den
+# config.txt.d-Fragmenten) im Root-Dateisystem des Bau-Baums IGconf_target_path.
+#   - cmdline.txt: panic=10 (Neustart 10 s nach einer Kernel-Panik, GW 6.3), root auf by-slot/active/system
+#   - config.txt: WLAN und Bluetooth des Pi 5 per Overlay aus (disable-wifi-pi5, disable-bt-pi5) und die Overlay-Dateien
+#     (overlays/<name>.dtbo) im Baum; ein Overlay ohne Datei laedt die Firmware still nicht.
+# Aufruf durch den Runner ohne Argumente (Phase finalize); fehlende Dateien oder Overlays brechen den Bau ab. Die
+# Zeilen "finalize10-bootfs-checks: ..." im Baulog zeigen, dass der Hook lief (Namen und Ausfuehrbit sonst nur Warnung).
+set -euo pipefail
+R="${IGconf_target_path:?IGconf_target_path fehlt}"
+BOOT="$R/boot/firmware"
+FAIL=0
+fail() { echo "FAIL: $1"; FAIL=1; }
+echo "finalize10-bootfs-checks: pruefe $BOOT"
+
+CMDLINE="$BOOT/cmdline.txt"
+if [ ! -f "$CMDLINE" ]; then
+  fail "boot/firmware/cmdline.txt fehlt"
+else
+  read -ra args <"$CMDLINE" || true
+  have_panic=0 have_root=0
+  for arg in "${args[@]}"; do
+    case "$arg" in
+      panic=10) have_panic=1 ;;
+      panic=*) have_panic=2; fail "cmdline.txt: $arg (panic=10 erwartet)" ;;
+      root=/dev/disk/by-slot/active/system) have_root=1 ;;
+    esac
+  done
+  [ "$have_panic" != 0 ] || fail "cmdline.txt: panic=10 fehlt"
+  [ "$have_root" = 1 ] || fail "cmdline.txt: root=/dev/disk/by-slot/active/system fehlt"
+fi
+
+CONFIG="$BOOT/config.txt"
+if [ ! -f "$CONFIG" ]; then
+  fail "boot/firmware/config.txt fehlt"
+else
+  for overlay in disable-wifi-pi5 disable-bt-pi5; do
+    # wirksam: aktive Zeile vor jedem Abschnitt, in [all] oder in [pi5] (kein Kommentar, kein anderes Modell)
+    if ! awk -v want="dtoverlay=$overlay" '
+          /^[[:space:]]*\[/ { sec = $0; gsub(/[[:space:]]/, "", sec); next }
+          (sec == "" || sec == "[all]" || sec == "[pi5]") && $0 ~ /^[[:space:]]*dtoverlay=/ {
+            line = $0; gsub(/[[:space:]]/, "", line); if (line == want) found = 1 }
+          END { exit !found }' "$CONFIG"; then
+      fail "config.txt: dtoverlay=$overlay fehlt (Abschnitt [pi5] oder [all])"
+    fi
+    [ -f "$BOOT/overlays/$overlay.dtbo" ] || fail "overlays/$overlay.dtbo fehlt im Kernel-Paket (boot/firmware/overlays)"
+  done
+fi
+if [ "$FAIL" != 0 ]; then
+  echo "finalize10-bootfs-checks: FEHLER"
+  exit 1
+fi
+echo "finalize10-bootfs-checks: bestanden"

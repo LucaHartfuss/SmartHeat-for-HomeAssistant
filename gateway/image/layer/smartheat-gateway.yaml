@@ -2,43 +2,60 @@
 # X-Env-Layer-Name: smartheat-gateway
 # X-Env-Layer-Category: app
 # X-Env-Layer-Desc: SmartHeat-Gateway: Host-Installer im chroot (install.sh --image), Container-Images fuer den
-#  Erststart ohne Pull, Pruefung des fertigen Root-Dateisystems.
-# X-Env-Layer-Version: 1.0.0
+#  Erststart ohne Pull, A/B-System (RAUC, Werkspartition, Watchdog), Docker aus dem Docker-Archiv, Pruefung des
+#  fertigen Root-Dateisystems.
+# X-Env-Layer-Version: 2.0.0
 # X-Env-Layer-Requires: trixie-minbase
+#
+# X-Env-VarRequires: IGconf_sys_apt_keydir
+# X-Env-VarRequires-Valid: string
 #
 # X-Env-VarPrefix: shg
 #
 # X-Env-Var-stage: /stage
-# X-Env-Var-stage-Desc: Ordner von prepare.sh (installer/, bundle/, images/, install.args, pilot)
+# X-Env-Var-stage-Desc: Ordner von prepare.sh (installer/, bundle/, images/, install.args)
 # X-Env-Var-stage-Required: y
 # X-Env-Var-stage-Valid: string
 # X-Env-Var-stage-Set: y
 # METAEND
 ---
 # Alle Pakete, die install.sh verlangt (Test: test_image_scripts.py), damit install.sh im chroot kein apt braucht.
-# docker-cli ausdruecklich: unter trixie nur "Recommends" von docker.io, und rpi-image-gen installiert ohne Recommends.
-# openssh-server (Pilot-Image) bringt trixie-minbase mit. locales und tzdata fuer Locale und Zeitzone (Abschnitt locale
-# der Konfiguration): trixie-minbase laedt locale-base (debconf-Vorbelegung), aber nicht locale-gen.
-# iproute2 (ss, ip) und raspi-utils (vcgencmd, nur aus dem Raspberry-Pi-Archiv, das das Image einbindet; install.sh auf
-# einem fremden Debian verlangt es nicht) fuer die Diagnose am Geraet; rootfs_checks.sh prueft alle drei.
+# Docker aus dem Docker-Archiv (docker-apt/docker.sources, Schluessel und Versionen gepinnt, FR-34): trixie liefert nur
+# docker.io 26 und kein Docker 29, die Quelle bindet der Mirror ein, docker_apt.sh vertraut dem Schluessel und
+# nagelt die vier Pakete auf docker-apt/version fest. Kein docker.io, kein unattended-upgrades: der Paketstand
+# aendert sich nur mit einem neuen System-Bundle (Release-Takt, S-10). rauc und rauc-service: A/B-Systemwechsel (GW 6.3);
+# /etc/rauc/system.conf legt customize.sh ab. openssh-server bringt trixie-minbase mit (install.sh --image schaltet es ab).
+# locales und tzdata fuer Locale und Zeitzone (Abschnitt locale der Konfiguration): trixie-minbase laedt locale-base
+# (debconf-Vorbelegung), aber nicht locale-gen. iproute2 (ss, ip) und raspi-utils (vcgencmd, nur aus dem Raspberry-Pi-
+# Archiv, das das Image einbindet; install.sh auf einem fremden Debian verlangt es nicht) fuer die Diagnose am Geraet;
+# rootfs_checks.sh prueft alle drei.
 mmdebstrap:
+  architectures:
+    - arm64
+  mirrors:
+    - ${SRCROOT}/docker-apt/docker.sources
+  setup-hooks:
+    - bash "$SRCROOT/docker_apt.sh" "$1"
   packages:
     - locales
     - tzdata
-    - docker.io
-    - docker-cli
-    - docker-compose
+    - docker-ce
+    - docker-ce-cli
+    - containerd.io
+    - docker-compose-plugin
+    - rauc
+    - rauc-service
     - python3
     - python3-cryptography
-    - unattended-upgrades
     - nftables
     - ca-certificates
     - iproute2
     - raspi-utils
   customize-hooks:
     # Vor customize.sh (dessen rootfs_checks-Lauf prueft die Regel) und vor update-initramfs (runner customize).
-    - bash "$SRCROOT/usbboot.sh" "$1"
     - bash "$SRCROOT/locale_default.sh" "$1"
     - bash "$SRCROOT/wlan_off.sh" "$1"
     - bash "$SRCROOT/eth_dhcp.sh" "$1"
+    - bash "$SRCROOT/ab_system.sh" "$1"
+    - bash "$SRCROOT/hostname_default.sh" "$1"
     - bash "$IGconf_shg_stage/installer/gateway/image/customize.sh" "$1" "$IGconf_shg_stage"

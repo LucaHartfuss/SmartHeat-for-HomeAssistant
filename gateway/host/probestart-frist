@@ -1,0 +1,47 @@
+#!/bin/sh
+# Probestart-Frist (ohne Python, ohne Updater): 20 min nach dem Start (smartheat-probestart-frist.timer) ist der
+# gestartete Slot entweder bestaetigt ([all] boot_partition in autoboot.txt ist seine Partition) oder nicht. Nicht
+# bestaetigt: systemctl reboot ohne Argument, die Firmware startet danach [all] (der alte Slot). Ist autoboot.txt nicht
+# lesbar (/bootfs fehlt oder ist beschaedigt), entscheidet der Merker tryboot der Firmware (DT chosen/bootloader/tryboot,
+# Big-Endian-u32): 1 = dieser Start war ein Probestart, ein Neustart ist immer sicher (vor mark-good nimmt die Firmware
+# danach [all] = den alten Slot, danach ist [all] schon dieser Slot: hoechstens ein ueberfluessiger Neustart); auch der
+# Merker unlesbar: nichts tun, Exit 1 (kein Neustart auf Verdacht).
+# Aufruf: probestart-frist [sofort]. `sofort` ruft das Drop-in von emergency.service und rescue.service (R26): das neue
+# System blieb im Notfallmodus stehen, ohne Fristablauf; dieselbe Entscheidung, nur die Meldung nennt den Notfallmodus.
+# Pfade fuer Tests: SHG_AUTOBOOT, SHG_DT_BOOTLOADER.
+AUTOBOOT=${SHG_AUTOBOOT:-/bootfs/autoboot.txt}
+DT=${SHG_DT_BOOTLOADER:-/proc/device-tree/chosen/bootloader}
+if [ "${1:-}" = sofort ]; then wann="im Notfallmodus"; else wann="nach 20 min"; fi
+
+# [all] boot_partition (Leerraum und CR entfernt)
+primaer=$(awk '
+  { gsub(/[ \t\r]/, "") }
+  /^\[/ { abschnitt = $0; next }
+  abschnitt == "[all]" && /^boot_partition=/ { sub(/^boot_partition=/, ""); wert = $0 }
+  END { print wert }' "$AUTOBOOT" 2>/dev/null)
+case $primaer in
+  2|3) ;;
+  *) # Startauswahl unlesbar: der Merker der Firmware sagt, ob dieser Start ein Probestart war
+     tryboot=$(od -An -v -t x1 "$DT/tryboot" 2>/dev/null | tr -d ' \n')
+     if [ "$tryboot" = 00000001 ]; then
+       echo "probestart-frist: $AUTOBOOT nicht lesbar oder [all] boot_partition unerwartet (\"$primaer\"), der Merker" \
+         "tryboot sagt Probestart: Neustart $wann" >&2
+       exec systemctl reboot
+     fi
+     echo "probestart-frist: $AUTOBOOT nicht lesbar oder [all] boot_partition unerwartet (\"$primaer\"), kein Probestart" \
+       "laut $DT/tryboot (\"$tryboot\"), kein Neustart" >&2
+     exit 1 ;;
+esac
+
+# Gestartete Partition: Big-Endian-u32, als Hexfolge 00000002 bzw. 00000003
+roh=$(od -An -v -t x1 "$DT/partition" 2>/dev/null | tr -d ' \n')
+case $roh in
+  00000002) gestartet=2 ;;
+  00000003) gestartet=3 ;;
+  *) echo "probestart-frist: $DT/partition nicht lesbar oder unerwartet (\"$roh\"), kein Neustart" >&2; exit 1 ;;
+esac
+
+if [ "$gestartet" != "$primaer" ]; then
+  echo "probestart-frist: Probestart auf Partition $gestartet $wann nicht bestaetigt ([all] ist $primaer), Neustart" >&2
+  exec systemctl reboot
+fi

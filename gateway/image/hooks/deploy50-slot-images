@@ -1,0 +1,17 @@
+#!/bin/bash
+# deploy-Hook: legt die Slot-Images (rohe Dateisysteme, nicht die Android-Sparse-Dateien von image-rota) neben das
+# Image im Deploy-Ordner: system-<Version>.ext4 und boot-<Version>.vfat aus dem Ausgabeordner der Images. Daraus baut
+# der Betreiberrechner das System-Bundle (RAUC, Task 5). In v2.9.0 liegen die Einzeldateien nicht mehr im Deploy-Ordner
+# (nur <name>.img.zst, SBOM, manifest). Laeuft vor deploy99-manifest (Namen sortiert).
+# Aufruf (Runner, Phase deploy): deploy50-slot-images DEPLOY-ORDNER
+set -euo pipefail
+DEPLOY="${1:?Deploy-Ordner fehlt}"
+OUT="${IGconf_image_outputdir:?IGconf_image_outputdir fehlt}"
+VERSION="${IGconf_artefact_version:?IGconf_artefact_version fehlt}"
+[ "${IGconf_image_rootfs_type:-}" = ext4 ] || { echo "deploy50-slot-images: rootfs_type ext4 erwartet" >&2; exit 1; }
+for pair in "system.ext4:system-$VERSION.ext4" "boot.vfat:boot-$VERSION.vfat"; do
+  src="$OUT/${pair%%:*}" dst="$DEPLOY/${pair#*:}"
+  [ -s "$src" ] || { echo "deploy50-slot-images: $src fehlt oder ist leer" >&2; exit 1; }
+  cp --sparse=always "$src" "$dst"
+  echo "deploy50-slot-images: $dst ($(stat -c %s "$dst") Bytes)"
+done

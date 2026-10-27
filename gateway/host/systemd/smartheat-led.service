@@ -1,10 +1,12 @@
 [Unit]
 Description=SmartHeat-Gateway LED (G2 8.5)
-After=local-fs.target
+After=local-fs.target smartheat-ablage.service
+Wants=smartheat-ablage.service
+RequiresMountsFor=@ROOT@
 
 [Service]
 Environment=PYTHONPATH=/opt/smartheat/host
-Environment=SHG_ROOT=@ROOT@
+EnvironmentFile=/opt/smartheat/gateway.env
 ExecStart=/usr/bin/python3 -m smartheat_host.led
 Restart=always
 RestartSec=30

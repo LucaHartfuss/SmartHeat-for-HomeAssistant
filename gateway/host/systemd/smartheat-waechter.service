@@ -1,0 +1,23 @@
+[Unit]
+Description=SmartHeat-Gateway Waechter: startet die Laufzeit neu, wenn sie ungesund bleibt (GA-09, FR-35)
+# Wie der Updater: nur Docker und die Ablage (Ordner, Sperrdatei), nie das Laden der Archive (smartheat-firstboot). Beide nur
+# mit Wants=: scheitert eine, soll der Waechter trotzdem laufen (ohne Docker findet er nichts, Compose liefert dann keine Antwort).
+After=docker.service smartheat-ablage.service
+Wants=docker.service smartheat-ablage.service
+RequiresMountsFor=@ROOT@
+
+[Service]
+Environment=PYTHONPATH=/opt/smartheat/host
+EnvironmentFile=/opt/smartheat/gateway.env
+ExecStart=/usr/bin/python3 -m smartheat_host.waechter
+Restart=always
+RestartSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# schreibt nichts ausser der Sperrdatei updater/compose.lock (mit dem Updater geteilt); der Docker-Socket fuer docker compose
+ReadWritePaths=@ROOT@/updater /run/docker.sock
+
+[Install]
+WantedBy=multi-user.target

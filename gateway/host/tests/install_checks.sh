@@ -47,8 +47,9 @@ ARGS=(--no-docker --no-activate --device-api-url https://api.example.test --root
 # Aelterer Installer-Stand: smartheat.conf (statt 00-smartheat.conf) muss beim Lauf verschwinden.
 mkdir -p /etc/ssh/sshd_config.d && echo "PasswordAuthentication yes" >/etc/ssh/sshd_config.d/smartheat.conf
 bash "$SRC/install.sh" "${ARGS[@]}" >/tmp/run1.log 2>&1 || { cat /tmp/run1.log; fail "erster Lauf"; }
-snapshot() { find /opt/smartheat /etc/smartheat /etc/systemd/system/smartheat-* /etc/udev/rules.d/99-smartheat-zigbee.rules \
-  /etc/systemd/journald.conf.d/smartheat.conf /etc/apt/apt.conf.d/52smartheat-unattended /var/lib/smartheat \
+snapshot() { find /opt/smartheat /etc/smartheat /etc/systemd/system/smartheat-* /etc/systemd/system/emergency.service.d \
+  /etc/systemd/system/rescue.service.d /etc/udev/rules.d/99-smartheat-zigbee.rules \
+  /etc/systemd/journald.conf.d/smartheat.conf /var/lib/smartheat \
   -exec stat -c '%n %a %u:%g %s %Y' {} + 2>/dev/null | sort; }
 snapshot >/tmp/before
 sleep 1
@@ -56,44 +57,72 @@ bash "$SRC/install.sh" "${ARGS[@]}" >/tmp/run2.log 2>&1 || fail "zweiter Lauf"
 snapshot >/tmp/after
 diff /tmp/before /tmp/after >/dev/null || { diff /tmp/before /tmp/after; fail "zweiter Lauf hat etwas geaendert"; }
 grep -q "Nichts zu tun" /tmp/run2.log || fail "zweiter Lauf meldet Aenderungen"
-for unit in updater led hoststatus firewall firstboot; do
+for unit in updater led hoststatus waechter firewall firstboot ablage werk probestart-frist; do
   # Nur die fehlende docker.service-Abhaengigkeit (Container ohne Docker) wird ausgefiltert, Syntaxfehler nicht.
   systemd-analyze verify "/etc/systemd/system/smartheat-$unit.service" 2>&1 | grep -v "^$" | grep -vi "docker.service" \
     && fail "Unit smartheat-$unit ungueltig"
 done
-for unit in updater led hoststatus; do
+systemd-analyze verify /etc/systemd/system/smartheat-probestart-frist.timer 2>&1 | grep -v "^$" \
+  && fail "Timer smartheat-probestart-frist ungueltig"
+grep -q '^OnBootSec=20min$' /etc/systemd/system/smartheat-probestart-frist.timer || fail "Timer nicht 20 min nach dem Start"
+grep -q '^WantedBy=timers.target$' /etc/systemd/system/smartheat-probestart-frist.timer || fail "Timer ohne [Install]"
+# Notfallmodus im Probestart (R26): die Drop-ins rufen die Probestart-Frist vor der Notfall-Shell
+for unit in emergency rescue; do
+  drop="/etc/systemd/system/$unit.service.d/smartheat-probestart.conf"
+  [ "$(stat -c '%a %u:%g' "$drop")" = "644 0:0" ] || fail "Drop-in $unit.service fehlt oder hat falsche Rechte"
+  cmp -s "$SRC/systemd/$unit.service.d/smartheat-probestart.conf" "$drop" || fail "Drop-in $unit.service weicht vom Repo ab"
+  grep -q '^ExecStartPre=-/opt/smartheat/probestart-frist sofort$' "$drop" || fail "Drop-in $unit.service ruft die Frist nicht"
+done
+for unit in updater led hoststatus waechter; do
   grep -q '^Restart=always$' "/etc/systemd/system/smartheat-$unit.service" || fail "Restart= fehlt in smartheat-$unit"
 done
-for unit in updater hoststatus; do
-  grep -q '^EnvironmentFile=/var/lib/smartheat/host/gateway.env$' "/etc/systemd/system/smartheat-$unit.service" \
+# gateway.env unter /opt/smartheat ist die einzige Quelle fuer Units und Compose; unter SHG_ROOT gibt es sie nicht mehr.
+for unit in updater led hoststatus waechter firstboot ablage werk; do
+  grep -q '^EnvironmentFile=/opt/smartheat/gateway.env$' "/etc/systemd/system/smartheat-$unit.service" \
     || fail "EnvironmentFile= fehlt in smartheat-$unit"
+  grep -q '^Environment=SHG_ROOT' "/etc/systemd/system/smartheat-$unit.service" && fail "SHG_ROOT doppelt in smartheat-$unit"
+  grep -q '^RequiresMountsFor=/var/lib/smartheat$' "/etc/systemd/system/smartheat-$unit.service" \
+    || fail "RequiresMountsFor= fehlt in smartheat-$unit"
 done
-for unit in updater led hoststatus; do
-  grep -q '^Environment=SHG_ROOT=/var/lib/smartheat$' "/etc/systemd/system/smartheat-$unit.service" || fail "SHG_ROOT fehlt in smartheat-$unit"
+for unit in updater led hoststatus waechter firstboot ablage werk firewall; do
   grep -q '@ROOT@' "/etc/systemd/system/smartheat-$unit.service" && fail "@ROOT@ nicht ersetzt in smartheat-$unit"
 done
+grep -q '^SHG_ROOT=/var/lib/smartheat$' /opt/smartheat/gateway.env || fail "SHG_ROOT fehlt in gateway.env"
+grep -q '^ReadWritePaths=/var/lib/smartheat/host$' /etc/systemd/system/smartheat-werk.service || fail "ReadWritePaths der Werk-Unit"
+grep -q '^After=.*smartheat-ablage.service' /etc/systemd/system/smartheat-updater.service || fail "Updater nicht nach der Ablage"
+grep -Eq '^(After|Requires|Wants)=.*smartheat-firstboot' /etc/systemd/system/smartheat-updater.service \
+  && fail "Updater wartet auf den Erststart"
+grep -q '^Before=network-pre.target$' /etc/systemd/system/smartheat-werk.service || fail "Werk-Unit nicht vor dem Netz"
 grep -q '^DefaultDependencies=no$' /etc/systemd/system/smartheat-firewall.service || fail "Firewall-Unit ohne DefaultDependencies=no"
 grep -q '^After=nftables.service$' /etc/systemd/system/smartheat-firewall.service || fail "Firewall-Unit nicht nach nftables.service"
 # Der Test-Einstieg des Updaters (schaltet allow_http ein) gehoert nicht auf das Geraet.
 [ -z "$(find /opt/smartheat /var/lib/smartheat -name 'updater_testlauf*' 2>/dev/null)" ] || fail "updater_testlauf.py ist auf dem Geraet installiert"
 [ -f /etc/ssh/sshd_config.d/00-smartheat.conf ] || fail "sshd-Drop-in 00-smartheat.conf fehlt"
 [ ! -e /etc/ssh/sshd_config.d/smartheat.conf ] || fail "alter sshd-Drop-in smartheat.conf nicht entfernt"
-# Sicherheitsupdates: Debian-Security und das Raspberry-Pi-Archiv (Kernel, Firmware), sonst nichts;
-# kein automatischer Neustart.
-patterns="$(apt-config dump | grep 'Unattended-Upgrade::Origins-Pattern::')"
-# shellcheck disable=SC2016  # ${distro_codename} bleibt in der apt-Konfiguration woertlich stehen
-if [ "$(printf '%s\n' "$patterns" | wc -l)" != 2 ] || ! grep -q 'codename=${distro_codename}-security,' <<<"$patterns" \
-   || ! grep -q 'origin=Raspberry Pi Foundation,codename=${distro_codename},label=Raspberry Pi Foundation' <<<"$patterns"; then
-  echo "$patterns"; fail "Origins-Pattern nicht genau Debian-Security und Raspberry-Pi-Archiv"
-fi
-apt-config dump | grep -q '^Unattended-Upgrade::Automatic-Reboot "false";$' || fail "Automatic-Reboot nicht aus"
+# Keine automatischen Paket-Updates (Release-Takt, S-10): der Installer legt keine apt-Konfiguration dafuer ab.
+[ ! -e /etc/apt/apt.conf.d/52smartheat-unattended ] || fail "52smartheat-unattended wurde abgelegt (kein unattended-upgrades)"
 nft_syntax_check "nftables-Regeln ungueltig"
 grep -q "tcp dport 22 accept" /etc/smartheat/nftables.conf || fail "Pilot-SSH fehlt in der Firewall"
 if udevadm --help 2>&1 | grep -q verify; then udevadm verify /etc/udev/rules.d/99-smartheat-zigbee.rules || fail "udev-Regel ungueltig"; fi
 grep -q "/var/lib/smartheat/host/zigbee_adapter" /etc/udev/rules.d/99-smartheat-zigbee.rules || fail "@ROOT@ nicht ersetzt"
 [ "$(stat -c '%u:%g %a' /var/lib/smartheat/bus/credentials/runtime)" = "1000:1000 700" ] || fail "bus/credentials/runtime"
 [ "$(stat -c '%u:%g' /var/lib/smartheat/data)" = "1000:1000" ] || fail "data gehoert nicht uid 1000"
-grep -q '^SHG_DEVICE_API_URL=https://api.example.test$' /var/lib/smartheat/host/gateway.env || fail "gateway.env"
+grep -q '^SHG_DEVICE_API_URL=https://api.example.test$' /opt/smartheat/gateway.env || fail "gateway.env"
+[ "$(stat -c '%a %u:%g' /opt/smartheat/gateway.env)" = "644 0:0" ] || fail "gateway.env Rechte"
+[ ! -e /var/lib/smartheat/host/gateway.env ] || fail "host/gateway.env unter SHG_ROOT angelegt (gibt es nicht mehr)"
+for file in rauc-backend probestart-frist; do
+  [ "$(stat -c '%a %u:%g' "/opt/smartheat/$file")" = "755 0:0" ] || fail "$file nicht root-eigen und ausfuehrbar"
+  cmp -s "$SRC/$file" "/opt/smartheat/$file" || fail "$file weicht vom Repo ab"
+done
+# Werkseinstellung: erstes Bundle und Vorlage unter /opt (nicht unter SHG_ROOT); der Ordnerbaum gleicht der Installer-Lauf an.
+for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.sig; do
+  cmp -s "$SIGNED_BUNDLE/$name" "/opt/smartheat/werkseinstellung/bundle/$name" || fail "Werkseinstellung ohne $name"
+done
+[ "$(stat -c '%a %u:%g' /opt/smartheat/werkseinstellung/state.json)" = "644 0:0" ] || fail "Werkseinstellung state.json Rechte"
+[ "$(stat -c '%u:%g %a' /var/lib/smartheat/bus/mosquitto-daten)" = "1000:1000 700" ] || fail "bus/mosquitto-daten"
+[ "$(stat -c '%u:%g %a' /var/lib/smartheat/host/geladen)" = "0:0 755" ] || fail "host/geladen"
+[ ! -e /var/lib/smartheat/images ] || fail "images/ unter SHG_ROOT angelegt (die Archive liegen unter /opt)"
+[ -z "$(find /etc/systemd/system -name 'smartheat-*.timer' ! -name smartheat-probestart-frist.timer)" ] || fail "fremder Timer"
 grep -q '"current": "0.2.0"' /var/lib/smartheat/updater/state.json || fail "erstes Bundle nicht als current"
 for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.sig; do
   cmp -s "$SIGNED_BUNDLE/$name" "/var/lib/smartheat/bundles/0.2.0/$name" || fail "Bundle-Ordner ohne $name (Spec 2.2)"
@@ -145,15 +174,21 @@ grep -q '@PILOT_SSH@' /etc/smartheat/nftables.conf && fail "@PILOT_SSH@ nicht er
 nft_syntax_check "nftables-Regeln ohne Pilot ungueltig"
 bash "$SRC/install.sh" "${ARGS_NOPILOT[@]}" >/tmp/run4.log 2>&1 || fail "Wiederholung ohne Pilot-SSH"
 grep -q "Nichts zu tun" /tmp/run4.log || fail "Wiederholung ohne Pilot-SSH meldet Aenderungen"
-# Symlinks unter ROOT (dort schreibt uid 1000): Installer bricht ab und fasst das Ziel nicht an.
+# Symlinks unter ROOT: Der Installer fasst das Ziel nie an. Im Container-Bereich (dort schreibt uid 1000) meldet er den
+# Eintrag und laeuft weiter (ein untergeschobener Symlink darf Updater und Ablage nicht blockieren); in den root-eigenen
+# Ordnern (host) bricht er ab.
 SYM_TARGET=/tmp/symlink-target
 mkdir -p "$SYM_TARGET" && chmod 0755 "$SYM_TARGET" && echo keep >"$SYM_TARGET/file" && chmod 0644 "$SYM_TARGET/file"
-for plant in bus/credentials/runtime bus data host/gateway.env; do
+for plant in bus/credentials/runtime bus data host updater; do
   victim=/var/lib/smartheat/$plant
   mv "$victim" "$victim.orig"
-  if [ "$plant" = host/gateway.env ]; then ln -s "$SYM_TARGET/file" "$victim"; else ln -s "$SYM_TARGET" "$victim"; fi
-  if bash "$SRC/install.sh" "${ARGS_NOPILOT[@]}" >/tmp/sym.log 2>&1; then fail "Symlink $plant: Installer lief durch"; fi
-  grep -q "Symlink" /tmp/sym.log || { cat /tmp/sym.log; fail "Symlink $plant: keine klare Fehlermeldung"; }
+  ln -s "$SYM_TARGET" "$victim"
+  bash "$SRC/install.sh" "${ARGS_NOPILOT[@]}" >/tmp/sym.log 2>&1 && sym_ok=1 || sym_ok=0
+  case "$plant" in
+    host|updater) [ "$sym_ok" = 0 ] || fail "Symlink $plant (root-eigen): Installer lief durch" ;;
+    *) [ "$sym_ok" = 1 ] || { cat /tmp/sym.log; fail "Symlink $plant (Container-Bereich): Installer abgebrochen"; } ;;
+  esac
+  grep -q "Symlink" /tmp/sym.log || { cat /tmp/sym.log; fail "Symlink $plant: keine klare Meldung"; }
   [ "$(stat -c '%a %u:%g' "$SYM_TARGET")" = "755 0:0" ] || fail "Symlink $plant: Ziel veraendert"
   if [ "$(stat -c '%a %u:%g' "$SYM_TARGET/file")" != "644 0:0" ] || [ "$(cat "$SYM_TARGET/file")" != keep ]; then
     fail "Symlink $plant: Zieldatei veraendert"
@@ -165,15 +200,15 @@ done
 # steht diese implizite Regel hier als Drop-in explizit. Ein Gegenbeispiel (After=multi-user.target bei
 # WantedBy=multi-user.target) muss den Test ausloesen, sonst taugt er nichts.
 mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/multi-user.target.d
-for unit in updater led hoststatus firewall firstboot; do
+for unit in updater led hoststatus waechter firewall firstboot ablage werk; do
   ln -sf "/etc/systemd/system/smartheat-$unit.service" "/etc/systemd/system/multi-user.target.wants/smartheat-$unit.service"
 done
 cycle_check() {  # Ausgabe von verify fuer multi-user.target mit der impliziten Reihenfolge fuer die Units $*
   printf '[Unit]\nAfter=%s\n' "$*" >/etc/systemd/system/multi-user.target.d/smartheat-test.conf
   systemd-analyze verify --man=no multi-user.target 2>&1
 }
-cycle_check smartheat-updater.service smartheat-led.service smartheat-hoststatus.service smartheat-firewall.service \
-  smartheat-firstboot.service >/tmp/cycle.log
+cycle_check smartheat-updater.service smartheat-led.service smartheat-hoststatus.service smartheat-waechter.service \
+  smartheat-firewall.service smartheat-firstboot.service smartheat-ablage.service smartheat-werk.service >/tmp/cycle.log
 if grep -qi 'ordering cycle' /tmp/cycle.log; then grep -i cycle /tmp/cycle.log; fail "Ordnungszyklus in den Gateway-Units"; fi
 sed 's|^After=local-fs.target|After=multi-user.target|' /etc/systemd/system/smartheat-led.service \
   >/etc/systemd/system/smartheat-cycle.service
@@ -206,6 +241,9 @@ activate_run "ohne Stick"
 grep -q "Geraet fehlt: $STICK" /tmp/act.log || { cat /tmp/act.log; fail "Aktivierung ohne Stick: keine klare Meldung"; }
 compose_started && fail "Aktivierung ohne Stick: compose up trotzdem aufgerufen"
 grep -q "^systemctl enable --now docker.service smartheat-updater.service" /tmp/stub.log || fail "Updater nicht aktiviert"
+grep -q "^systemctl enable --now .*smartheat-waechter.service" /tmp/stub.log || fail "Waechter nicht aktiviert"
+grep -q "^systemctl enable --now smartheat-ablage.service smartheat-werk.service" /tmp/stub.log || fail "Ablage und Werk nicht aktiviert"
+grep -q "probestart-frist" /tmp/stub.log && fail "Probestart-Frist ausserhalb des Images aktiviert (kein A/B-System)"
 cmp -s "$SRC/docker-daemon.json" /etc/docker/daemon.json || fail "docker daemon.json (Speicherweg fuer den Erststart) fehlt"
 touch "$STICK"
 activate_run "mit Stick"
@@ -223,23 +261,28 @@ compose_started && fail "offener Updater-Auftrag: compose up trotzdem aufgerufen
 # Vorher die Symlinks des Zyklustests (oben) entfernen, sonst wuerde ein "aktiviert" von dort stammen.
 rm -f /etc/systemd/system/multi-user.target.wants/smartheat-*.service /etc/systemd/system/multi-user.target.d/*.conf \
   /etc/systemd/system/smartheat-cycle.service
-IMAGE_ARGS=("${ARGS[@]/--no-activate/--image}")
+# Unter --root legt --image nichts an (der Bau liesse es unter dem Bind-Mount liegen): das erledigt der erste Start.
+IMAGE_ROOT=/var/lib/smartheat-img
+IMAGE_ARGS=(--image --no-docker --device-api-url https://api.example.test --root "$IMAGE_ROOT" --bundle "$SIGNED_BUNDLE")
 bash "$SRC/install.sh" "${IMAGE_ARGS[@]}" >/tmp/run-image.log 2>&1 || { cat /tmp/run-image.log; fail "Lauf mit --image"; }
-for unit in smartheat-firewall smartheat-hoststatus smartheat-led ssh; do
+[ ! -e "$IMAGE_ROOT" ] || fail "--image hat $IMAGE_ROOT angelegt"
+for unit in smartheat-ablage smartheat-werk smartheat-firewall smartheat-hoststatus smartheat-led; do
   [ -L "/etc/systemd/system/multi-user.target.wants/$unit.service" ] || fail "$unit mit --image nicht aktiviert"
 done
+[ -L /etc/systemd/system/timers.target.wants/smartheat-probestart-frist.timer ] \
+  || fail "Probestart-Frist-Timer mit --image nicht aktiviert"
 # Ohne Docker (--no-docker) bleibt smartheat-firstboot aus: die Unit hat Requires=docker.service.
 [ -L /etc/systemd/system/multi-user.target.wants/smartheat-firstboot.service ] \
   && fail "firstboot mit --image --no-docker aktiviert"
-grep -q '^ConditionDirectoryNotEmpty=/var/lib/smartheat/images$' /etc/systemd/system/smartheat-firstboot.service \
-  || fail "Firstboot-Bedingung fehlt oder @ROOT@ nicht ersetzt"
-# Docker-Speicherweg: daemon.json liegt VOR der Installation von docker.io, eine abweichende
+grep -q '^ConditionDirectoryNotEmpty' /etc/systemd/system/smartheat-firstboot.service \
+  && fail "Firstboot-Bedingung vorhanden (jeder Start ruft compose.up)"
+# Docker-Speicherweg: daemon.json liegt VOR der Installation von docker-ce, eine abweichende
 # bestehende Datei bricht ab und bleibt unberuehrt, identischer Inhalt ist ein No-op.
 ORD_STUBS=/tmp/stubs-order
 mkdir -p "$ORD_STUBS"
 cat >"$ORD_STUBS/dpkg-query" <<'STUB'
 #!/bin/sh
-case "$*" in *docker.io*|*docker-cli*|*docker-compose*) exit 1 ;; esac
+case "$*" in *docker-ce*|*containerd.io*|*docker-compose-plugin*) exit 1 ;; esac
 echo "install ok installed"
 STUB
 cat >"$ORD_STUBS/apt-get" <<'STUB'
@@ -251,8 +294,8 @@ chmod +x "$ORD_STUBS"/*
 ORD_ARGS=(--no-activate --device-api-url https://api.example.test --root /var/lib/smartheat-ord)
 rm -rf /etc/docker; : >/tmp/apt.log
 PATH="$ORD_STUBS:$STUBS:$PATH" bash "$SRC/install.sh" "${ORD_ARGS[@]}" >/tmp/ord.log 2>&1 || { cat /tmp/ord.log; fail "Docker-Lauf"; }
-grep -q 'apt-get install .*docker.io.* daemon.json=vorhanden$' /tmp/apt.log \
-  || { cat /tmp/apt.log; fail "daemon.json liegt nicht vor der Installation von docker.io"; }
+grep -q 'apt-get install .*docker-ce.* daemon.json=vorhanden$' /tmp/apt.log \
+  || { cat /tmp/apt.log; fail "daemon.json liegt nicht vor der Installation von docker-ce"; }
 cmp -s "$SRC/docker-daemon.json" /etc/docker/daemon.json || fail "daemon.json Inhalt"
 : >/tmp/apt.log
 PATH="$STUBS:$PATH" bash "$SRC/install.sh" "${ORD_ARGS[@]}" >/tmp/ord2.log 2>&1 || fail "zweiter Docker-Lauf"
@@ -281,12 +324,15 @@ PATH="$STUBS:$PATH" bash "$SRC/install.sh" --image "${ORD_ARGS[@]}" --pilot-ssh 
   >/tmp/img-docker.log 2>&1 || { cat /tmp/img-docker.log; fail "--image mit Docker"; }
 grep -q "^systemctl enable docker.service smartheat-updater.service smartheat-firstboot.service" /tmp/stub.log \
   || { cat /tmp/stub.log; fail "--image mit Docker aktiviert firstboot nicht"; }
+grep -q "^systemctl enable docker.service .*smartheat-waechter.service" /tmp/stub.log \
+  || { cat /tmp/stub.log; fail "--image mit Docker aktiviert den Waechter nicht"; }
 grep -q "^systemctl enable --now" /tmp/stub.log && fail "--image startet Dienste"
 rm -rf /etc/docker
 : >/tmp/stub.log
 PATH="$FAILFB_STUBS:$STUBS:$PATH" bash "$SRC/install.sh" --no-docker --device-api-url https://api.example.test \
   --root /var/lib/smartheat-nd >/tmp/nodocker.log 2>&1 || { cat /tmp/nodocker.log; fail "Aktivierung mit --no-docker bricht ab"; }
 grep -q "firstboot" /tmp/stub.log && fail "--no-docker beruehrt smartheat-firstboot"
+grep -q "waechter" /tmp/stub.log && fail "--no-docker beruehrt smartheat-waechter (ohne Docker nichts zu pruefen)"
 grep -q "^systemctl disable --now ssh.service" /tmp/stub.log || fail "--no-docker: ssh-Schritt nach der Aktivierung fehlt"
 command -v shellcheck >/dev/null && { shellcheck "$SRC/install.sh" "$SRC/tests/install_checks.sh" || fail "shellcheck"; }
 exit $FAIL

@@ -34,7 +34,7 @@ class SigniereFehler(Exception):
     pass
 
 
-def _geschwaerzt(text: str, schluessel: str) -> str:
+def geschwaerzt(text: str, schluessel: str) -> str:
     """Meldung von openssl ohne den Schluessel (Pfad oder URI) und ohne jeden pin-value."""
     return re.sub(r"pin-value=[^;&?\s]*", "pin-value=[entfernt]", text.replace(schluessel, "[Schluessel]"))
 
@@ -51,7 +51,7 @@ def signiere(manifest: bytes, zertifikat_pem: str, schluessel: str) -> str:
         ergebnis = subprocess.run(befehl, input=manifest, capture_output=True, check=False)
     except OSError:
         raise SigniereFehler("openssl nicht aufrufbar") from None
-    meldung = _geschwaerzt(ergebnis.stderr.decode(errors="replace"), schluessel)
+    meldung = geschwaerzt(ergebnis.stderr.decode(errors="replace"), schluessel)
     if meldung:
         print(meldung, end="" if meldung.endswith("\n") else "\n", file=sys.stderr)
     if ergebnis.returncode != 0 or not ergebnis.stdout:

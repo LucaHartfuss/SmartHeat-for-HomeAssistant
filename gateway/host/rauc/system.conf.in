@@ -1,0 +1,35 @@
+# RAUC-Konfiguration des Gateways (Raspberry Pi 5, A/B-System). gateway/release/rauc_signieren.py setzt fuer die
+# Pruefung am Betreiberrechner statt des Pfads unter [keyring] die Root-Datei der Kette ein.
+[system]
+compatible=smartheat-gateway-pi5
+bootloader=custom
+activate-installed=false
+data-directory=/var/lib/rauc
+bundle-formats=-plain
+
+[keyring]
+path=/opt/smartheat/host/release-roots.pem
+check-purpose=codesign
+
+[handlers]
+bootloader-custom-backend=/opt/smartheat/rauc-backend
+
+[slot.rootfs.0]
+device=/dev/disk/by-partlabel/system_a
+type=ext4
+bootname=A
+
+[slot.boot.0]
+device=/dev/disk/by-partlabel/boot_a
+type=vfat
+parent=rootfs.0
+
+[slot.rootfs.1]
+device=/dev/disk/by-partlabel/system_b
+type=ext4
+bootname=B
+
+[slot.boot.1]
+device=/dev/disk/by-partlabel/boot_b
+type=vfat
+parent=rootfs.1

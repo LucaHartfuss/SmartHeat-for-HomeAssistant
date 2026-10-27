@@ -70,7 +70,8 @@ toter_code() {
   vulture_in heizungsbruecke src ../gateway/src vulture_ausnahmen.py \
     ../gateway/vulture_ausnahmen.py \
   && vulture_in gateway/host smartheat_host vulture_ausnahmen.py \
-  && vulture_in gateway/release build_bundle.py verify_bundle.py ca.py signieren.py changelog_section.py vulture_ausnahmen.py
+  && vulture_in gateway/release build_bundle.py verify_bundle.py ca.py signieren.py rauc_signieren.py rauc_bundle.py changelog_section.py \
+    vulture_ausnahmen.py
 }
 lint() { pyright_in heizungsbruecke && pyright_in gateway && pyright_in gateway/host && pyright_in gateway/release && toter_code \
   && "$PY" scripts/ci/pin_check.py --repo "$PWD" && "$PY" scripts/ci/geheimnis_scan.py --repo "$PWD"; }
@@ -89,7 +90,7 @@ docker_tests() {
   local rc=0 script
   for script in test_heizungsbruecke_docker_build.sh test_heizungsbruecke_reproducible.sh \
                 test_gateway_docker_build.sh test_gateway_install.sh test_gateway_updater.sh \
-                test_gateway_firstboot.sh test_gateway_kette_trixie.sh test_image_scan.sh; do
+                test_gateway_firstboot.sh test_gateway_kette_trixie.sh test_gateway_rauc.sh test_image_scan.sh; do
     echo "--- tests/$script"
     docker_host_run bash "$PWD/tests/$script" || rc=1
   done

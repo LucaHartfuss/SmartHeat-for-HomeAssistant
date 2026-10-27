@@ -1,5 +1,66 @@
 # Changelog SmartHeat-Gateway
 
+## 0.9.0
+
+- Systemteil im Updater (AP-05a, GW 6.3): Traegt das signierte Manifest das Feld `system` (`system.raucb`, SHA-256, Groesse
+  bis 2 GiB, `compatible` `smartheat-gateway-pi5`), wechselt der Updater zuerst das System (A/B, RAUC, Neustart mit tryboot)
+  und danach die Container. Ablauf mit gespeicherten Phasen (`system.phase` in `updater/state.json`, **vor** jeder Wirkung):
+  installiere, installiert, probestart, bestaetigt, oder zurueck (mit Grund und `ablehnen`). Im Probestart gilt die lokale
+  Gesundheit fest 600 s ab dem Start des Updaters (Host-Dienste, Container, `runtime` healthy, `/healthz` ohne `startet`,
+  ohne `server_ok`), danach `mark-good` und eine Netzprobe von 600 s; `current`/`previous` wechseln erst danach. Rueckfaelle:
+  Fehlstart = `start_fehlgeschlagen` (abgelehnt), ungesund = `ungesund` (abgelehnt), Netzprobe und Strom weg =
+  `server_unerreichbar` ohne Ablehnung mit Abstand 1 h, 2 h (hoechstens 24 h, Wanduhr, erst ab der ersten synchronen Uhr),
+  der dritte in Folge lehnt ab. `rauc install` scheitert einmal vorlaeufig, zweimal in Folge `manifest_ungueltig`. Ohne
+  erreichbaren Broker beginnt kein Systemwechsel; ein falsches `compatible`, eine falsche Pruefsumme oder Groesse sind
+  `manifest_ungueltig`. Das System-Bundle liegt unter `updater/system/<Version>.raucb` (root, 0600) und wird nach
+  Bestaetigung, Ablehnung oder Rueckfall geloescht. Der Erststart startet nichts, solange ein Systemwechsel offen ist.
+- Downgrade-Schutz mit Untergrenze `max(current, Version des Host-Pakets)` (A7-22): auch ohne `state.json` (frisches oder
+  zurueckgesetztes Gateway) wird kein Bundle angenommen, das nicht streng neuer als der laufende Updater ist.
+  `State.save` erhaelt Felder, die der Updater nicht kennt (ein aelterer Updater nach einem Rueckfall verwirft nichts).
+- `min_updater_version` der Bundles: 0.8.0 ohne Systemteil (der Updater 0.8.0 nimmt Container-Bundles weiter an), 0.9.0 mit
+  `system`. `build_bundle.py --system DATEI` bindet das System-Bundle im Manifest, `verify_bundle.py` prueft Groesse und
+  SHA-256 der Systemdatei.
+- Image fuer den Pi 5 (AP-05a, GW 6.1): `rpi-image-gen` v2.9.0 mit Layout `image-rota` statt `image-rpios`, NVMe statt USB
+  (`usbboot.sh`, `initramfs_check.sh`, feste MBR-Signatur und der Pi-4-Pfad entfallen). GPT mit sieben Partitionen:
+  `bootconfig`, `boot_a`/`boot_b` (je 256M), `system_a`/`system_b` (je 6G, ext4 mit 16-K-Bloecken, nur lesend), `werk` (16M,
+  ext4, `/werk` mit `ro,nodev,nosuid,noexec`; `hooks/preimage50-werk` fuegt sie in `genimage.cfg` ein) und `persistent`
+  (= `daten`, 4G). Slot-uebergreifend sind `/var/lib/{smartheat,docker,containerd,rauc,systemd/timesync}`. Kernel mit
+  `panic=10`, Hardware-Watchdog (`RuntimeWatchdogSec=10s`, `RebootWatchdogSec=5min`), WLAN und Bluetooth per Overlay
+  (`disable-wifi-pi5`, `disable-bt-pi5`) aus. Pakete: `rauc`, `rauc-service` (`/etc/rauc/system.conf` aus
+  `host/rauc/system.conf.in`; `rauc-mark-good.service` maskiert, bestaetigt wird nur vom Updater) und Docker 29 aus dem Docker-Archiv
+  (`docker-apt/`: Schluessel mit Fingerabdruck, vier Pakete exakt gepinnt); kein `docker.io`, kein `unattended-upgrades`
+  (`host/apt/` entfaellt, der Paketstand aendert sich nur mit einem neuen System-Bundle). Die Pruefungen des Bauergebnisses
+  laufen als Hooks (`hooks/postbuild50-rootfs-checks`, `hooks/finalize10-bootfs-checks`; v2.9.0 ignoriert den alten
+  `post-build.sh` ohne Meldung). `make_image.sh` liefert zusaetzlich `system-<Version>.ext4`, `boot-<Version>.vfat` und die
+  SBOM (`smartheat-gateway-<Version>.sbom.zst`, syft, CycloneDX-JSON laut `image/sbom/syft.yaml`, S-10), je mit `.sha256`; `--pilot-ssh` bricht bis AP-05b ab.
+- Ablage im System, erster Start auf `daten`, Partition `werk` (AP-05a, GW 6.1, FR-26, GPC31): Das Image legt System-Teile nur
+  unter `/opt/smartheat/` ab (Host-Paket, `release-roots.pem`, `rauc-backend`, `probestart-frist`, `gateway.env` als einzige Quelle
+  fuer Units und Compose, `werkseinstellung/` mit erstem Bundle, `state.json`-Vorlage und den Container-Archiven als
+  `images/<SHA-256>.tar`); `host/gateway.env` unter `SHG_ROOT` entfaellt. Unter `SHG_ROOT` (= `daten`) legt der Bau nichts ab:
+  `smartheat-ablage.service` gleicht bei jedem Start Ordner, Besitzer und Modi an (`bus/mosquitto-daten` neu, Symlinks werden
+  nicht durchschritten) und legt beim ersten Start das erste Bundle und `updater/state.json` aus der Werkseinstellung an.
+  `smartheat-firstboot.service` laedt jedes Archiv einmal (Merker `host/geladen/<SHA-256>`, Archive bleiben liegen) und ruft bei
+  jedem Start `compose up` fuer das laufende Bundle; der Updater wartet nicht auf das Laden (nur auf Docker, Netz und Ablage:
+  die Probestart-Frist). `smartheat-werk.service` prueft vor dem Netz `/werk/werk.json` (streng: ein Feld mehr, falscher Typ,
+  Symlink oder ueber 4 KiB sind ungueltig), kopiert die Werte nach `SHG_ROOT/host/werk.json` (0644) und setzt den fluechtigen
+  Hostnamen; ungueltig oder fehlend loescht die Kopie. `smartheat-probestart-frist.timer` ist im Image aktiviert. `prepare.sh`
+  nimmt das eigene Image aus `gateway-image.oci.tar` des Bundles (Groesse, SHA-256 und Index-Digest gegen `manifest.json`) und holt
+  nur Mosquitto und Zigbee2MQTT per `skopeo`; die Pilotzweige der Bau-Skripte entfallen.
+  Updater und Erststart teilen eine Compose-Sperre (`updater/compose.lock`, flock): kein `docker compose up` zweier Bundles
+  zugleich. Die Ablage haelt Updater, Hoststatus und Erststart nicht auf (`Wants=`); ein untergeschobener Eintrag im
+  Container-Bereich wird gemeldet und nicht angefasst. Das Image hat keinen statischen Hostnamen (Rueckfall
+  `DEFAULT_HOSTNAME=smartheat-gateway` in os-release), damit der Name aus `werk.json` gilt.
+- Waechter fuer die Laufzeit (AP-05a, GA-09, FR-35): `smartheat-waechter.service` (Takt 30 s) startet `runtime` mit `docker
+  compose -p smartheat restart runtime` (Frist 120 s) neu, wenn der Compose-Healthcheck dreimal in Folge `unhealthy` meldet;
+  hoechstens drei Neustarts je Stunde, der vierte wird nicht ausgefuehrt (ein ERROR im Journal). Pausiert bei einem offenen
+  Container-Auftrag, in den Phasen installiere, installiert und probestart, bei `host/werksreset.json` und solange der Updater
+  oder der Erststart die Compose-Sperre haelt (der Waechter wartet dort nie).
+- Firewall und Docker-Pool (AP-05a, GW-Weiterleitung): `docker-daemon.json` pinnt `default-address-pools` auf `172.30.0.0/16`
+  (Groesse 24); die Kette `prerouting` (raw) in `table inet smartheat` verwirft Pakete an 127.0.0.0/8 von ausserhalb von `lo`
+  und an den Docker-Pool von allen Schnittstellen ausser `docker0` und `br-*` (kein Direktrouting aus dem LAN an `runtime:8081`).
+- Mosquitto behaelt seinen Zustand (L4-28): `persistence true` mit `bus/mosquitto-daten` als `/mosquitto/data`.
+- `cloudflared.pin` auf 2026.10.5 (SHA-256 beider `.deb` aus dem GitHub-Release berechnet und mit dem Release verglichen).
+
 ## 0.8.0
 
 - Signierte Auslieferung (AP-04): Der Updater prueft das Manifest mit einer X.509-Kette (`release-roots.pem`,

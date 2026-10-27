@@ -1,20 +1,24 @@
-"""release_lokal.sh: Bau, Pruefung, Signatur und Upload am Betreiberrechner. `docker` (Image-Bau) und `scp` sind
+"""release_lokal.sh: Bau, Pruefung, Signatur und Upload am Betreiberrechner. `docker` (Image-Bau, rauc-Container) und `scp` sind
 Attrappen im PATH; Git, build_bundle.py, verify_bundle.py und signieren.py laufen echt. Das Skript liegt in einem
-Wegwerf-Repo (`gateway` ist dort ein Symlink auf den Checkout), damit Tag und Arbeitsbaum echt geprueft werden, ohne dass
-der Checkout selbst angefasst wird. Tags tragen eine SSH-Signatur (git tag -s mit gpg.format=ssh); die Schluesselliste
+Wegwerf-Repo (`gateway` ist dort ein Symlink auf den Checkout; fuer das System-Bundle ein Ordner aus Symlinks mit eigener
+VERSION, Attrappe make_image.sh und eigenem Schluesselbund, `werk_system`), damit Tag und Arbeitsbaum echt geprueft werden,
+ohne dass der Checkout selbst angefasst wird. Tags tragen eine SSH-Signatur (git tag -s mit gpg.format=ssh); die Schluesselliste
 kommt aus origin/main (ein Wegwerf-Repo `ablage`), nicht aus dem Checkout und nicht aus der Git-Konfiguration."""
 import hashlib
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import rauc_attrappe
 
 import ca
+import rauc_bundle
 
 GW = Path(__file__).resolve().parents[2]
 VERSION = "9.9.9"
@@ -30,9 +34,14 @@ from oci_helper import make_oci_archive
 logs = Path(os.environ["ATTRAPPE_LOGS"])
 with (logs / "docker.log").open("a") as protokoll:
     protokoll.write(json.dumps(sys.argv[1:]) + "\\n")
+args = sys.argv[1:]
+if args[0] == "build" or any(a.startswith("setwell-rauc:") for a in args):  # der rauc-Container (rauc_attrappe.py)
+    import rauc_attrappe
+    sys.argv[0] = "docker"
+    rauc_attrappe.main()
+    sys.exit(0)
 if os.environ.get("ATTRAPPE_DOCKER_FEHLER") and sys.argv[1] != "run":
     sys.exit(1)
-args = sys.argv[1:]
 if args[0] == "run":  # syft: CycloneDX-SBOM auf stdout
     if os.environ.get("ATTRAPPE_SYFT_FEHLER"):
         sys.exit(1)
@@ -41,6 +50,7 @@ if args[0] == "run":  # syft: CycloneDX-SBOM auf stdout
 ziel = [t.split("=", 1)[1] for t in args[args.index("--output") + 1].split(",") if t.startswith("dest=")][0]
 make_oci_archive(Path(ziel))
 '''
+OPENSSL = rauc_attrappe.skript()
 SCP = f'''#!{sys.executable}
 import json, os, sys
 from pathlib import Path
@@ -90,7 +100,7 @@ def werk(tmp_path):
     bin_dir, logs = tmp_path / "bin", tmp_path / "logs"
     bin_dir.mkdir()
     logs.mkdir()
-    for name, text in (("docker", DOCKER), ("scp", SCP)):
+    for name, text in (("docker", DOCKER), ("scp", SCP), ("openssl", OPENSSL)):
         datei = bin_dir / name
         datei.write_text(text)
         datei.chmod(datei.stat().st_mode | stat.S_IXUSR)
@@ -107,12 +117,21 @@ def _signierter_tag(werk, schluessel: Path | None = None):
     _git(werk.repo, "-c", f"user.signingkey={schluessel or werk.erlaubt}", "tag", "-s", "-m", "Release", TAG)
 
 
-def _lauf(werk, *args, version=VERSION, umgebung=None, skript_args=None):
+OPENSSL_ECHT = shutil.which("openssl") or "openssl"
+
+
+def _lauf(werk, *args, version=VERSION, umgebung=None, ohne_system=True):
+    """Ruft das Skript auf. Die meisten Tests pruefen das Container-Bundle: `ohne_system` haengt `--ohne-system` an."""
     argumente = args or ("--schluessel", str(werk.kette / "release.key"), "--zertifikat", str(werk.kette / "release.crt"),
                          "--roots", str(werk.kette / "root.crt"), "--aus", str(werk.aus))
+    if ohne_system:
+        argumente = (*argumente, "--ohne-system")
     env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
            "PATH": f"{werk.bin}:{os.environ['PATH']}", "ATTRAPPE_LOGS": str(werk.logs), "PYTHON": sys.executable,
-           "TMPDIR": str(werk.bin.parent)}
+           "TMPDIR": str(werk.bin.parent), "ATTRAPPE_LOG": str(werk.logs / "rauc.log"),
+           "ATTRAPPE_OPENSSL_ECHT": OPENSSL_ECHT,
+           "ATTRAPPE_IMAGE": json.dumps({rauc_bundle.IMAGE_VERSION_PY: f'GATEWAY_VERSION = "{VERSION}"\n',
+                                         rauc_bundle.IMAGE_VERSION_DATEI: f"{VERSION}\n"})}
     env.pop("SHG_BUNDLE_ZIEL", None)
     env.pop("SHG_BUNDLE_BASIS", None)
     env.update(umgebung or {})
@@ -356,7 +375,7 @@ def test_vorhandenes_ergebnis_wird_nie_ueberschrieben(werk):
     ["--probe", "--schluessel"],
 ])
 def test_falscher_aufruf_exit_2_ohne_aufruf(werk, args):
-    ergebnis = _lauf(werk, *args) if args else _lauf(werk, "--probe")
+    ergebnis = _lauf(werk, *args, ohne_system=False) if args else _lauf(werk, "--probe")
     assert ergebnis.returncode == 2
     assert _log(werk, "docker.log") == []
 
@@ -407,3 +426,251 @@ def test_probe_lehnt_den_standard_schluesselbund_ab(werk, roots):
     ergebnis = _lauf(werk, *argumente)
     assert ergebnis.returncode == 1 and "Schluesselbund" in ergebnis.stderr and ergebnis.stdout == ""
     assert _log(werk, "docker.log") == [] and not werk.aus.exists()
+
+
+# --- System-Bundle (GPC5, GPC6): Werks-Image, RAUC-Bundle, ein Bundle mit `system.raucb` --------------------------------
+MAKE_IMAGE = """#!/bin/bash
+set -euo pipefail
+version="$(cat "$(dirname "$0")/../VERSION")"
+out="" bundle=""
+args=("$@")
+while [ $# -gt 0 ]; do
+  case "$1" in --out) out="$2" ;; --bundle) bundle="$2" ;; esac
+  shift
+done
+"$PYTHON" - "$ATTRAPPE_LOGS/make_image.log" "$bundle" "${args[@]}" <<'PY'
+import json, os, sys
+log, bundle, *argv = sys.argv[1:]
+manifest = json.load(open(os.path.join(bundle, "manifest.json")))
+with open(log, "a") as datei:
+    datei.write(json.dumps({"argv": argv, "dateien": sorted(os.listdir(bundle)), "system": "system" in manifest,
+                            "min": manifest["min_updater_version"]}) + "\\n")
+PY
+if [ -n "${ATTRAPPE_MAKE_IMAGE_FEHLER:-}" ]; then
+  echo "FEHLER: linux/arm64 braucht einen arm64-Docker-Host oder QEMU-binfmt fuer aarch64" >&2
+  exit 1
+fi
+mkdir -p "$out"
+for name in smartheat-gateway-$version.img.zst system-$version.ext4 boot-$version.vfat smartheat-gateway-$version.sbom.zst; do
+  printf 'Inhalt von %s\\n' "$name" >"$out/$name"
+  (cd "$out" && sha256sum "$name" >"$name.sha256")
+done
+"""
+API_URL = "https://geraete.hartfussha.org"
+PORTAL_URL = "https://portal.hartfussha.org"
+SYSTEM_VERSION_DATEI = "9.9.9"
+
+
+@pytest.fixture
+def werk_system(werk):
+    """Wie `werk`, aber `gateway` ist ein Ordner aus Symlinks auf den Checkout mit eigener VERSION (9.9.9), einer
+    Attrappe make_image.sh und dem Schluesselbund der Test-Kette als host/release-roots.pem (der Standard-Schluesselbund)."""
+    gw = werk.repo / "gateway"
+    gw.unlink()
+    gw.mkdir()
+    for eintrag in GW.iterdir():
+        if eintrag.name not in ("image", "host", "VERSION", "__pycache__", ".pytest_cache", ".ruff_cache"):
+            (gw / eintrag.name).symlink_to(eintrag)
+    (gw / "VERSION").write_text(f"{SYSTEM_VERSION_DATEI}\n")
+    (gw / "host").mkdir()
+    (gw / "host" / "release-roots.pem").write_text((werk.kette / "root.crt").read_text())
+    (gw / "image").mkdir()
+    (gw / "image" / "own_url.sh").symlink_to(GW / "image" / "own_url.sh")
+    (gw / "image" / "make_image.sh").write_text(MAKE_IMAGE)
+    _git(werk.repo, "add", "-A")
+    _git(werk.repo, "commit", "-q", "-m", "System")
+    werk.make_image = gw / "image" / "make_image.sh"
+    return werk
+
+
+def _system_args(werk, *, roots=True, api=API_URL, portal=PORTAL_URL):
+    args = ["--schluessel", str(werk.kette / "release.key"), "--zertifikat", str(werk.kette / "release.crt"),
+            "--aus", str(werk.aus)]
+    if roots:
+        args += ["--roots", str(werk.kette / "root.crt")]
+    if api is not None:
+        args += ["--device-api-url", api]
+    if portal is not None:
+        args += ["--portal-base-url", portal]
+    return args
+
+
+def _system_lauf(werk, *zusatz, umgebung=None, **kwargs):
+    return _lauf(werk, *_system_args(werk, **kwargs), *zusatz, ohne_system=False,
+                 umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS, **(umgebung or {})})
+
+
+def _sha(inhalt: bytes) -> str:
+    return hashlib.sha256(inhalt).hexdigest()
+
+
+def test_system_bundle_wird_gebaut_signiert_und_genau_das_bundle_hochgeladen(werk_system):
+    werk = werk_system
+    _signierter_tag(werk)
+    ergebnis = _system_lauf(werk, roots=False)  # Standard-Schluesselbund: gateway/host/release-roots.pem
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    bundle = werk.aus.resolve() / VERSION
+    assert ergebnis.stdout.splitlines() == [
+        f"version={VERSION}", f"manifest_url={BASIS}/{VERSION}/manifest.json",
+        f"sha256={_sha((bundle / 'manifest.json').read_bytes())}", f"signaturdatei={bundle}/manifest.json.sig"]
+    # hochgeladen wird genau das Bundle: sechs Dateien, mit dem System-Bundle
+    (hochgeladen,) = _log(werk, "scp.log")
+    assert hochgeladen["argv"] == ["-r", "--", str(bundle), ZIEL + "/"]
+    assert hochgeladen["dateien"] == sorted([*DATEIEN, "system.raucb"])
+    assert hochgeladen["dateien"] == ["docker-compose.yml", "gateway-image.oci.tar", "manifest.json", "manifest.json.sig",
+                                      "mosquitto.conf", "system.raucb"]
+    assert (bundle / "system.raucb").read_bytes() == b"SYSTEM-BUNDLE"
+    assert _pruefen(werk, bundle) == 0
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    assert manifest["system"] == {"datei": "system.raucb", "sha256": _sha(b"SYSTEM-BUNDLE"), "groesse": 13,
+                                  "compatible": "smartheat-gateway-pi5"}
+    assert manifest["min_updater_version"] == "0.9.0" and manifest["version"] == VERSION
+    # Werks-Image, Slot-Images und SBOM des Systems bleiben lokal, das Bundle ohne System auch
+    assert sorted(p.name for p in (werk.aus / "image").iterdir() if not p.name.endswith(".sha256")) == [
+        f"boot-{SYSTEM_VERSION_DATEI}.vfat", f"smartheat-gateway-{SYSTEM_VERSION_DATEI}.img.zst",
+        f"smartheat-gateway-{SYSTEM_VERSION_DATEI}.sbom.zst", f"system-{SYSTEM_VERSION_DATEI}.ext4"]
+    assert (werk.aus / f"gateway-{VERSION}.cdx.json").is_file() and not (werk.aus / "rauc-buehne").exists()
+    assert (werk.aus / "werk-bundle" / "manifest.json").is_file()
+
+
+def test_werks_image_traegt_das_bundle_ohne_system_und_die_adressen(werk_system):
+    werk = werk_system
+    _signierter_tag(werk)
+    assert _system_lauf(werk).returncode == 0
+    (aufruf,) = _log(werk, "make_image.log")
+    assert aufruf["argv"] == ["--bundle", str(werk.aus.resolve() / "werk-bundle"), "--out", str(werk.aus.resolve() / "image"),
+                              "--device-api-url", API_URL, "--portal-base-url", PORTAL_URL,
+                              "--release-roots", str(werk.kette / "root.crt")]
+    # das erste Bundle des Geraets: signiert, ohne Systemteil (sonst haengte das Manifest vom Image ab)
+    assert aufruf["dateien"] == sorted([*DATEIEN]) and aufruf["system"] is False and aufruf["min"] == "0.8.0"
+
+
+def test_standard_schluesselbund_geht_nicht_an_make_image(werk_system):
+    """Ohne --roots gilt gateway/host/release-roots.pem, der Schluesselbund im Image: --release-roots entfaellt."""
+    werk = werk_system
+    _signierter_tag(werk)
+    assert _system_lauf(werk, roots=False).returncode == 0
+    (aufruf,) = _log(werk, "make_image.log")
+    assert "--release-roots" not in aufruf["argv"] and len(aufruf["argv"]) == 8
+
+
+def test_system_bundle_wird_mit_dem_schluessel_des_manifests_signiert(werk_system):
+    werk = werk_system
+    _signierter_tag(werk)
+    assert _system_lauf(werk).returncode == 0
+    signiert = [a["argv"] for a in _log(werk, "rauc.log") if a["prog"] == "openssl" and "-sign" in a["argv"]]
+    assert len(signiert) == 1
+    assert signiert[0][signiert[0].index("-signer") + 1] == str(werk.kette / "release.crt")
+    assert signiert[0][signiert[0].index("-inkey") + 1] == str(werk.kette / "release.key")
+    replace = next(a["programm"] for a in _log(werk, "rauc.log") if a["prog"] == "docker-run" and "replace-signature" in a["programm"])
+    assert replace[replace.index("--signing-keyring") + 1].endswith("/roots.pem")  # die Kopie der --roots in der Buehne
+
+
+def test_ablauf_der_docker_aufrufe_mit_system(werk_system):
+    werk = werk_system
+    _signierter_tag(werk)
+    assert _system_lauf(werk).returncode == 0
+    aufrufe = _log(werk, "docker.log")
+    assert aufrufe[0][:2] == ["buildx", "build"] and aufrufe[1][0] == "run" and aufrufe[1].count("--rm") == 1
+    assert aufrufe[2][:2] == ["build", "--quiet"]  # das rauc-Abbild
+    container = [a for a in aufrufe[3:]]
+    assert all(a[0] == "run" for a in container)
+    programme = [next(x for x in a[a.index(rauc_bundle.RAUC_IMAGE) + 1:])[:] for a in container]
+    assert programme == ["debugfs", "debugfs", "rauc", "rauc", "rauc", "rauc"]
+    # jeder rauc-Lauf sieht seine Pfade (Pruefung der Attrappe: nichts ausserhalb der gemounteten Buehne)
+    assert [a["ausserhalb"] for a in _log(werk, "rauc.log") if a["prog"] == "docker-run"] == [[]] * 6
+
+
+def test_ohne_system_ruft_weder_make_image_noch_rauc(werk_system):
+    werk = werk_system
+    _signierter_tag(werk)
+    ergebnis = _lauf(werk, *_system_args(werk), umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})  # + --ohne-system
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert _log(werk, "make_image.log") == [] and _log(werk, "rauc.log") == []
+    (hochgeladen,) = _log(werk, "scp.log")
+    assert hochgeladen["dateien"] == DATEIEN
+    assert "system" not in json.loads((werk.aus / VERSION / "manifest.json").read_text())
+    assert not (werk.aus / "image").exists() and not (werk.aus / "werk-bundle").exists()
+
+
+def test_probe_bleibt_ohne_system_und_braucht_keine_adressen(werk_system):
+    werk = werk_system
+    ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.kette / "release.key"),
+                     "--zertifikat", str(werk.kette / "release.crt"), "--roots", str(werk.kette / "root.crt"),
+                     "--aus", str(werk.aus), ohne_system=False)
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert _log(werk, "make_image.log") == [] and _log(werk, "rauc.log") == [] and _log(werk, "scp.log") == []
+    assert [a[0] for a in _log(werk, "docker.log")] == ["buildx", "run"]
+
+
+def test_ohne_make_image_bricht_das_skript_vor_dem_bau_ab(werk_system):
+    werk = werk_system
+    werk.make_image.unlink()
+    _git(werk.repo, "add", "-A")
+    _git(werk.repo, "commit", "-q", "-m", "ohne make_image")
+    _signierter_tag(werk)
+    ergebnis = _system_lauf(werk)
+    assert ergebnis.returncode == 1 and "make_image.sh fehlt" in ergebnis.stderr and "--ohne-system" in ergebnis.stderr
+    assert ergebnis.stdout == "" and _log(werk, "docker.log") == [] and _log(werk, "scp.log") == []
+
+
+def test_ohne_arm64_oder_qemu_bricht_make_image_laut_ab_und_nichts_wird_hochgeladen(werk_system):
+    werk = werk_system
+    _signierter_tag(werk)
+    ergebnis = _system_lauf(werk, umgebung={"ATTRAPPE_MAKE_IMAGE_FEHLER": "1"})
+    assert ergebnis.returncode == 1 and ergebnis.stdout == ""
+    assert "QEMU-binfmt" in ergebnis.stderr and "make_image.sh gescheitert" in ergebnis.stderr
+    assert _log(werk, "scp.log") == [] and _log(werk, "rauc.log") == []
+    assert sorted(p.name for p in werk.aus.iterdir()) == []  # nichts Halbes im Arbeitsordner
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"api": None}, {"portal": None}, {"api": None, "portal": None},
+    {"api": "http://geraete.hartfussha.org"}, {"portal": "https://192.0.2.1"}, {"api": "https://geraete.example.org"},
+    {"portal": "https://geraete.hartfussha.org:8443"},
+], ids=["ohne-api", "ohne-portal", "ohne-beide", "http", "ip", "fremde-zone", "port"])
+def test_ohne_gueltige_adressen_exit_2_vor_dem_bau(werk_system, kwargs):
+    werk = werk_system
+    _signierter_tag(werk)
+    ergebnis = _system_lauf(werk, **kwargs)
+    assert ergebnis.returncode == 2 and "--" in ergebnis.stderr and ergebnis.stdout == ""
+    assert _log(werk, "docker.log") == [] and _log(werk, "scp.log") == [] and not werk.aus.exists()
+
+
+def test_release_version_muss_gateway_version_sein_vor_dem_bau(werk_system):
+    werk = werk_system
+    _git(werk.repo, "-c", f"user.signingkey={werk.erlaubt}", "tag", "-s", "-m", "Release", "gateway-v9.9.8")
+    ergebnis = _lauf(werk, *_system_args(werk), version="9.9.8", ohne_system=False,
+                     umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
+    assert ergebnis.returncode == 1 and f"gateway/VERSION ({SYSTEM_VERSION_DATEI}) ist nicht die Release-Version 9.9.8" in ergebnis.stderr
+    assert _log(werk, "docker.log") == [] and _log(werk, "scp.log") == []
+
+
+def test_system_aus_einer_anderen_version_wird_nicht_hochgeladen(werk_system):
+    """Das Host-Paket im gebauten Image meldet eine andere Version als das Release: jedes Geraet fiele mit
+    `start_fehlgeschlagen` zurueck. rauc_bundle.py liest die Version im Image und bricht ab."""
+    werk = werk_system
+    _signierter_tag(werk)
+    falsch = json.dumps({rauc_bundle.IMAGE_VERSION_PY: 'GATEWAY_VERSION = "9.9.8"\n', rauc_bundle.IMAGE_VERSION_DATEI: "9.9.9\n"})
+    ergebnis = _system_lauf(werk, umgebung={"ATTRAPPE_IMAGE": falsch})
+    assert ergebnis.returncode == 1 and ergebnis.stdout == ""
+    assert "traegt Version 9.9.8, das Release hat 9.9.9" in ergebnis.stderr and "System-Bundle nicht gebaut" in ergebnis.stderr
+    assert _log(werk, "scp.log") == [] and sorted(p.name for p in werk.aus.iterdir()) == []
+
+
+@pytest.mark.parametrize("schritt", ["build", "bundle", "info"])
+def test_fehler_im_rauc_container_laedt_nichts_hoch_und_laesst_nichts_liegen(werk_system, schritt):
+    werk = werk_system
+    _signierter_tag(werk)
+    ergebnis = _system_lauf(werk, umgebung={"ATTRAPPE_FEHLER": schritt, "ATTRAPPE_MELDUNG": f"Grund-{schritt}"})
+    assert ergebnis.returncode == 1 and ergebnis.stdout == "" and f"Grund-{schritt}" in ergebnis.stderr
+    assert _log(werk, "scp.log") == [] and sorted(p.name for p in werk.aus.iterdir()) == []
+
+
+def test_vorhandenes_system_ergebnis_wird_nicht_ueberschrieben(werk_system):
+    werk = werk_system
+    _signierter_tag(werk)
+    (werk.aus / "image").mkdir(parents=True)
+    ergebnis = _system_lauf(werk)
+    assert ergebnis.returncode == 1 and "image existiert schon" in ergebnis.stderr
+    assert _log(werk, "docker.log") == [] and (werk.aus / "image").is_dir()
