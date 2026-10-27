@@ -41,6 +41,7 @@ _LIST_ITEM = re.compile(r"^(\s*)-\s+(.*?)\s*$")
 PULL_TIMEOUT_SECONDS = 900
 UP_TIMEOUT_SECONDS = 300
 PS_TIMEOUT_SECONDS = 60
+RESTART_TIMEOUT_SECONDS = 120  # Neustart eines Dienstes durch den Waechter (stop_grace_period der Laufzeit: 20 s)
 IMAGE_TIMEOUT_SECONDS = 120
 LOAD_TIMEOUT_SECONDS = 600  # docker load: ein Archiv von rund 200 MB entpackt auf einem Pi 4 in ein bis drei Minuten
 
@@ -350,22 +351,30 @@ class ComposeRunner:
         self._gehalten = False
 
     @contextlib.contextmanager
-    def sperre(self):
+    def sperre(self, blockieren: bool = True):
         """Haelt die Compose-Sperre (blockiert, bis sie frei ist; der Halter ist durch die Fristen der docker-Aufrufe
         begrenzt, und flock endet mit dem Prozess). Ein `up` unter einer schon gehaltenen Sperre dieses Runners wartet nicht
         auf sich selbst. Die Datei liegt in `updater/` (root-eigen; der Container kann sie nicht ersetzen), Ordner muss
-        bestehen (smartheat-ablage)."""
+        bestehen (smartheat-ablage). Mit `blockieren=False` wartet der Aufruf nie: er liefert `False`, wenn ein anderer die
+        Sperre haelt (der Waechter versucht es dann im naechsten Takt), sonst `True`."""
         if self._gehalten:
-            yield
+            yield True
             return
         # nur eine Sperrdatei ohne Inhalt, kein Datei-Schreiber im Sinne von dateien.schreiben (test_kein_dateischreiber)
         (self._root / "updater").mkdir(parents=True, exist_ok=True)
         fd = os.open(self._root / "updater" / "compose.lock", os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | (0 if blockieren else fcntl.LOCK_NB))
+                belegt = False
+            except BlockingIOError:
+                belegt = True
+            if belegt:
+                yield False
+                return
             self._gehalten = True
             try:
-                yield
+                yield True
             finally:
                 self._gehalten = False
         finally:
@@ -392,6 +401,10 @@ class ComposeRunner:
     def up(self, version: str) -> None:
         with self.sperre():
             self._compose(version, "up", "-d", "--remove-orphans", timeout=UP_TIMEOUT_SECONDS)
+
+    def restart(self, version: str, dienst: str) -> None:
+        """Startet einen Dienst des laufenden Bundles neu (der Waechter). Die Sperre haelt der Aufrufer (`sperre`)."""
+        self._compose(version, "restart", dienst, timeout=RESTART_TIMEOUT_SECONDS)
 
     def health(self, version: str) -> dict[str, str]:
         try:

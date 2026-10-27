@@ -101,7 +101,7 @@ fi
 
 # Dienste
 for unit in smartheat-ablage smartheat-werk smartheat-firewall smartheat-hoststatus smartheat-led smartheat-firstboot \
-            smartheat-updater docker; do
+            smartheat-updater smartheat-waechter docker; do
   [ -L "$WANTS/$unit.service" ] || fail "$unit nicht aktiviert"
 done
 # Probestart-Frist (ohne Updater schaltet sie 20 min nach dem Start zurueck, GW 6.3): Timer aktiviert, Programme root-eigen

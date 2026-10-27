@@ -208,3 +208,17 @@ def test_mosquitto_requires_login():
     assert "allow_anonymous false" in conf
     assert "password_file /mosquitto/config/bus/passwd" in conf and "acl_file /mosquitto/config/bus/acl" in conf
     assert _services()["mosquitto"]["user"] == "1000:1000"
+
+
+def test_mosquitto_persists_to_its_own_data_folder():
+    """Retained Nachrichten und Sitzungen ueberleben einen Neustart: Daten auf `bus/mosquitto-daten` (beschreibbar, uid 1000,
+    von smartheat-ablage angeglichen), die Konfiguration bleibt schreibgeschuetzt in `bus/mosquitto`."""
+    conf = (COMPOSE / "mosquitto.conf").read_text().splitlines()
+    assert "persistence true" in conf and "persistence_location /mosquitto/data/" in conf
+    assert "persistence false" not in conf
+    volumes = _services()["mosquitto"]["volumes"]
+    daten = [v for v in volumes if _container_target(v) == "/mosquitto/data"]
+    assert daten == ["${SHG_ROOT:-/var/lib/smartheat}/bus/mosquitto-daten:/mosquitto/data"]  # kein :ro
+    konfig = [v for v in volumes if _container_target(v) == "/mosquitto/config/bus"]
+    assert konfig == ["${SHG_ROOT:-/var/lib/smartheat}/bus/mosquitto:/mosquitto/config/bus:ro"]
+    assert _services()["mosquitto"]["read_only"] is True and _services()["mosquitto"]["user"] == "1000:1000"

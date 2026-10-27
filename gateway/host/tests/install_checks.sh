@@ -56,7 +56,7 @@ bash "$SRC/install.sh" "${ARGS[@]}" >/tmp/run2.log 2>&1 || fail "zweiter Lauf"
 snapshot >/tmp/after
 diff /tmp/before /tmp/after >/dev/null || { diff /tmp/before /tmp/after; fail "zweiter Lauf hat etwas geaendert"; }
 grep -q "Nichts zu tun" /tmp/run2.log || fail "zweiter Lauf meldet Aenderungen"
-for unit in updater led hoststatus firewall firstboot ablage werk probestart-frist; do
+for unit in updater led hoststatus waechter firewall firstboot ablage werk probestart-frist; do
   # Nur die fehlende docker.service-Abhaengigkeit (Container ohne Docker) wird ausgefiltert, Syntaxfehler nicht.
   systemd-analyze verify "/etc/systemd/system/smartheat-$unit.service" 2>&1 | grep -v "^$" | grep -vi "docker.service" \
     && fail "Unit smartheat-$unit ungueltig"
@@ -65,18 +65,18 @@ systemd-analyze verify /etc/systemd/system/smartheat-probestart-frist.timer 2>&1
   && fail "Timer smartheat-probestart-frist ungueltig"
 grep -q '^OnBootSec=20min$' /etc/systemd/system/smartheat-probestart-frist.timer || fail "Timer nicht 20 min nach dem Start"
 grep -q '^WantedBy=timers.target$' /etc/systemd/system/smartheat-probestart-frist.timer || fail "Timer ohne [Install]"
-for unit in updater led hoststatus; do
+for unit in updater led hoststatus waechter; do
   grep -q '^Restart=always$' "/etc/systemd/system/smartheat-$unit.service" || fail "Restart= fehlt in smartheat-$unit"
 done
 # gateway.env unter /opt/smartheat ist die einzige Quelle fuer Units und Compose; unter SHG_ROOT gibt es sie nicht mehr.
-for unit in updater led hoststatus firstboot ablage werk; do
+for unit in updater led hoststatus waechter firstboot ablage werk; do
   grep -q '^EnvironmentFile=/opt/smartheat/gateway.env$' "/etc/systemd/system/smartheat-$unit.service" \
     || fail "EnvironmentFile= fehlt in smartheat-$unit"
   grep -q '^Environment=SHG_ROOT' "/etc/systemd/system/smartheat-$unit.service" && fail "SHG_ROOT doppelt in smartheat-$unit"
   grep -q '^RequiresMountsFor=/var/lib/smartheat$' "/etc/systemd/system/smartheat-$unit.service" \
     || fail "RequiresMountsFor= fehlt in smartheat-$unit"
 done
-for unit in updater led hoststatus firstboot ablage werk firewall; do
+for unit in updater led hoststatus waechter firstboot ablage werk firewall; do
   grep -q '@ROOT@' "/etc/systemd/system/smartheat-$unit.service" && fail "@ROOT@ nicht ersetzt in smartheat-$unit"
 done
 grep -q '^SHG_ROOT=/var/lib/smartheat$' /opt/smartheat/gateway.env || fail "SHG_ROOT fehlt in gateway.env"
@@ -192,15 +192,15 @@ done
 # steht diese implizite Regel hier als Drop-in explizit. Ein Gegenbeispiel (After=multi-user.target bei
 # WantedBy=multi-user.target) muss den Test ausloesen, sonst taugt er nichts.
 mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/multi-user.target.d
-for unit in updater led hoststatus firewall firstboot ablage werk; do
+for unit in updater led hoststatus waechter firewall firstboot ablage werk; do
   ln -sf "/etc/systemd/system/smartheat-$unit.service" "/etc/systemd/system/multi-user.target.wants/smartheat-$unit.service"
 done
 cycle_check() {  # Ausgabe von verify fuer multi-user.target mit der impliziten Reihenfolge fuer die Units $*
   printf '[Unit]\nAfter=%s\n' "$*" >/etc/systemd/system/multi-user.target.d/smartheat-test.conf
   systemd-analyze verify --man=no multi-user.target 2>&1
 }
-cycle_check smartheat-updater.service smartheat-led.service smartheat-hoststatus.service smartheat-firewall.service \
-  smartheat-firstboot.service smartheat-ablage.service smartheat-werk.service >/tmp/cycle.log
+cycle_check smartheat-updater.service smartheat-led.service smartheat-hoststatus.service smartheat-waechter.service \
+  smartheat-firewall.service smartheat-firstboot.service smartheat-ablage.service smartheat-werk.service >/tmp/cycle.log
 if grep -qi 'ordering cycle' /tmp/cycle.log; then grep -i cycle /tmp/cycle.log; fail "Ordnungszyklus in den Gateway-Units"; fi
 sed 's|^After=local-fs.target|After=multi-user.target|' /etc/systemd/system/smartheat-led.service \
   >/etc/systemd/system/smartheat-cycle.service
@@ -233,6 +233,7 @@ activate_run "ohne Stick"
 grep -q "Geraet fehlt: $STICK" /tmp/act.log || { cat /tmp/act.log; fail "Aktivierung ohne Stick: keine klare Meldung"; }
 compose_started && fail "Aktivierung ohne Stick: compose up trotzdem aufgerufen"
 grep -q "^systemctl enable --now docker.service smartheat-updater.service" /tmp/stub.log || fail "Updater nicht aktiviert"
+grep -q "^systemctl enable --now .*smartheat-waechter.service" /tmp/stub.log || fail "Waechter nicht aktiviert"
 grep -q "^systemctl enable --now smartheat-ablage.service smartheat-werk.service" /tmp/stub.log || fail "Ablage und Werk nicht aktiviert"
 grep -q "probestart-frist" /tmp/stub.log && fail "Probestart-Frist ausserhalb des Images aktiviert (kein A/B-System)"
 cmp -s "$SRC/docker-daemon.json" /etc/docker/daemon.json || fail "docker daemon.json (Speicherweg fuer den Erststart) fehlt"
@@ -315,12 +316,15 @@ PATH="$STUBS:$PATH" bash "$SRC/install.sh" --image "${ORD_ARGS[@]}" --pilot-ssh 
   >/tmp/img-docker.log 2>&1 || { cat /tmp/img-docker.log; fail "--image mit Docker"; }
 grep -q "^systemctl enable docker.service smartheat-updater.service smartheat-firstboot.service" /tmp/stub.log \
   || { cat /tmp/stub.log; fail "--image mit Docker aktiviert firstboot nicht"; }
+grep -q "^systemctl enable docker.service .*smartheat-waechter.service" /tmp/stub.log \
+  || { cat /tmp/stub.log; fail "--image mit Docker aktiviert den Waechter nicht"; }
 grep -q "^systemctl enable --now" /tmp/stub.log && fail "--image startet Dienste"
 rm -rf /etc/docker
 : >/tmp/stub.log
 PATH="$FAILFB_STUBS:$STUBS:$PATH" bash "$SRC/install.sh" --no-docker --device-api-url https://api.example.test \
   --root /var/lib/smartheat-nd >/tmp/nodocker.log 2>&1 || { cat /tmp/nodocker.log; fail "Aktivierung mit --no-docker bricht ab"; }
 grep -q "firstboot" /tmp/stub.log && fail "--no-docker beruehrt smartheat-firstboot"
+grep -q "waechter" /tmp/stub.log && fail "--no-docker beruehrt smartheat-waechter (ohne Docker nichts zu pruefen)"
 grep -q "^systemctl disable --now ssh.service" /tmp/stub.log || fail "--no-docker: ssh-Schritt nach der Aktivierung fehlt"
 command -v shellcheck >/dev/null && { shellcheck "$SRC/install.sh" "$SRC/tests/install_checks.sh" || fail "shellcheck"; }
 exit $FAIL

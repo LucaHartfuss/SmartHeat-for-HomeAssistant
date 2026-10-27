@@ -258,6 +258,39 @@ def test_compose_runner_commands(tmp_path):
     assert calls == [base + ["pull"], base + ["up", "-d", "--remove-orphans"]]
 
 
+def test_compose_runner_restart_nutzt_dieselben_optionen_und_eine_frist_von_120_s(tmp_path):
+    """Der Waechter startet einen Dienst des laufenden Bundles neu: Projekt, env-Datei und Compose-Datei wie bei `up`."""
+    seen = []
+    runner = bundles.ComposeRunner(tmp_path, run=lambda cmd, **kw: seen.append((cmd, kw.get("timeout"))) or _Done(0, ""))
+    runner.restart("0.3.0", "runtime")
+    compose = str(tmp_path / "bundles" / "0.3.0" / "docker-compose.yml")
+    assert seen == [(["docker", "compose", "-p", "smartheat", "--env-file", "/opt/smartheat/gateway.env", "-f", compose,
+                      "restart", "runtime"], 120)]
+    with pytest.raises(bundles.ComposeError, match="restart"):
+        bundles.ComposeRunner(tmp_path, run=lambda cmd, **kw: _Done(1, "boom")).restart("0.3.0", "runtime")
+    with pytest.raises(bundles.ComposeError, match="Frist von 120 s"):
+        def hanging(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+        bundles.ComposeRunner(tmp_path, run=hanging).restart("0.3.0", "runtime")
+
+
+def test_die_sperre_ohne_warten_meldet_belegt_statt_zu_blockieren(tmp_path):
+    """`sperre(blockieren=False)` (der Waechter): frei -> True und gehalten; belegt durch einen anderen Runner -> False sofort,
+    ohne die Sperre des Halters anzutasten oder selbst zu halten."""
+    halter, anderer = bundles.ComposeRunner(tmp_path), bundles.ComposeRunner(tmp_path)
+    with halter.sperre():
+        with anderer.sperre(blockieren=False) as frei:
+            assert frei is False
+        with anderer.sperre(blockieren=False) as frei:  # und wieder: der Fehlversuch hat nichts hinterlassen
+            assert frei is False
+    with anderer.sperre(blockieren=False) as frei:
+        assert frei is True
+        with halter.sperre(blockieren=False) as belegt:
+            assert belegt is False
+    with halter.sperre() as frei:
+        assert frei is True
+
+
 def test_compose_runner_nimmt_die_env_datei_aus_dem_system_nicht_aus_shg_root(tmp_path):
     """gateway.env unter /opt/smartheat ist die einzige Quelle; `host/gateway.env` unter SHG_ROOT gibt es nicht mehr."""
     assert str(bundles.GATEWAY_ENV) == "/opt/smartheat/gateway.env"

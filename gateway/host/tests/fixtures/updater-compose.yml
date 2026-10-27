@@ -145,6 +145,7 @@ services:
     volumes:
     - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     - ${SHG_ROOT:-/var/lib/smartheat}/bus/mosquitto:/mosquitto/config/bus:ro
+    - ${SHG_ROOT:-/var/lib/smartheat}/bus/mosquitto-daten:/mosquitto/data
 networks:
   bus:
     internal: true

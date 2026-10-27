@@ -86,6 +86,9 @@ services:
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ${SHG_ROOT:-/var/lib/smartheat}/bus/mosquitto:/mosquitto/config/bus:ro
+      # Persistenz (retained Nachrichten und Sitzungen ueberleben einen Neustart des Containers und des Geraets); der Ordner
+      # gehoert uid 1000 (0700), smartheat-ablage gleicht ihn bei jedem Start an. Getrennt von bus/mosquitto (nur lesend).
+      - ${SHG_ROOT:-/var/lib/smartheat}/bus/mosquitto-daten:/mosquitto/data
 
   zigbee2mqtt:
     <<: *hardening

@@ -212,7 +212,7 @@ activate() {
   if [ "$FIREWALL_CHANGED" = 1 ]; then systemctl restart smartheat-firewall.service; fi
   # smartheat-firstboot hat Requires=docker.service: nur mit Docker aktivieren (sonst bricht enable --now ab).
   if [ "$DOCKER" = 1 ]; then
-    systemctl enable --now docker.service smartheat-updater.service smartheat-firstboot.service
+    systemctl enable --now docker.service smartheat-updater.service smartheat-firstboot.service smartheat-waechter.service
   fi
   if [ -n "$PILOT_KEY" ]; then
     systemctl enable --now ssh.service
@@ -226,7 +226,9 @@ enable_offline() {
   [ "$IMAGE" = 1 ] || return 0
   systemctl enable smartheat-ablage.service smartheat-werk.service smartheat-firewall.service \
     smartheat-hoststatus.service smartheat-led.service smartheat-probestart-frist.timer
-  if [ "$DOCKER" = 1 ]; then systemctl enable docker.service smartheat-updater.service smartheat-firstboot.service; fi
+  if [ "$DOCKER" = 1 ]; then
+    systemctl enable docker.service smartheat-updater.service smartheat-firstboot.service smartheat-waechter.service
+  fi
   if [ -n "$PILOT_KEY" ]; then systemctl enable ssh.service
   else systemctl disable ssh.service ssh.socket 2>/dev/null || true; fi
 }

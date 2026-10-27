@@ -15,7 +15,7 @@ SCRIPT = IMAGE / "rootfs_checks.sh"
 OWN_URL = IMAGE / "own_url.sh"
 WANTS = "etc/systemd/system/multi-user.target.wants"
 UNITS = ("smartheat-ablage", "smartheat-werk", "smartheat-firewall", "smartheat-hoststatus", "smartheat-led",
-         "smartheat-firstboot", "smartheat-updater", "docker")
+         "smartheat-firstboot", "smartheat-updater", "smartheat-waechter", "docker")
 TIMER = "etc/systemd/system/timers.target.wants/smartheat-probestart-frist.timer"
 ENV = "opt/smartheat/gateway.env"  # die einzige Quelle fuer Units und Compose (kein host/gateway.env unter SHG_ROOT)
 WERK = "opt/smartheat/werkseinstellung"
@@ -810,6 +810,17 @@ def test_ab_system_is_checked(tmp_path, breakit, problem):
     result = _run(root)
     fails = _fail_lines(result)
     assert result.returncode != 0 and len(fails) == 1 and problem in fails[0], result.stdout
+
+
+@pytest.mark.parametrize("unit", UNITS)
+def test_every_service_of_the_image_must_be_enabled(tmp_path, unit):
+    """Jede Unit der Liste (auch der Waechter, GA-09) muss in multi-user.target.wants verlinkt sein; fehlt der Link, scheitert die
+    Pruefung mit genau dieser Unit in der Meldung."""
+    root = _good(tmp_path)
+    assert _run(root).returncode == 0
+    (root / WANTS / f"{unit}.service").unlink()
+    fails = _fail_lines(_run(root))
+    assert fails == [f"FAIL: {unit} nicht aktiviert"], fails
 
 
 def test_missing_dpkg_status_fails_without_hiding_the_cause(tmp_path):

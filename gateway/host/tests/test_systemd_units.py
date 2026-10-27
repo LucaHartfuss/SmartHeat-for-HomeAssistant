@@ -10,7 +10,7 @@ SYSTEMD = Path(__file__).resolve().parents[1] / "systemd"
 UNITS = sorted(p.name for p in SYSTEMD.glob("smartheat-*.service"))
 GATEWAY_ENV = "EnvironmentFile=/opt/smartheat/gateway.env"
 MIT_ROOT = ("smartheat-ablage", "smartheat-werk", "smartheat-firstboot", "smartheat-updater", "smartheat-hoststatus",
-            "smartheat-led")
+            "smartheat-led", "smartheat-waechter")
 
 
 def _eintraege(name: str) -> dict[str, list[str]]:
@@ -44,7 +44,8 @@ def test_der_updater_wartet_nicht_hinter_dem_laden_der_archive():
     assert "smartheat-ablage.service" in _eintraege("smartheat-updater.service")["Wants"]
 
 
-@pytest.mark.parametrize("name", ["smartheat-updater.service", "smartheat-hoststatus.service", "smartheat-firstboot.service"])
+@pytest.mark.parametrize("name", ["smartheat-updater.service", "smartheat-hoststatus.service", "smartheat-firstboot.service",
+                                  "smartheat-waechter.service"])
 def test_eine_gescheiterte_ablage_haelt_updater_hoststatus_und_erststart_nicht_auf(name):
     """Die Ablage ist nur Wants=+After=: scheitert sie (ein Eintrag des Containers unter bus/), laufen die Dienste trotzdem,
     sonst waere der Updater-Weg fuer immer blockiert."""
@@ -70,6 +71,23 @@ def test_die_ablage_ist_schnell_und_laeuft_vor_den_anderen_in_der_kette():
     for name in ("smartheat-updater.service", "smartheat-hoststatus.service", "smartheat-firstboot.service",
                  "smartheat-led.service", "smartheat-werk.service"):
         assert "smartheat-ablage.service" in _eintraege(name)["After"], name
+
+
+def test_der_waechter_wartet_nur_auf_docker_und_ablage_und_lebt_immer():
+    """Wie der Updater nie hinter dem Laden der Archive; Restart=always, damit ein Absturz ihn nicht dauerhaft beendet."""
+    waechter = _eintraege("smartheat-waechter.service")
+    assert set(waechter["After"]) == {"docker.service", "smartheat-ablage.service"}
+    assert "smartheat-firstboot.service" not in _nach("smartheat-waechter.service")
+    assert waechter["ExecStart"] == ["/usr/bin/python3", "-m", "smartheat_host.waechter"]
+    assert waechter["Restart"] == ["always"] and waechter["WantedBy"] == ["multi-user.target"]
+    assert set(waechter["Wants"]) == {"docker.service", "smartheat-ablage.service"}
+    assert "Requires" not in waechter  # Docker oder Ablage in Stoerung: der Waechter bleibt eine eigene Barriere
+
+
+def test_der_waechter_schreibt_nur_die_sperrdatei_und_nutzt_den_docker_socket():
+    waechter = _eintraege("smartheat-waechter.service")
+    assert waechter["ReadWritePaths"] == ["@ROOT@/updater", "/run/docker.sock"]
+    assert waechter["ProtectSystem"] == ["strict"] and waechter["NoNewPrivileges"] == ["yes"]
 
 
 def test_der_updater_wartet_nur_auf_docker_netz_und_ablage():

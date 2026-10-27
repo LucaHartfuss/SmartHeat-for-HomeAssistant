@@ -50,6 +50,16 @@
   zugleich. Die Ablage haelt Updater, Hoststatus und Erststart nicht auf (`Wants=`); ein untergeschobener Eintrag im
   Container-Bereich wird gemeldet und nicht angefasst. Das Image hat keinen statischen Hostnamen (Rueckfall
   `DEFAULT_HOSTNAME=smartheat-gateway` in os-release), damit der Name aus `werk.json` gilt.
+- Waechter fuer die Laufzeit (AP-05a, GA-09, FR-35): `smartheat-waechter.service` (Takt 30 s) startet `runtime` mit `docker
+  compose -p smartheat restart runtime` (Frist 120 s) neu, wenn der Compose-Healthcheck dreimal in Folge `unhealthy` meldet;
+  hoechstens drei Neustarts je Stunde, der vierte wird nicht ausgefuehrt (ein ERROR im Journal). Pausiert bei einem offenen
+  Container-Auftrag, in den Phasen installiere, installiert und probestart, bei `host/werksreset.json` und solange der Updater
+  oder der Erststart die Compose-Sperre haelt (der Waechter wartet dort nie).
+- Firewall und Docker-Pool (AP-05a, GW-Weiterleitung): `docker-daemon.json` pinnt `default-address-pools` auf `172.30.0.0/16`
+  (Groesse 24); die Kette `prerouting` (raw) in `table inet smartheat` verwirft Pakete an 127.0.0.0/8 von ausserhalb von `lo`
+  und an den Docker-Pool von allen Schnittstellen ausser `docker0` und `br-*` (kein Direktrouting aus dem LAN an `runtime:8081`).
+- Mosquitto behaelt seinen Zustand (L4-28): `persistence true` mit `bus/mosquitto-daten` als `/mosquitto/data`.
+- `cloudflared.pin` auf 2026.10.5 (SHA-256 beider `.deb` aus dem GitHub-Release berechnet und mit dem Release verglichen).
 
 ## 0.8.0
 
