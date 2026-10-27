@@ -126,8 +126,9 @@ def test_der_root_ordner_muss_eingehaengt_sein(name):
 
 
 def test_keine_unit_nennt_host_gateway_env_mehr():
-    for pfad in SYSTEMD.iterdir():
-        assert "host/gateway.env" not in pfad.read_text(), pfad.name
+    for pfad in SYSTEMD.rglob("*"):  # auch die Drop-ins (emergency.service.d, rescue.service.d)
+        if pfad.is_file():
+            assert "host/gateway.env" not in pfad.read_text(), pfad.name
 
 
 def test_der_frist_timer_hat_ein_install_und_laeuft_nach_20_minuten():

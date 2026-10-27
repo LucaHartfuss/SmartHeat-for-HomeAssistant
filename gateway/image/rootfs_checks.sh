@@ -110,6 +110,22 @@ done
 for prog in rauc-backend probestart-frist; do
   [ -x "$R/opt/smartheat/$prog" ] || fail "opt/smartheat/$prog fehlt oder ist nicht ausfuehrbar"
 done
+# Notfallmodus im Probestart (R26): bleibt das neue System in emergency/rescue stehen, laufen weder Timer noch Updater;
+# die Drop-ins rufen die Probestart-Frist vor der Notfall-Shell
+for unit in emergency rescue; do
+  drop="$R/etc/systemd/system/$unit.service.d/smartheat-probestart.conf"
+  if [ ! -f "$drop" ]; then fail "Drop-in $unit.service fehlt (etc/systemd/system/$unit.service.d/smartheat-probestart.conf)"
+  else grep -qx 'ExecStartPre=-/opt/smartheat/probestart-frist sofort' "$drop" \
+    || fail "Drop-in $unit.service: ExecStartPre=-/opt/smartheat/probestart-frist sofort fehlt"; fi
+done
+# Docker: Speicherweg containerd und der feste Adresspool der Compose-Netze; die Firewall-Regel gegen Direktrouting
+# (nftables.conf, 172.30.0.0/16) greift nur in diesem Pool, ohne die Datei lagen die Netze in 172.17...
+DAEMON="$R/etc/docker/daemon.json"
+if [ ! -f "$DAEMON" ]; then fail "etc/docker/daemon.json fehlt (Speicherweg containerd, Adresspool 172.30.0.0/16)"
+else
+  grep -q '"containerd-snapshotter": *true' "$DAEMON" || fail "daemon.json: containerd-snapshotter fehlt"
+  grep -q '"base": *"172.30.0.0/16"' "$DAEMON" || fail "daemon.json: Adresspool 172.30.0.0/16 fehlt (Firewall-Regel gegen Direktrouting)"
+fi
 # Kein SSH im Image (ein SSH-Zugang kommt mit AP-05b). -L statt -e: die Links zeigen absolut ins Image
 # (/lib/systemd/...) und waeren vom Build-Host aus oft "kaputt".
 if [ -L "$WANTS/ssh.service" ] || [ -e "$WANTS/ssh.service" ]; then fail "ssh im Image aktiviert"; fi

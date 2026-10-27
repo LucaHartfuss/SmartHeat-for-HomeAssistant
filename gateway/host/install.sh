@@ -140,6 +140,10 @@ system_files() {
     put "/etc/systemd/system/$(basename "$unit")" 0644 0:0 < <(subst "$unit")
     if [ "$WROTE" = 1 ] && [ "$(basename "$unit")" = smartheat-firewall.service ]; then FIREWALL_CHANGED=1; fi
   done
+  # Notfallmodus im Probestart (R26): Drop-ins, die vor der Notfall-Shell den Rueckfall pruefen (probestart-frist sofort)
+  for unit in emergency rescue; do
+    put "/etc/systemd/system/$unit.service.d/smartheat-probestart.conf" 0644 0:0 <"$HERE/systemd/$unit.service.d/smartheat-probestart.conf"
+  done
   put /etc/udev/rules.d/99-smartheat-zigbee.rules 0644 0:0 < <(subst "$HERE/udev/99-smartheat-zigbee.rules")
   [ -n "$PILOT_KEY" ] && ssh_rule="tcp dport 22 accept"
   WROTE=0

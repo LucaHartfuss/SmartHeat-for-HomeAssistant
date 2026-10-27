@@ -143,6 +143,7 @@ class World:
         self.compose = FakeCompose(fail_up, fail_pull)
         self.sa = FakeStartauswahl(gestartet="A", compatible=sa_compatible)
         self.lokal, self.lokal_aufrufe = True, 0  # lokale Gesundheit im Probestart (ohne server_ok) und wie oft gefragt
+        self.server_folgt_broker = False  # True: ohne erreichbaren Broker hat die Laufzeit auch kein server_ok
         self.events = self.compose.events  # Abruf und Laden des Archivs stehen in derselben Reihenfolge
         self.archive_fetches, self.loaded = [], []
         self.fetch_breaks_after = None  # Byte, nach dem der Abruf des Archivs abbricht (Rest bleibt fuer den naechsten)
@@ -188,13 +189,17 @@ class World:
         return updater.Updater(
             kanal=self.api, store=self.store, compose=self.compose, fetch=self.fetch, fetch_datei=self.fetch_datei,
             docker_load=self.docker_load, roots_text=roots_text or self.roots, uhr=lambda: self.now, state_path=self.state_path, version=version,
-            health=lambda version: self.healthy, clock=lambda: self.clock[0], sleep=self.sleep, **self.extra,
+            health=self.gesund, clock=lambda: self.clock[0], sleep=self.sleep, **self.extra,
             startauswahl=self.sa, lokal_health=self.lokal_gesund,
         )
 
     def lokal_gesund(self, version):
         self.lokal_aufrufe += 1
         return self.lokal
+
+    def gesund(self, version):
+        """Gesundheit mit Serverkontakt (`/healthz` mit server_ok und gesunde Laufzeit)."""
+        return self.healthy and not (self.server_folgt_broker and self.api.offline)
 
     def fetch(self, url, max_bytes):
         """Wie `fetch_url`: eine Antwort ueber `max_bytes` ist ein FetchError; `fetched` haelt jede Anfrage fest."""
@@ -3160,7 +3165,9 @@ class _Strom(BaseException):
 def _system_world(tmp_path, **kw):
     """World mit System-Bundle im Angebot; der Fake steht auf Slot A (alter Slot, bestaetigt)."""
     kw.setdefault("system", True)
-    return World(tmp_path, **kw)
+    world = World(tmp_path, **kw)
+    world.server_folgt_broker = True  # im Systempfad gilt: Broker weg, auch server_ok weg
+    return world
 
 
 def _bis_zum_neustart(world):
@@ -3390,12 +3397,20 @@ def test_scheitert_der_neustart_mit_tryboot_wird_es_erneut_versucht(tmp_path):
 
 def test_probestart_gesund_ohne_server_ok_bestaetigt(tmp_path):
     """Im Probestart zaehlt die lokale Gesundheit, nicht der Server (`healthy` ist falsch): Phase `probestart`, Container
-    der Version, Phase `bestaetigt` (vor mark-good), mark-good, Netzprobe, dann current/previous, Bericht, Aufraeumen."""
+    der Version, Phase `bestaetigt` (vor mark-good), mark-good, Netzprobe (die den Serverkontakt des neuen Stands verlangt:
+    er kommt erst nach mark-good), dann current/previous, Bericht, Aufraeumen."""
     world = _system_world(tmp_path, healthy=False)
     _bis_zum_neustart(world)
     protokoll = []
     _merke_zustand(world, "bestaetigen", protokoll)
     _merke_zustand(world, "zurueckschalten", protokoll)
+    gut = world.sa.bestaetigen
+
+    def bestaetigen():
+        gut()
+        world.healthy = True  # nach mark-good meldet die Laufzeit den Server
+
+    world.sa.bestaetigen = bestaetigen
     _neustart(world, NEU)
     world.compose.on_up = lambda version: protokoll.append(("up", world.state().system["phase"]))
     world.updater.recover()
@@ -3406,7 +3421,7 @@ def test_probestart_gesund_ohne_server_ok_bestaetigt(tmp_path):
     assert world.sa.primaer() == "B" and not world.sa.im_probestart()
     assert state.zertifikat_untergrenze == ZERTIFIKAT_VON.isoformat()
     assert world.compose.calls[-1] == ("prune", frozenset({IMAGE, ALTES_IMAGE}))
-    assert world.api.reach_calls >= 2  # Gate des Durchlaufs und Netzprobe
+    assert world.api.reach_calls == 1  # nur das Gate des Durchlaufs; die Netzprobe fragt den neuen Stand, nicht den Broker
     assert _system_dateien(world) == []
     assert world.updater.run_once() == "aktuell"
 
@@ -3568,6 +3583,53 @@ def test_netzprobe_ohne_broker_schaltet_zurueck_ohne_ablehnung(tmp_path):
     assert world.compose.calls[-1] == ("up", ALT)
 
 
+def test_netzprobe_verlangt_den_serverkontakt_des_neuen_stands(tmp_path):
+    """R24: der Host erreicht den Broker, die Laufzeit des neuen Stands hat aber keine Sitzung (`server_ok` fehlt, etwa wegen
+    TLS oder Anmeldung): nach 600 s Rueckfall ohne Ablehnung. Sonst erreichte kein Folge-Release das Geraet mehr (S-10)."""
+    world = _system_world(tmp_path)
+    _bis_zum_neustart(world)
+    world.healthy = False  # der Broker bleibt erreichbar (`api.offline` ist falsch)
+    protokoll = []
+    _merke_zustand(world, "zurueckschalten", protokoll,
+                   lambda state: (state.system["phase"], state.system["grund"], state.system["ablehnen"], state.current))
+    start = world.clock[0]
+    _im_neuen_slot(world)
+    assert not world.api.offline and world.api.reach_calls == 1  # nur das Gate des Durchlaufs
+    assert world.clock[0] - start == updater.NETZPROBE_SECONDS
+    assert protokoll == [("zurueckschalten", ("zurueck", "server_unerreichbar", False, ALT))]
+    assert world.api.results == [] and world.state().current == ALT
+    world.healthy = True
+    _im_alten_slot(world)
+    state = world.state()
+    assert _berichte(world) == [("server_unerreichbar", "rollback")] and state.rejected == []
+    assert state.system_abstand["rueckfaelle"] == 1 and state.current == ALT
+
+
+def test_netzprobe_besteht_sobald_der_neue_stand_den_server_meldet(tmp_path):
+    """Gegenprobe: meldet die Laufzeit nach 300 s den Server, geht es sofort weiter (kein Abwarten der vollen 600 s)."""
+    world = _system_world(tmp_path)
+    _bis_zum_neustart(world)
+    world.healthy = False
+    gut = world.sa.bestaetigen
+    start = [None]
+
+    def bestaetigen():
+        gut()
+        start[0] = world.clock[0]
+
+    world.sa.bestaetigen = bestaetigen
+    schlafen_echt = world.sleep
+
+    def schlafen(sekunden):
+        schlafen_echt(sekunden)
+        world.healthy = start[0] is not None and world.clock[0] - start[0] >= 300
+
+    world.sleep = schlafen  # `rebuild` nimmt das Attribut
+    _im_neuen_slot(world)
+    assert world.clock[0] - start[0] == 300
+    assert (world.state().current, world.state().system) == (NEU, None) and world.api.results == [(NEU, "ok", "")]
+
+
 def test_zurueckschalten_scheitert_im_probestart_startet_normal_neu(tmp_path):
     """tryboot gilt nur fuer einen Start: scheitert mark-bad im Probestart, genuegt ein normaler Neustart (Firmware nimmt
     [all], den alten Slot)."""
@@ -3610,6 +3672,78 @@ def test_zurueckschalten_nach_mark_bad_ohne_neustart_wird_normal_neu_gestartet(t
     world.sa.zurueckschalten = ohne_neustart
     _im_neuen_slot(world)
     assert world.sa.aufrufe[-1] == ("normal_neustarten",)
+
+
+@pytest.mark.parametrize("phase", ["installiere", "bestaetigt"])
+def test_probestart_in_unerwarteter_phase_bestaetigt_nie_ohne_gesundheit(tmp_path, caplog, phase):
+    """T1-05: im Probestart kommt mark-good nur nach der lokalen Gesundheit dieses Starts. Eine andere Phase als
+    `installiert`/`probestart` (der Auftrag gehoert nicht zu diesem Start) schaltet zurueck, ohne Container, ohne Pruefung,
+    ohne mark-good und ohne Meldung."""
+    world = _system_world(tmp_path)
+    _bis_zum_neustart(world)
+    daten = json.loads(world.state_path.read_text())
+    daten["system"]["phase"] = phase
+    world.state_path.write_text(json.dumps(daten))
+    with caplog.at_level("ERROR"):
+        _im_neuen_slot(world)
+    assert f"Probestart von 0.3.0 in Phase {phase}: nicht erwartet" in caplog.text
+    assert [a[0] for a in world.sa.aufrufe][-1] == "zurueckschalten" and "bestaetigen" not in [a[0] for a in world.sa.aufrufe]
+    assert world.lokal_aufrufe == 0 and ("up", NEU) not in world.compose.calls and world.api.results == []
+    assert world.sa.primaer() == "A"
+
+
+@pytest.mark.parametrize(("unterbrechungen", "abgelehnt"), [(1, False), (2, False), (3, True)])
+def test_unterbrochene_installation_wird_dreimal_in_folge_abgelehnt(tmp_path, unterbrechungen, abgelehnt):
+    """T1-10: reisst `rauc install` selbst das System herunter (Reset), wiederholt sich das nicht endlos. Die dritte
+    Unterbrechung derselben Installation in Folge lehnt die Version ab (`manifest_ungueltig`); zwei davon nicht."""
+    world = _system_world(tmp_path)
+    world.compose.images.add(IMAGE)
+
+    def stromausfall(bundle):
+        raise _Strom
+
+    for n in range(1, unterbrechungen + 1):
+        world.sa.installieren = stromausfall
+        with pytest.raises(_Strom):
+            world.updater.run_once()
+        world.sa = FakeStartauswahl(gestartet="A")
+        _neustart(world, ALT)
+        world.updater.recover()
+        state = world.state()
+        assert state.system is None and state.system_installfehler == (0 if abgelehnt and n == 3 else n)
+        if n < unterbrechungen:
+            assert state.rejected == [] and world.api.results == []
+    if abgelehnt:
+        assert state.rejected == [world.abgelehnt()] and _berichte(world) == [("manifest_ungueltig", "rollback")]
+        assert _system_dateien(world) == [] and world.updater.run_once() == "aktuell"
+    else:
+        assert state.rejected == [] and world.api.results == []
+        assert world.updater.run_once() == "systemwechsel"
+
+
+def test_unterbrochene_installation_zaehlt_nach_einem_gelungenen_install_neu(tmp_path):
+    """'In Folge': zwei Unterbrechungen, dann eine gelungene Installation (Rueckfall im Probestart), setzen den Zaehler zurueck."""
+    world = _system_world(tmp_path)
+    world.compose.images.add(IMAGE)
+
+    def stromausfall(bundle):
+        raise _Strom
+
+    for _ in range(2):
+        world.sa.installieren = stromausfall
+        with pytest.raises(_Strom):
+            world.updater.run_once()
+        world.sa = FakeStartauswahl(gestartet="A")
+        _neustart(world, ALT)
+        world.updater.recover()
+    assert world.state().system_installfehler == 2
+    _bis_zum_neustart(world)
+    assert world.state().system_installfehler == 0
+
+
+def test_waechter_ist_voraussetzung_des_probestarts():
+    """T1-06 (GA-09): ein neues System mit totem Waechter wird nicht bestaetigt."""
+    assert "smartheat-waechter.service" in updater.HOST_DIENSTE
 
 
 def test_unlesbare_lage_laesst_den_auftrag_stehen(tmp_path):
@@ -3669,11 +3803,11 @@ def test_geraet_fehlt_im_probestart_ist_start_fehlgeschlagen_und_abgelehnt(tmp_p
     assert world.state().rejected == [world.abgelehnt()] and world.state().system_abstand is None
 
 
-def _unlesbarer_auftrag(world, roh):
-    """Offener Container-Auftrag auf NEU, daneben ein `system` aus der Feder eines neueren Updaters (`roh`)."""
+def _unlesbarer_auftrag(world, roh, offen=NEU):
+    """Offener Container-Auftrag auf `offen`, daneben ein `system` aus der Feder eines neueren Updaters (`roh`)."""
     world.installiere_angebot()
     daten = json.loads(world.state_path.read_text())
-    daten.update(in_progress={"version": NEU, "previous": ALT, "since": 1.0, "zertifikat_ab": ZERTIFIKAT_VON.isoformat()},
+    daten.update(in_progress={"version": offen, "previous": ALT, "since": 1.0, "zertifikat_ab": ZERTIFIKAT_VON.isoformat()},
                  system=roh)
     world.state_path.write_text(json.dumps(daten))
 
@@ -3681,12 +3815,11 @@ def _unlesbarer_auftrag(world, roh):
 @pytest.mark.parametrize("roh", [
     {"version": NEU, "phase": "zukunft", "slot_alt": "A"},  # unbekannte Phase
     {"version": NEU, "phase": "zurueck", "slot_alt": "A", "grund": "neuer_grund", "ablehnen": True},  # unbekannter Grund
-    {"version": "kein-format", "phase": "installiert", "slot_alt": "A"},  # Version nicht lesbar: sperrt jede Version
-    "irgendwas",
 ])
 def test_unlesbarer_systemauftrag_sperrt_start_und_abschluss_und_bleibt_stehen(tmp_path, caplog, roh):
     """Ein vorhandener, aber nicht lesbarer `system`-Auftrag (GPC24) darf nicht zum Container-Pfad fuehren: kein `up(NEU)` auf
-    dem alten System, kein `_finish` mit current=NEU. Er bleibt unveraendert in der Datei, die Warnung kommt einmal."""
+    dem alten System, kein `_finish` mit current=NEU. Er bleibt unveraendert in der Datei, die Warnung kommt einmal. Dasselbe
+    Angebot (gleiche lesbare Version) wartet (R25)."""
     world = _system_world(tmp_path)
     _unlesbarer_auftrag(world, roh)
     with caplog.at_level("WARNING"):
@@ -3698,6 +3831,46 @@ def test_unlesbarer_systemauftrag_sperrt_start_und_abschluss_und_bleibt_stehen(t
     assert updater.State.load(world.state_path).system is None
     assert caplog.text.count("Systemauftrag in state.json nicht lesbar") == 1
     assert world.sa.aufrufe == []
+
+
+@pytest.mark.parametrize("roh", [
+    {"version": "kein-format", "phase": "installiert", "slot_alt": "A"},  # Version nicht lesbar
+    "irgendwas",
+])
+def test_unlesbarer_systemauftrag_ohne_lesbare_version_sperrt_den_start_aber_kein_angebot(tmp_path, caplog, roh):
+    """R25: ist nicht einmal die Version des Auftrags lesbar, bleibt der offene Container-Auftrag stehen (kein `up(NEU)` auf
+    dem alten System), aber ein Angebot - hier dieselbe Version - ersetzt den rohen Auftrag mit WARNING: Updates muessen
+    ankommen (S-10). Der offene Auftrag wird dabei wie ein Rueckfall ohne Ablehnung zurueckgenommen."""
+    world = _system_world(tmp_path)
+    _unlesbarer_auftrag(world, roh)
+    world.updater.recover()
+    assert ("up", NEU) not in world.compose.calls and json.loads(world.state_path.read_text())["system"] == roh
+    with caplog.at_level("WARNING"):
+        assert world.updater.run_once() == "systemwechsel"
+    assert "ist nicht lesbar und wird durch das Angebot 0.3.0 ersetzt" in caplog.text
+    assert ("up", NEU) not in world.compose.calls and ("up", ALT) in world.compose.calls
+    gespeichert = json.loads(world.state_path.read_text())
+    assert gespeichert["system"]["version"] == NEU and gespeichert["system"]["phase"] == "installiert"
+    assert gespeichert["current"] == ALT and world.state().rejected == []
+
+
+def test_unlesbarer_systemauftrag_mit_offenem_auftrag_sperrt_kein_angebot_einer_anderen_version(tmp_path, caplog):
+    """Das Szenario der Teil-1-Pruefung (T1-02): ein neueres System schrieb eine unbekannte Phase, das Geraet fiel zurueck;
+    `in_progress` ist noch offen und der rohe Auftrag nennt Version 0.2.5. Das Angebot 0.3.0 wird trotzdem geprueft und
+    installiert; der Rest des alten Auftrags ist weg, das vorige Bundle laeuft wieder."""
+    world = _system_world(tmp_path)
+    roh = {"version": "0.2.5", "phase": "zukunft", "slot_alt": "A"}
+    _unlesbarer_auftrag(world, roh, offen="0.2.5")
+    world.updater.recover()
+    assert world.state().in_progress["version"] == "0.2.5"  # recover laesst den offenen Auftrag stehen
+    with caplog.at_level("WARNING"):
+        assert world.updater.run_once() == "systemwechsel"
+    assert "(Version 0.2.5) ist nicht lesbar und wird durch das Angebot 0.3.0 ersetzt" in caplog.text
+    state = world.state()
+    assert (state.current, state.system["version"], state.system["phase"]) == (ALT, NEU, "installiert")
+    assert state.in_progress["version"] == NEU and world.compose.calls.count(("up", ALT)) == 1
+    assert _berichte(world) == [("server_unerreichbar", "rollback")]  # der abgebrochene Auftrag 0.2.5, ohne Ablehnung
+    assert state.rejected == [] and world.sa.tryboot_vorgemerkt
 
 
 def test_unlesbarer_systemauftrag_einer_anderen_version_sperrt_nur_diese(tmp_path):
@@ -3805,16 +3978,16 @@ def test_strom_weg_in_der_netzprobe_setzt_sie_fort(tmp_path):
     world = _system_world(tmp_path)
     _bis_zum_neustart(world)
 
-    def stromausfall():
+    def stromausfall(version):
         raise _Strom
 
-    erreichbar = world.api.erreichbar
-    world.api.erreichbar = stromausfall
+    gesund = world.gesund
+    world.gesund = stromausfall
     _neustart(world, NEU)
     with pytest.raises(_Strom):
         world.updater.recover()
     assert world.state().system["phase"] == "bestaetigt" and world.sa.primaer() == "B"
-    world.api.erreichbar = erreichbar
+    world.gesund = gesund
     _neustart(world, NEU)
     assert not world.sa.im_probestart()
     world.updater.recover()

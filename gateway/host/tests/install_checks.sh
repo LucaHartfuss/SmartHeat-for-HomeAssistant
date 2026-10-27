@@ -47,7 +47,8 @@ ARGS=(--no-docker --no-activate --device-api-url https://api.example.test --root
 # Aelterer Installer-Stand: smartheat.conf (statt 00-smartheat.conf) muss beim Lauf verschwinden.
 mkdir -p /etc/ssh/sshd_config.d && echo "PasswordAuthentication yes" >/etc/ssh/sshd_config.d/smartheat.conf
 bash "$SRC/install.sh" "${ARGS[@]}" >/tmp/run1.log 2>&1 || { cat /tmp/run1.log; fail "erster Lauf"; }
-snapshot() { find /opt/smartheat /etc/smartheat /etc/systemd/system/smartheat-* /etc/udev/rules.d/99-smartheat-zigbee.rules \
+snapshot() { find /opt/smartheat /etc/smartheat /etc/systemd/system/smartheat-* /etc/systemd/system/emergency.service.d \
+  /etc/systemd/system/rescue.service.d /etc/udev/rules.d/99-smartheat-zigbee.rules \
   /etc/systemd/journald.conf.d/smartheat.conf /var/lib/smartheat \
   -exec stat -c '%n %a %u:%g %s %Y' {} + 2>/dev/null | sort; }
 snapshot >/tmp/before
@@ -65,6 +66,13 @@ systemd-analyze verify /etc/systemd/system/smartheat-probestart-frist.timer 2>&1
   && fail "Timer smartheat-probestart-frist ungueltig"
 grep -q '^OnBootSec=20min$' /etc/systemd/system/smartheat-probestart-frist.timer || fail "Timer nicht 20 min nach dem Start"
 grep -q '^WantedBy=timers.target$' /etc/systemd/system/smartheat-probestart-frist.timer || fail "Timer ohne [Install]"
+# Notfallmodus im Probestart (R26): die Drop-ins rufen die Probestart-Frist vor der Notfall-Shell
+for unit in emergency rescue; do
+  drop="/etc/systemd/system/$unit.service.d/smartheat-probestart.conf"
+  [ "$(stat -c '%a %u:%g' "$drop")" = "644 0:0" ] || fail "Drop-in $unit.service fehlt oder hat falsche Rechte"
+  cmp -s "$SRC/systemd/$unit.service.d/smartheat-probestart.conf" "$drop" || fail "Drop-in $unit.service weicht vom Repo ab"
+  grep -q '^ExecStartPre=-/opt/smartheat/probestart-frist sofort$' "$drop" || fail "Drop-in $unit.service ruft die Frist nicht"
+done
 for unit in updater led hoststatus waechter; do
   grep -q '^Restart=always$' "/etc/systemd/system/smartheat-$unit.service" || fail "Restart= fehlt in smartheat-$unit"
 done

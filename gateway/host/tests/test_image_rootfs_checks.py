@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 IMAGE = Path(__file__).resolve().parents[2] / "image"
+HOST = Path(__file__).resolve().parents[1]
 SCRIPT = IMAGE / "rootfs_checks.sh"
 OWN_URL = IMAGE / "own_url.sh"
 WANTS = "etc/systemd/system/multi-user.target.wants"
@@ -41,6 +42,11 @@ GOOD_WERK_MOUNT = (
 )
 GOOD_WATCHDOG = "[Manager]\nRuntimeWatchdogSec=10s\nRebootWatchdogSec=5min\n"
 GOOD_RAUC_CONF = "[system]\ncompatible=smartheat-gateway-pi5\n\n[slot.rootfs.0]\nbootname=A\n\n[slot.rootfs.1]\nbootname=B\n"
+EMERGENCY_DROPIN = "etc/systemd/system/emergency.service.d/smartheat-probestart.conf"
+RESCUE_DROPIN = "etc/systemd/system/rescue.service.d/smartheat-probestart.conf"
+GOOD_DROPIN = "[Service]\nExecStartPre=-/opt/smartheat/probestart-frist sofort\n"
+DAEMON_JSON = "etc/docker/daemon.json"
+GOOD_DAEMON_JSON = (HOST / "docker-daemon.json").read_text()  # die Datei, die install.sh ablegt
 DOCKER_PACKAGES = ("docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin")
 
 
@@ -262,6 +268,9 @@ def _good(root: Path) -> Path:
         "usr/lib/os-release": "ID=debian\nDEFAULT_HOSTNAME=smartheat-gateway\n",  # kein etc/hostname (hostname_default.sh)
         "opt/smartheat/rauc-backend": "#!/bin/sh\n",
         "opt/smartheat/probestart-frist": "#!/bin/sh\n",
+        EMERGENCY_DROPIN: GOOD_DROPIN,
+        RESCUE_DROPIN: GOOD_DROPIN,
+        DAEMON_JSON: GOOD_DAEMON_JSON,
         "opt/smartheat/host/release-roots.pem": "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
         "home/pi/.ssh/authorized_keys": "",
         "opt/smartheat/installer/gateway/host/install.sh": "#!/bin/bash\n",
@@ -368,6 +377,14 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     lambda r: (r / "opt/smartheat/rauc-backend").chmod(0o644),
     lambda r: (r / "opt/smartheat/probestart-frist").unlink(),
     lambda r: (r / TIMER).unlink(),
+    lambda r: (r / EMERGENCY_DROPIN).unlink(),
+    lambda r: (r / RESCUE_DROPIN).unlink(),
+    lambda r: (r / EMERGENCY_DROPIN).write_text("[Service]\nExecStartPre=-/opt/smartheat/probestart-frist\n"),
+    lambda r: (r / RESCUE_DROPIN).write_text("[Service]\n# ExecStartPre=-/opt/smartheat/probestart-frist sofort\n"),
+    lambda r: (r / DAEMON_JSON).unlink(),
+    lambda r: (r / DAEMON_JSON).write_text('{"features": {"containerd-snapshotter": true}}'),
+    lambda r: (r / DAEMON_JSON).write_text('{"default-address-pools": [{"base": "172.30.0.0/16", "size": 24}]}'),
+    lambda r: (r / DAEMON_JSON).write_text(GOOD_DAEMON_JSON.replace("172.30.0.0/16", "172.17.0.0/16")),
     lambda r: (r / "etc/hostname").write_text("smartheat-gateway\n"),
     lambda r: (r / "etc/hostname").symlink_to("/persistent/hostname"),
     lambda r: (r / "usr/lib/os-release").write_text("ID=debian\n"),

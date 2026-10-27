@@ -135,8 +135,11 @@ MAX_RUECKFAELLE = 3  # der dritte Rueckfall ohne Ablehnung derselben Version in 
 ABSTAND_GRUND_SECONDS = 3600
 ABSTAND_MAX_SECONDS = 86400
 MAX_INSTALLFEHLER = 2  # der zweite gescheiterte `rauc install` in Folge lehnt die Version ab
-#: Host-Dienste, die im Probestart laufen muessen (ohne die LED: sie ist keine Voraussetzung der Regelung)
-HOST_DIENSTE = ("docker.service", "smartheat-hoststatus.service", "smartheat-firewall.service")
+MAX_UNTERBRECHUNGEN = 3  # die dritte unterbrochene Installation (Phase `installiere`) in Folge lehnt die Version ab
+#: Host-Dienste, die im Probestart laufen muessen (ohne die LED: sie ist keine Voraussetzung der Regelung); der Waechter
+#: gehoert dazu (GA-09): ein neues System mit totem Waechter wird nicht bestaetigt
+HOST_DIENSTE = ("docker.service", "smartheat-hoststatus.service", "smartheat-firewall.service",
+                "smartheat-waechter.service")
 
 
 class FetchError(Exception):
@@ -817,7 +820,8 @@ class Updater:
             self._file_error("recover", error)
 
     def run_once(self) -> str:
-        """Ein Durchlauf (Ergebnis: aktuell, vorlaeufig, wartet_auf_zeit, abgelehnt, aktualisiert, zurueckgerollt). Ein
+        """Ein Durchlauf (Ergebnis: aktuell, vorlaeufig, wartet_auf_zeit, abgelehnt, aktualisiert, zurueckgerollt,
+        systemwechsel = Neustart mit tryboot angefordert). Ein
         Dateifehler (Datentraeger voll oder schreibgeschuetzt, Zustandsdatei) ist kein Fehler des Bundles: ERROR mit dem
         Namen des Fehlers, Ergebnis "vorlaeufig"; der Zustand bleibt, wie die letzte erfolgreiche Speicherung ihn liess
         (ein unterbrochenes Update setzt recover() im naechsten Durchlauf fort)."""
@@ -869,8 +873,10 @@ class Updater:
     def _run_once(self) -> str:
         if State.load(self._state_path).in_progress:  # offener Auftrag (z. B. gescheiterter Rueckweg) zuerst
             self.recover()  # sendet zuerst die offenen Meldungen
-            if State.load(self._state_path).in_progress:
+            offen = State.load(self._state_path)
+            if offen.in_progress and not self._auftrag_unlesbar(offen, offen.in_progress["version"]):
                 return "vorlaeufig"
+            # sonst haelt ihn nur ein unlesbarer Systemauftrag (R25): ein Angebot einer anderen Version ersetzt ihn unten
         else:
             self._flush(self._load())  # offene Meldungen vor allem anderen
         state = self._load()
@@ -911,7 +917,7 @@ class Updater:
                 logger.warning("Bundle %s wartet: Geraet fehlt (%s), naechster Durchlauf", version, ", ".join(missing))
                 return "vorlaeufig"  # vor dem Archiv: die rund 200 MB nicht umsonst holen
             system = paket.manifest.system
-            if system is not None and self._auftrag_unlesbar(state, version):
+            if self._angebot_gesperrt(state, version) or not self._unlesbaren_auftrag_ersetzen(state, version):
                 return "vorlaeufig"
             if system is not None:  # vor dem Archiv und dem System-Bundle: nichts umsonst holen
                 if not self._system_freigabe(state, version, jetzt):
@@ -1184,15 +1190,12 @@ class Updater:
         """Sperrt ein vorhandener, aber nicht lesbarer Systemauftrag (`State.system_roh`) die Container der Version
         `version`? Ja, wenn seine Version `version` ist oder nicht lesbar: ohne Wissen um Phase und Slot darf der Updater
         weder `up(version)` auf dem alten System starten noch die Version abschliessen (current/previous wechseln erst nach
-        der Netzprobe). Der Auftrag bleibt in state.json; die Warnung kommt einmal je Prozess."""
+        der Netzprobe). Das Angebot einer anderen Version sperrt er nicht (R25, `_unlesbaren_auftrag_ersetzen`): Updates
+        muessen ankommen koennen (S-10). Der Auftrag bleibt in state.json; die Warnung kommt einmal je Prozess."""
         roh = state.system_roh
         if roh is None:
             return False
-        gelesen = roh.get("version") if isinstance(roh, dict) else None
-        try:
-            bundles.parse_version(gelesen)
-        except bundles.ManifestError:
-            gelesen = None
+        gelesen = self._roh_version(roh)
         if gelesen is not None and gelesen != version:
             return False
         if not self._unlesbar_gemeldet:
@@ -1200,6 +1203,43 @@ class Updater:
             logger.warning("Systemauftrag in state.json nicht lesbar (Version %s): Container von %s werden weder gestartet "
                            "noch abgeschlossen, der Auftrag bleibt unveraendert", gelesen or "unbekannt", version)
         return True
+
+    @staticmethod
+    def _roh_version(roh: object) -> str | None:
+        gelesen = roh.get("version") if isinstance(roh, dict) else None
+        try:
+            bundles.parse_version(gelesen)
+        except bundles.ManifestError:
+            return None
+        return gelesen
+
+    def _angebot_gesperrt(self, state: State, version: str) -> bool:
+        """Sperrt ein unlesbarer Systemauftrag das Angebot `version`? Nur wenn seine lesbare Version dieselbe ist (R25); ist
+        seine Version nicht lesbar, sperrt er kein Angebot (`_unlesbaren_auftrag_ersetzen`)."""
+        if state.system_roh is None or self._roh_version(state.system_roh) != version:
+            return False
+        if not self._unlesbar_gemeldet:
+            self._unlesbar_gemeldet = True
+            logger.warning("Systemauftrag in state.json nicht lesbar (Version %s): das Angebot derselben Version wartet, der "
+                           "Auftrag bleibt unveraendert", version)
+        return True
+
+    def _unlesbaren_auftrag_ersetzen(self, state: State, version: str) -> bool:
+        """Ein Angebot `version` loest einen unlesbaren Systemauftrag ab (R25): er sperrt nur dieselbe lesbare Version
+        (`_angebot_gesperrt` hat sie schon abgewiesen); fuer jede andere ist er veraltet und wird verworfen, mit WARNING.
+        Haelt er noch einen offenen Auftrag (`in_progress`), wird dieser wie ein Rueckfall ohne Ablehnung zurueckgenommen
+        (die Container des vorigen Bundles laufen wieder; dessen Wiederholung uebernimmt sonst `recover`). False: der
+        Rueckweg scheiterte, der naechste Durchlauf wiederholt ihn."""
+        roh = state.system_roh
+        if roh is None:
+            return True
+        logger.warning("Systemauftrag in state.json (Version %s) ist nicht lesbar und wird durch das Angebot %s ersetzt",
+                       self._roh_version(roh) or "unbekannt", version)
+        state.system_roh = None
+        if state.in_progress is None:
+            state.save(self._state_path)
+            return True
+        return self._rollback(state, state.in_progress["version"], RETRY_REASON, reject=False)
 
     def _recover_system(self, state: State, start: float) -> bool:
         """Nach einem Start: gehoert er einem Systemwechsel? Entscheidend ist die Lage der Startauswahl. True = der
@@ -1255,25 +1295,31 @@ class Updater:
         if system["phase"] == "installiert":
             system["phase"] = "probestart"
             state.save(self._state_path)
-        if system["phase"] == "probestart":
-            missing = self._missing_devices((self._store.dir(version) / "docker-compose.yml").read_text())
-            if missing:  # der alte Slot sah das Geraet im selben Lauf: ein Fehler des neuen Systems (Treiber, udev)
-                logger.error("system_grund=%s: Probestart %s: Geraet fehlt (%s)", START_FEHLGESCHLAGEN, version,
-                             ", ".join(missing))
-                self._zurueck_melden(state, system, START_FEHLGESCHLAGEN, ablehnen=True, probe=True)
-                return
-            try:
-                self._compose.up(version)
-            except bundles.ComposeError as error:
-                logger.error("system_grund=%s: Start von %s gescheitert: %s", START_FEHLGESCHLAGEN, version, error)
-                self._zurueck_melden(state, system, START_FEHLGESCHLAGEN, ablehnen=True, probe=True)
-                return
-            if not self._lokal_gesund(version, start):
-                logger.error("system_grund=%s: %s nach %d s lokal nicht gesund", UNGESUND, version, LOKAL_GESUND_SECONDS)
-                self._zurueck_melden(state, system, UNGESUND, ablehnen=True, probe=True)
-                return
-            system["phase"] = "bestaetigt"
-            state.save(self._state_path)  # vor mark-good: ein Stromausfall dazwischen ist ein Rueckfall ohne Ablehnung
+        if system["phase"] != "probestart":
+            # `installiere` (der Auftrag gehoert nicht zu diesem Start) oder `bestaetigt` (mark-good lief in einem frueheren
+            # Start): ohne die lokale Gesundheit dieses Starts nie mark-good, sondern zurueck (wie ohne passenden Auftrag)
+            logger.error("Probestart von %s in Phase %s: nicht erwartet, schalte zurueck (ohne Meldung)", version,
+                         system["phase"])
+            self._zurueckschalten(probe=True)
+            return
+        missing = self._missing_devices((self._store.dir(version) / "docker-compose.yml").read_text())
+        if missing:  # der alte Slot sah das Geraet im selben Lauf: ein Fehler des neuen Systems (Treiber, udev)
+            logger.error("system_grund=%s: Probestart %s: Geraet fehlt (%s)", START_FEHLGESCHLAGEN, version,
+                         ", ".join(missing))
+            self._zurueck_melden(state, system, START_FEHLGESCHLAGEN, ablehnen=True, probe=True)
+            return
+        try:
+            self._compose.up(version)
+        except bundles.ComposeError as error:
+            logger.error("system_grund=%s: Start von %s gescheitert: %s", START_FEHLGESCHLAGEN, version, error)
+            self._zurueck_melden(state, system, START_FEHLGESCHLAGEN, ablehnen=True, probe=True)
+            return
+        if not self._lokal_gesund(version, start):
+            logger.error("system_grund=%s: %s nach %d s lokal nicht gesund", UNGESUND, version, LOKAL_GESUND_SECONDS)
+            self._zurueck_melden(state, system, UNGESUND, ablehnen=True, probe=True)
+            return
+        system["phase"] = "bestaetigt"
+        state.save(self._state_path)  # vor mark-good: ein Stromausfall dazwischen ist ein Rueckfall ohne Ablehnung
         try:
             self._startauswahl.bestaetigen()
         except StartauswahlFehler as fehler:
@@ -1283,11 +1329,12 @@ class Updater:
         self._netzprobe_und_abschluss(state, system)
 
     def _netzprobe_und_abschluss(self, state: State, system: dict) -> None:
-        """Nach mark-good: der Broker muss NETZPROBE_SECONDS lang erreichbar werden, sonst zurueck (ohne Ablehnung; das
-        System ist bestaetigt, zurueckschalten setzt [all] auf den alten Slot). Bestanden: current/previous wechseln."""
+        """Nach mark-good: der neue Stand muss binnen NETZPROBE_SECONDS den Server erreichen (`/healthz` mit `server_ok` und
+        gesunde Laufzeit, wie beim Container-Update, R24), sonst zurueck (ohne Ablehnung; das System ist bestaetigt,
+        zurueckschalten setzt [all] auf den alten Slot). Bestanden: current/previous wechseln."""
         version = system["version"]
-        if not self._netzprobe():
-            logger.error("system_grund=%s: %s erreicht den Broker nicht, schalte zurueck", RETRY_REASON, version)
+        if not self._netzprobe(version):
+            logger.error("system_grund=%s: %s erreicht den Server nicht, schalte zurueck", RETRY_REASON, version)
             self._zurueck_melden(state, system, RETRY_REASON, ablehnen=False, probe=False)
             return
         self._finish(state, version)
@@ -1321,7 +1368,8 @@ class Updater:
 
     def _rueckfall(self, state: State, system: dict) -> None:
         """Im alten Slot gestartet, Auftrag offen: was ist passiert?
-        - installiere: das System-Bundle wurde nicht fertig installiert; vorlaeufig, neuer Versuch (keine Meldung).
+        - installiere: das System-Bundle wurde nicht fertig installiert; vorlaeufig, neuer Versuch (keine Meldung); die
+          MAX_UNTERBRECHUNGEN-te Unterbrechung in Folge (mit den Fehlern von `rauc install` gezaehlt) lehnt die Version ab.
         - installiert: das neue System kam nie bis zum Updater: Fehlstart, `start_fehlgeschlagen`, abgelehnt.
         - probestart/bestaetigt: Strom weg oder Frist-Timer; Rueckfall ohne Ablehnung, `server_unerreichbar`.
         - zurueck: nach `grund` und `ablehnen`.
@@ -1329,9 +1377,19 @@ class Updater:
         der MAX_RUECKFAELLE-te in Folge lehnt die Version ab. Danach laufen die Container des alten Bundles (`_rollback`)."""
         version, phase = system["version"], system["phase"]
         if phase == "installiere":
-            logger.warning("Installation von %s unterbrochen, neuer Versuch", version)
             state.system = None
-            state.save(self._state_path)
+            state.system_installfehler += 1  # derselbe Zaehler wie die Fehler von `rauc install`
+            if state.system_installfehler < MAX_UNTERBRECHUNGEN:
+                logger.warning("Installation von %s unterbrochen (%d von %d), neuer Versuch", version,
+                               state.system_installfehler, MAX_UNTERBRECHUNGEN)
+                state.save(self._state_path)
+                return
+            # Reisst `rauc install` selbst das System herunter, kaeme sonst alle 15 bis 20 min ein Neustart (T1-10)
+            logger.error("system_grund=%s: Installation von %s zum %d. Mal in Folge unterbrochen, abgelehnt",
+                         MANIFEST_UNGUELTIG, version, state.system_installfehler)
+            state.system_installfehler = 0
+            self._reject(state, version, MANIFEST_UNGUELTIG, *self._installed_angebot(version))
+            self._system_aufraeumen()
             return
         if phase == "installiert":
             grund, ablehnen = START_FEHLGESCHLAGEN, True
@@ -1366,11 +1424,13 @@ class Updater:
                 return False
             self._sleep(HEALTH_POLL_SECONDS)
 
-    def _netzprobe(self) -> bool:
-        """Erreicht der Host den Broker innerhalb von NETZPROBE_SECONDS (monotone Uhr)?"""
+    def _netzprobe(self, version: str) -> bool:
+        """Meldet sich der neue Stand binnen NETZPROBE_SECONDS (monotone Uhr) gesund und mit Serverkontakt (`self._health`,
+        dieselbe Pruefung wie `_wait_healthy`)? Ein Host, der den Broker erreicht, genuegt nicht: die Laufzeit des neuen
+        Stands muss selbst eine Sitzung haben, sonst erreicht sie kein Folge-Release (S-10)."""
         ende = self._clock() + NETZPROBE_SECONDS
         while True:
-            if self._reachable():
+            if self._health(version):
                 return True
             if self._clock() >= ende:
                 return False
@@ -1380,7 +1440,8 @@ class Updater:
         return [path for path in bundles.compose_devices(compose_text) if not self._path_exists(path)]
 
     def _reachable(self) -> bool:
-        """Erreicht der Host den Broker? (Netz und DNS; das neue Bundle spielt dafuer keine Rolle.)"""
+        """Erreicht der Host den Broker? (Netz und DNS; das neue Bundle spielt dafuer keine Rolle.) Voraussetzung eines
+        Systemwechsels und Takt der Gesundheitsfrist des Container-Updates, nicht die Netzprobe (`_netzprobe`)."""
         return self._kanal.erreichbar()
 
     def _wait_healthy(self, version: str) -> str:

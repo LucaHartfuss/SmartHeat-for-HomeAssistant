@@ -1,6 +1,6 @@
 #!/bin/bash
 # Erststart ohne Pull: Images werden wie im Image-Bau exportiert (gateway/image/export_images.sh, danach als
-# <SHA-256>.tar benannt wie in prepare.sh) und in einem Debian-13-Docker OHNE Netz vom echten Erststart
+# <SHA-256>.tar benannt wie in prepare.sh) und in einem Debian-13-Docker (Docker CE, gepinnt wie im Image) OHNE Netz vom echten Erststart
 # (smartheat_host.firstboot start) geladen: je Archiv einmal (Merker host/geladen/<SHA-256>), die Archive bleiben liegen,
 # und Compose startet einen Dienst, der das Image per Index-Digest nennt. Ein zweiter Start laedt nichts mehr und startet
 # das Bundle trotzdem wieder (GPC31). Speicher des Ziel-Dockers wie auf dem Geraet: mit gateway/host/docker-daemon.json, falls
@@ -14,8 +14,26 @@ TEST_IMAGE="shg-firstboot-test:local"
 PLATFORM="linux/$(docker version -f '{{.Server.Arch}}')"
 WORK="$(mktemp -d)"
 trap 'docker run --rm -v "$WORK:/w" --security-opt label=disable "$DEBIAN_IMAGE" rm -rf /w/images >/dev/null 2>&1; rm -rf "$WORK"' EXIT
-printf 'FROM %s\nRUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends docker.io docker-cli docker-compose skopeo ca-certificates python3 python3-cryptography >/dev/null\n' \
-  "$DEBIAN_IMAGE" >"$WORK/Dockerfile"
+# Der Docker des Testimages ist derselbe wie im Gateway-Image: Docker CE aus dem Docker-Archiv, Quelle, Schluessel und exakte
+# Paketversionen aus gateway/image/docker-apt (FR-34), nicht Debians docker.io (26). Der Test braucht dafuer Netz zu
+# download.docker.com (wie schon fuer apt und den Export).
+cp "$REPO/gateway/image/docker-apt/docker.asc" "$REPO/gateway/image/docker-apt/docker.sources" \
+  "$REPO/gateway/image/docker-apt/version" "$WORK/"
+printf 'FROM %s\n' "$DEBIAN_IMAGE" >"$WORK/Dockerfile"
+cat >>"$WORK/Dockerfile" <<'DOCKERFILE'
+COPY docker.asc /usr/share/keyrings/docker.asc
+COPY docker.sources /tmp/docker.sources
+COPY version /tmp/docker-version
+RUN set -e; export DEBIAN_FRONTEND=noninteractive; \
+    apt-get update -qq; \
+    apt-get install -y -qq --no-install-recommends ca-certificates skopeo python3 python3-cryptography >/dev/null; \
+    sed 's/^X-IG-Signed-By:/Signed-By:/' /tmp/docker.sources >/etc/apt/sources.list.d/docker.sources; \
+    apt-get update -qq; \
+    v() { sed -n "s/^$1=//p" /tmp/docker-version; }; \
+    apt-get install -y -qq --no-install-recommends "docker-ce=$(v docker-ce)" "docker-ce-cli=$(v docker-ce-cli)" \
+      "containerd.io=$(v containerd.io)" "docker-compose-plugin=$(v docker-compose-plugin)" >/dev/null; \
+    [ "$(dpkg-query -W -f='${Version}' docker-ce)" = "$(v docker-ce)" ]
+DOCKERFILE
 docker build -q -t "$TEST_IMAGE" "$WORK" >/dev/null || { echo "FAIL: Testimage"; exit 1; }
 daemon="${SHG_TARGET_DAEMON:-$REPO/gateway/host/docker-daemon.json}"
 if [ -f "$daemon" ]; then cp "$daemon" "$WORK/daemon.json"; else echo '{}' >"$WORK/daemon.json"; fi

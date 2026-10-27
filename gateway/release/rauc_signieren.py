@@ -11,7 +11,7 @@ Signieren (RAUC-Referenz "External Signing and PKI"; RAUC 1.13: src/main.c, src/
      ist eine PEM-Datei oder eine `pkcs11:`-URI (dann mit `-provider pkcs11 -provider default`, wie in signieren.py).
   4. `rauc replace-signature` setzt die neue Signatur ein und prueft sie gegen `roots` (--signing-keyring).
   5. `rauc info` prueft das fertige Bundle mit der Konfiguration des Geraets (system.conf.in, Keyring = `roots`, also
-     check-purpose=codesign und compatible), erst dann liegt `ziel` da.
+     check-purpose=codesign), erst dann liegt `ziel` da. `compatible` prueft `rauc info` nicht (erst `rauc install`).
 
 Alle Schritte laufen mit derselben Konfiguration (--conf), weil RAUC ohne sie das Zertifikat-Zweck-Pruefmuster von OpenSSL
 (smimesign) anlegt und ein reines Code-Signing-Blatt ablehnt ("unsuitable certificate purpose"): auch das Wegwerf-Blatt muss
