@@ -1,6 +1,7 @@
 """Werksreset (Regel 4, GP8, GPC9, GW 7.2): Ablauf, Frist, Loeschliste, Unterbrechungen und die Zusage, dass nur der Knopf ihn
 ausloest. Compose, Uhr, Neustart und Journal sind Attrappen; die Dateien liegen in einem echten Ordnerbaum."""
 import contextlib
+import inspect
 import json
 import logging
 import os
@@ -445,12 +446,17 @@ def _teil_loeschen(welt) -> None:
             p.unlink() if p.is_file() else p.rmdir()
 
 
-def test_ein_neuer_reset_bei_liegender_phase_loeschen_fuehrt_sie_zu_ende_statt_sie_zu_ueberschreiben(welt):
+def test_ein_neuer_reset_bei_liegender_phase_loeschen_fuehrt_sie_zu_ende_statt_sie_zu_ueberschreiben(welt, monkeypatch):
     """Der halbe Reset (Phase loeschen, Strom weg oder SIGTERM beim Warten) darf nicht mit `angefordert` ueberschrieben
     werden: ein Verwerfen liesse den Stapel auf teilweise geloeschten Daten starten. Kein Warten, keine neue seq."""
     welt.anfrage("loeschen", seq=7, ursprungswerte=True)
     _teil_loeschen(welt)
+    geschrieben = []
+    echt = werksreset.dateien.schreiben_json
+    monkeypatch.setattr(werksreset.dateien, "schreiben_json",
+                        lambda pfad, *a, **kw: geschrieben.append(Path(pfad).name) or echt(pfad, *a, **kw))
     ergebnis = welt.ausfuehren(warte=lambda bedingung, frist: pytest.fail("kein Warten bei liegender Phase loeschen"))
+    assert "werksreset.json" not in geschrieben  # die liegende Anfrage wird weder ueberschrieben noch neu geschrieben
     assert ergebnis == {"seq": 7, "ts": "2027-01-15T08:00:00+00:00", "ursprungswerte": True, "abgeschlossen": True}
     baum = welt.baum()
     for rel in KUNDENDATEN:
@@ -474,8 +480,11 @@ def test_ein_neuer_reset_bei_unlesbarer_anfrage_loescht_sofort(welt, monkeypatch
         return echt(pfad, *a, **kw)
 
     monkeypatch.setattr(werksreset.lesen, "read_bytes", lesen)
+    beim_down = []  # die Datei, am Host-Test vorbei gelesen: die neue Anfrage in Phase loeschen steht vor dem Anhalten
+    welt.compose.beim_down = lambda: beim_down.append(json.loads((welt.root / "host" / "werksreset.json").read_text()))
     with caplog.at_level(logging.WARNING):
         ergebnis = welt.ausfuehren(warte=lambda bedingung, frist: pytest.fail("kein Warten bei unlesbarer Anfrage"))
+    assert [(a["phase"], a["seq"], a["ursprungswerte"]) for a in beim_down] == [("loeschen", 1, False)]
     assert ergebnis["abgeschlossen"] is True and ergebnis["ursprungswerte"] is False and ergebnis["seq"] == 1
     baum = welt.baum()
     for rel in KUNDENDATEN:
@@ -495,6 +504,44 @@ def test_ein_neuer_reset_bei_fehlender_oder_unbrauchbarer_anfrage_beginnt_wie_im
         (welt.root / "host" / "werksreset.json").write_text(inhalt)
     assert welt.ausfuehren()["abgeschlossen"] is True
     assert welt.fristen == [werksreset.WARTE_SEKUNDEN] and welt.angefordert[0]["phase"] == "angefordert"
+
+
+def test_eine_liegende_phase_angefordert_wird_nicht_wie_loeschen_behandelt(welt):
+    """Gegenprobe zu `loeschen`: eine gueltige liegende Anfrage in Phase `angefordert` (Reset verworfen, Datei geblieben) springt
+    nie ueber das Warten auf die Ursprungswerte; ein neuer Reset beginnt wie immer."""
+    welt.anfrage("angefordert", seq=4)
+    assert welt.ausfuehren()["abgeschlossen"] is True
+    assert welt.fristen == [werksreset.WARTE_SEKUNDEN] and welt.angefordert[0]["phase"] == "angefordert"
+
+
+def test_die_phase_loeschen_steht_vor_dem_anhalten_in_der_datei(welt):
+    """Absicht vor Wirkung: beim `compose down` liegt `host/werksreset.json` schon in der Phase `loeschen` (ein Absturz dort
+    fuehrt der Erststart zu Ende, statt die Anfrage zu verwerfen)."""
+    phasen = []
+    welt.compose.beim_down = lambda: phasen.append(json.loads((welt.root / "host" / "werksreset.json").read_text())["phase"])
+    welt.ausfuehren()
+    assert phasen == ["loeschen"]
+
+
+@pytest.mark.parametrize(("antwort", "text"), [(True, "zurueckgesetzt: ja"), (False, "zurueckgesetzt: nein")])
+def test_das_ergebnis_steht_im_protokoll_und_im_journal(welt, caplog, antwort, text):
+    welt.antwort = antwort
+    with caplog.at_level(logging.WARNING):
+        welt.ausfuehren()
+    assert welt.protokoll()[0]["journal"] is True  # das Journal wurde geleert
+    assert text in caplog.text
+
+
+def test_beginnt_ein_systemwechsel_waehrend_des_wartens_nennt_die_abweisung_die_phase(welt, caplog):
+    def warte(bedingung, frist):
+        state = updater.State.load(welt.root / "updater" / "state.json")
+        state.system = {"phase": "installiere", "version": "0.9.1", "slot_alt": "A"}
+        state.save(welt.root / "updater" / "state.json")
+        return False
+
+    with caplog.at_level(logging.WARNING), pytest.raises(werksreset.Abgewiesen, match="Phase installiere"):
+        welt.ausfuehren(warte=warte)
+    assert "Phase installiere" in caplog.text and welt.compose.downs == []
 
 
 # --- Abweisung ---
@@ -541,6 +588,11 @@ def test_warten_prueft_im_takt_bis_zur_frist():
     assert schlaf == [1.0, 1.0, 0.5] and len(versuche) == 4  # nie ueber die Frist hinaus
 
 
+def test_warten_prueft_standardmaessig_jede_sekunde():
+    """Der Takt, in dem der Host auf die Antwort des Containers schaut (GPC9: hoechstens 120 s)."""
+    assert inspect.signature(werksreset.warten).parameters["takt"].default == 1.0 == werksreset.WARTE_TAKT_SEKUNDEN
+
+
 def test_warten_endet_sobald_die_bedingung_gilt():
     gilt = iter([False, False, True])
     assert werksreset.warten(lambda: next(gilt), 120.0, uhr=lambda: 0.0, schlaf=lambda s: None) is True
@@ -560,11 +612,11 @@ def test_warten_ueberschreitet_die_frist_nie(frist, takt):
 
 def test_neustart_und_journal_rufen_systemctl_und_journalctl(monkeypatch):
     aufrufe = []
-    monkeypatch.setattr(werksreset.subprocess, "run", lambda cmd, **kw: aufrufe.append((cmd, kw["timeout"], kw["check"])))
+    monkeypatch.setattr(werksreset.subprocess, "run", lambda cmd, **kw: aufrufe.append((cmd, kw["timeout"], kw["check"], kw["capture_output"])))
     werksreset.neustart_systemd()
     werksreset.journal_leeren_systemd()
-    assert aufrufe == [(["systemctl", "reboot"], 30.0, True), (["journalctl", "--rotate"], 60.0, True),
-                       (["journalctl", "--vacuum-time=1s"], 60.0, True)]
+    assert aufrufe == [(["systemctl", "reboot"], 30.0, True, True), (["journalctl", "--rotate"], 60.0, True, True),
+                       (["journalctl", "--vacuum-time=1s"], 60.0, True, True)]
 
 
 # --- Verdrahtung im Knopf-Dienst ---
