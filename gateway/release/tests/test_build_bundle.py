@@ -10,7 +10,15 @@ import pytest
 import yaml
 from oci_helper import ANNOTATION, make_oci_archive
 
-from build_bundle import GATEWAY_SERVICES, MIN_UPDATER_VERSION, build, main, oci_digest, render_compose
+from build_bundle import (
+    GATEWAY_SERVICES,
+    MIN_UPDATER_VERSION,
+    build,
+    main,
+    min_updater_version,
+    oci_digest,
+    render_compose,
+)
 from smartheat_host import bundles
 
 GW = Path(__file__).resolve().parents[2]
@@ -105,6 +113,67 @@ def test_build_schreibt_archiv_und_manifest(tmp_path, archive):
     text = (out / "docker-compose.yml").read_text()
     assert yaml.safe_load(text)["services"]["runtime"]["image"] == ref
     bundles.check_compose(text, parsed.archiv)
+
+
+def test_min_updater_version_ist_0_8_0_ohne_und_0_9_0_mit_system():
+    """Der Updater 0.8.0 des Labor-Pi 4 nimmt Container-Bundles ohne Systemteil weiter an; mit `system` verlangt das Bundle
+    den Updater, der den Systemwechsel kennt."""
+    assert min_updater_version(False) == "0.8.0" and min_updater_version(True) == "0.9.0"
+
+
+@pytest.fixture
+def system_datei(tmp_path):
+    pfad = tmp_path / "gateway.raucb"
+    pfad.write_bytes(b"signiertes-rauc-bundle" * 100)
+    return pfad
+
+
+def test_build_mit_system_bindet_die_datei_im_manifest(tmp_path, archive, system_datei):
+    out = tmp_path / "out"
+    manifest = build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out, system_datei)
+    parsed = bundles.parse_manifest((out / "manifest.json").read_bytes())  # das Geraet nimmt genau dieses Manifest an
+    assert parsed.min_updater_version == "0.9.0"
+    assert sorted(p.name for p in out.iterdir()) == ["docker-compose.yml", "gateway-image.oci.tar", "manifest.json",
+                                                     "mosquitto.conf", "system.raucb"]
+    assert (out / "system.raucb").read_bytes() == system_datei.read_bytes()
+    assert manifest["system"] == {"datei": "system.raucb", "sha256": hashlib.sha256(system_datei.read_bytes()).hexdigest(),
+                                  "groesse": system_datei.stat().st_size, "compatible": "smartheat-gateway-pi5"}
+    assert parsed.system == bundles.SystemBundle(
+        "system.raucb", manifest["system"]["sha256"], system_datei.stat().st_size, bundles.SYSTEM_COMPATIBLE)
+    assert bundles.SYSTEM_COMPATIBLE == "smartheat-gateway-pi5"
+
+
+def test_build_ohne_system_hat_kein_system_feld_und_0_8_0(tmp_path, archive):
+    manifest = build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out")
+    assert "system" not in manifest and manifest["min_updater_version"] == "0.8.0"
+    assert not (tmp_path / "out" / "system.raucb").exists()
+
+
+def test_build_mit_system_ist_reproduzierbar(tmp_path, archive, system_datei):
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "a", system_datei)
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "b", system_datei)
+    for name in ("manifest.json", "system.raucb"):
+        assert (tmp_path / "a" / name).read_bytes() == (tmp_path / "b" / name).read_bytes()
+
+
+def test_build_mit_fehlendem_system_hinterlaesst_nichts(tmp_path, archive):
+    with pytest.raises(OSError):
+        build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", tmp_path / "gibt-es-nicht.raucb")
+    assert not (tmp_path / "out").exists()
+
+
+def test_build_mit_zu_grossem_system_wird_abgelehnt(tmp_path, archive, system_datei, monkeypatch):
+    monkeypatch.setattr(bundles, "MAX_SYSTEM_BYTES", system_datei.stat().st_size - 1)
+    with pytest.raises(bundles.ManifestError, match="system.groesse"):
+        build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", system_datei)
+    assert not (tmp_path / "out").exists()
+
+
+def test_cli_mit_system(tmp_path, archive, system_datei):
+    code = main(["--compose", str(COMPOSE), "--mosquitto-conf", str(MOSQUITTO_CONF), "--archive", str(archive),
+                 "--system", str(system_datei), "--version", "1.2.3", "--out", str(tmp_path / "out")])
+    assert code == 0 and (tmp_path / "out" / "system.raucb").is_file()
+    assert bundles.parse_manifest((tmp_path / "out" / "manifest.json").read_bytes()).system is not None
 
 
 def test_das_archiv_im_bundle_traegt_den_namen_unter_dem_der_docker_es_findet(tmp_path, archive):

@@ -52,6 +52,29 @@ def test_open_updater_job_only_loads(root):
     assert compose.ups == [] and list((root / "images").iterdir()) == []
 
 
+SYSTEM_AUFTRAG = {"version": "0.3.1", "phase": "installiere", "slot_alt": "A", "seit": None, "grund": None, "ablehnen": None}
+
+
+def test_firstboot_startet_nichts_bei_offenem_systemauftrag(root):
+    """Ein offener Systemwechsel (Phase `installiere`, noch ohne in_progress) gehoert dem Updater: der Erststart laedt nur."""
+    updater.State(current="0.3.0", system=dict(SYSTEM_AUFTRAG)).save(root / "updater" / "state.json")
+    compose, loaded = FakeCompose(), []
+    assert firstboot.run(root, compose, load=lambda p: loaded.append(p.name), path_exists=lambda p: False) == 0
+    assert loaded == ["01.tar", "02.tar"] and compose.ups == []
+    assert list((root / "images").iterdir()) == []
+
+
+def test_firstboot_startet_nichts_wenn_der_systemauftrag_waehrend_des_ladens_beginnt(root):
+    """Wie der Auftrag mit in_progress: eroeffnet der Updater den Systemwechsel erst waehrend des Ladens, startet der
+    Erststart danach nichts."""
+    def laden(archiv):
+        updater.State(current="0.3.0", system=dict(SYSTEM_AUFTRAG)).save(root / "updater" / "state.json")
+
+    compose = FakeCompose()
+    assert firstboot.run(root, compose, load=laden, path_exists=lambda p: True) == 0
+    assert compose.ups == []
+
+
 def test_without_current_bundle_only_loads(root):
     updater.State().save(root / "updater" / "state.json")
     loaded, compose = [], FakeCompose()

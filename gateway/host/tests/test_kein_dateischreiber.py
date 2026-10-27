@@ -36,7 +36,7 @@ AUSNAHMEN = {
            "dateien.schreiben nimmt nur Bytes im Speicher; fsync am Ende von fetch_url_to_file"),
     ("updater.py", "os.replace"): (
         2, "fetch_url_to_file (um Zeile 599): <ziel>.part wird erst nach vollstaendigem Abruf zu <ziel>; "
-           "_hole_archiv (um Zeile 919): ein zu kurz beendeter Abruf wird wieder zum .part, das der naechste Durchlauf "
+           "_hole_datei (um Zeile 1051): ein zu kurz beendeter Abruf wird wieder zum .part, das der naechste Durchlauf "
            "fortsetzt; beide innerhalb von archive/, nie unter bundles/"),
     ("startauswahl.py", "os.replace"): (
         1, "schreibe_primaer (um Zeile 108): /bootfs/autoboot.txt (FAT) wird ueber autoboot.txt.neu, fsync, rename, fsync "

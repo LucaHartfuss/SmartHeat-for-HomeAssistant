@@ -3,7 +3,10 @@ und Compose-Aufrufe. Ein Bundle = Compose-Datei (nur Images mit Digest) + mosqui
 zusaetzlich manifest.json und manifest.json.sig (Nachweis, was signiert war; exists() verlangt sie nicht, damit
 aeltere Ordner gueltig bleiben). Das eigene Container-Image kommt als OCI-Archiv neben dem Bundle (Manifest-Feld
 `archiv`, Ablage archive/<version>.oci.tar ausserhalb von bundles/, das install() loescht): das Geraet laedt es mit
-`docker load` und startet es ueber `smartheat-gateway@<Index-Digest>` mit `pull_policy: never`, ohne Registry."""
+`docker load` und startet es ueber `smartheat-gateway@<Index-Digest>` mit `pull_policy: never`, ohne Registry. Ein Bundle
+kann zusaetzlich ein System-Bundle (RAUC) tragen (optionales Manifest-Feld `system`, Ablage
+updater/system/<version>.raucb ausserhalb von bundles/): Datei, SHA-256, Groesse und `compatible` stehen im signierten
+Manifest, das Geraet vergleicht `compatible` mit dem seiner system.conf."""
 import json
 import os
 import re
@@ -18,9 +21,13 @@ SIGNATURE_NAME = "manifest.json.sig"
 ARCHIVE_NAME = "gateway-image.oci.tar"  # Dateiname des Archivs im Bundle der Betreiber und im Manifest
 ARCHIVE_IMAGE = "smartheat-gateway"  # Name des eigenen Images (Teil von name@digest in der Compose-Datei)
 MAX_ARCHIVE_BYTES = 536870912  # 512 MiB
+SYSTEM_NAME = "system.raucb"  # Dateiname des System-Bundles im Bundle der Betreiber und im Manifest
+SYSTEM_COMPATIBLE = "smartheat-gateway-pi5"  # `compatible` der system.conf des Images (rauc/system.conf.in)
+MAX_SYSTEM_BYTES = 2147483648  # 2 GiB
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 _SHA = re.compile(r"[0-9a-f]{64}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_COMPATIBLE = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _IMAGE = re.compile(r"^\s*image:\s*(.*?)\s*$", re.MULTILINE)
 _PINNED_IMAGE = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}")
 _BUILD = re.compile(r"^\s*build:", re.MULTILINE)
@@ -65,12 +72,23 @@ class Archiv:
 
 
 @dataclass(frozen=True)
+class SystemBundle:
+    """Das RAUC-System-Bundle laut Manifest: Datei im Bundle-Ordner des Anbieters, SHA-256 und Groesse der Datei und das
+    `compatible`, das die system.conf des Geraets verlangt."""
+    datei: str
+    sha256: str
+    groesse: int
+    compatible: str
+
+
+@dataclass(frozen=True)
 class Manifest:
     version: str
     min_updater_version: str
     files: dict[str, str]
     images: dict[str, str]
     archiv: Archiv
+    system: SystemBundle | None = None
 
 
 def parse_version(text) -> tuple[int, int, int]:
@@ -97,7 +115,8 @@ def parse_manifest(raw: bytes) -> Manifest:
         raise ManifestError("Manifest: SHA-256 der Dateien ungueltig")
     if not isinstance(images, dict) or not all(isinstance(ref, str) and "@sha256:" in ref for ref in images.values()):
         raise ManifestError("Manifest: Images ohne Digest")
-    return Manifest(version, minimum, dict(files), dict(images), _parse_archiv(archiv))
+    system = _parse_system(data["system"]) if "system" in data else None
+    return Manifest(version, minimum, dict(files), dict(images), _parse_archiv(archiv), system)
 
 
 def _parse_archiv(value) -> Archiv:
@@ -116,6 +135,22 @@ def _parse_archiv(value) -> Archiv:
     if not (isinstance(digest, str) and _DIGEST.fullmatch(digest)):
         raise ManifestError("Manifest: archiv.digest muss sha256:<64 Hex> sein")
     return Archiv(datei, sha, size, name, digest)
+
+
+def _parse_system(value) -> SystemBundle:
+    keys = ("datei", "sha256", "groesse", "compatible")
+    if not isinstance(value, dict) or set(value) != set(keys):
+        raise ManifestError(f"Manifest: system muss genau {', '.join(keys)} nennen")
+    datei, sha, size, compatible = (value[key] for key in keys)
+    if datei != SYSTEM_NAME:
+        raise ManifestError(f"Manifest: system.datei muss {SYSTEM_NAME} sein")
+    if not (isinstance(sha, str) and _SHA.fullmatch(sha)):
+        raise ManifestError("Manifest: SHA-256 des System-Bundles ungueltig")
+    if not (isinstance(size, int) and not isinstance(size, bool) and 0 < size <= MAX_SYSTEM_BYTES):
+        raise ManifestError(f"Manifest: system.groesse muss zwischen 1 und {MAX_SYSTEM_BYTES} liegen")
+    if not (isinstance(compatible, str) and _COMPATIBLE.fullmatch(compatible)):
+        raise ManifestError("Manifest: system.compatible ungueltig")
+    return SystemBundle(datei, sha, size, compatible)
 
 
 def compose_images(text: str) -> list[str]:
@@ -237,6 +272,22 @@ class BundleStore:
     def archive_path(self, version: str) -> Path:
         """Ablage des Image-Archivs bis zum Laden; neben bundles/, weil install() den Ordner einer Version loescht."""
         return self.root / "archive" / f"{version}.oci.tar"
+
+    def system_path(self, version: str) -> Path:
+        """Ablage des System-Bundles bis zur Bestaetigung (oder Ablehnung, Rueckfall); unter updater/, nicht unter archive/,
+        weil RAUC die Datei liest (root, nicht gruppen- oder fremdschreibbar)."""
+        return self.root / "updater" / "system" / f"{version}.raucb"
+
+    def clean_system(self, version: str | None) -> None:
+        """Entfernt alle Dateien in updater/system/ ausser dem System-Bundle (und seiner .part-Datei) der Version, die gerade
+        geholt wird (`None`: alle)."""
+        keep = set() if version is None else {self.system_path(version).name, self.system_path(version).name + ".part"}
+        folder = self.root / "updater" / "system"
+        if not folder.is_dir():
+            return
+        for path in folder.iterdir():
+            if path.is_file() and path.name not in keep:
+                path.unlink()
 
     def clean_archives(self, version: str | None) -> None:
         """Entfernt alle Dateien in archive/ ausser dem Archiv (und seiner .part-Datei) der Version, die gerade geholt

@@ -18,7 +18,11 @@ Zustand in updater/state.json (atomar, 0644), Format:
      "zertifikat_untergrenze": str|null,
      "in_progress": {"version": str, "previous": str|null, "since": float, "zertifikat_ab": str (optional),
                      "rollback": str (optional), "reject": false (optional)}|null,
-     "pending_reports": [{"version": str, "result": str, "reason": str}]}
+     "pending_reports": [{"version": str, "result": str, "reason": str}],
+     "system": {"version": str, "phase": "installiere"|"installiert"|"probestart"|"bestaetigt"|"zurueck",
+                "slot_alt": "A"|"B", "seit": ISO-Zeit|null, "grund": str|null, "ablehnen": bool|null}|null,
+     "system_abstand": {"version": str, "rueckfaelle": int, "naechster_versuch": ISO-Zeit|null}|null,
+     "system_installfehler": int}
 
 in_progress wird vor `compose up` geschrieben und uebersteht einen Stromausfall: recover() startet das Bundle dann
 erneut (up ist idempotent) und wartet auf Gesundheit. Ist "rollback" gesetzt (Grund), scheiterte der Rueckweg auf
@@ -30,6 +34,12 @@ Abschnitt 4); anderer Leerraum im Signaturtext oder die zweite ECDSA-Form (s -> 
 rejected_context (Version des Updaters und Kennung des Schluesselbunds aus release-roots.pem, kette.roots_identity,
 oder "placeholder"): aendert sich eines von beiden, wird rejected geleert (ein neuer Updater oder der echte
 Schluesselbund darf es neu versuchen).
+
+Systemteil (GW 6.3): traegt das Manifest ein System-Bundle (Feld `system`, RAUC), wechselt der Updater zuerst das System
+(A/B, Startauswahl), die Container folgen im neuen System. Phasen in `system.phase`, gespeichert **vor** jeder Wirkung
+(mark-good, mark-bad, Neustart): installiere -> installiert -> (Neustart mit tryboot) -> probestart -> bestaetigt -> fertig,
+oder zurueck (mit grund und ablehnen). `current`/`previous` wechseln erst nach bestandener Netzprobe. Fristen laufen in
+einem Start auf der monotonen Uhr, ueber Neustarts tragen nur Phase und Wanduhr-Abstand (`system_abstand`).
 
 Zeit und Widerruf (SG-04, FR-25): ein Update wird nur mit synchroner Uhr versucht (uhr(), `zeit_aus_status`: Hoststatus
 meldet zeit_synchron und ist hoechstens 15 min alt); sonst "wartet_auf_zeit", ohne Abruf und ohne Ablehnung.
@@ -50,6 +60,7 @@ Umgebung ist kein Fehler des Bundles:
   geschrieben werden kann (Datentraeger), wird zu Beginn des naechsten Durchlaufs vor allem anderen erneut gesendet, in
   Reihenfolge (mindestens einmal: ein Stromausfall zwischen Senden und Speichern sendet doppelt). Die Laufzeit sendet
   jede Meldung als up/result (dokument software) genau einmal je seq (smartheat_host.kanal)."""
+import contextlib
 import errno
 import functools
 import hashlib
@@ -62,13 +73,14 @@ import random
 import re
 import socket
 import ssl
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -77,6 +89,7 @@ from smartheat_core import dateien
 
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_host import bundles, kanal, kette
+from smartheat_host.startauswahl import RaucTryboot, Startauswahl, StartauswahlFehler
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +128,15 @@ STATUS_MAX_VORSPRUNG = timedelta(minutes=1)  # so weit darf ts vor der Uhr liege
 WARTET_AUF_ZEIT = "wartet_auf_zeit"
 _HEALTHY, _UNHEALTHY, _UNREACHABLE = "gesund", "ungesund", "unerreichbar"
 REQUIRED_HEALTHY = ("runtime",)
+LOKAL_GESUND_SECONDS = 600  # lokale Gesundheit im Probestart: fest ab dem Start des Updaters, ohne Verlaengerung
+NETZPROBE_SECONDS = 600
+SYSTEM_PHASEN = ("installiere", "installiert", "probestart", "bestaetigt", "zurueck")
+MAX_RUECKFAELLE = 3  # der dritte Rueckfall ohne Ablehnung derselben Version in Folge lehnt sie ab
+ABSTAND_GRUND_SECONDS = 3600
+ABSTAND_MAX_SECONDS = 86400
+MAX_INSTALLFEHLER = 2  # der zweite gescheiterte `rauc install` in Folge lehnt die Version ab
+#: Host-Dienste, die im Probestart laufen muessen (ohne die LED: sie ist keine Voraussetzung der Regelung)
+HOST_DIENSTE = ("docker.service", "smartheat-hoststatus.service", "smartheat-firewall.service")
 
 
 class FetchError(Exception):
@@ -180,6 +202,43 @@ def zeit_aus_status(status_datei: Path, jetzt: Callable[[], datetime] = lambda: 
     return zeit
 
 
+def _system_auftrag(value) -> dict | None:
+    """Systemauftrag aus der Zustandsdatei (lokale Eingabe): Version im Format X.Y.Z, bekannte Phase, Slot A oder B; in der
+    Phase `zurueck` zusaetzlich ein Grund aus REASONS und `ablehnen`. Sonst None (kaputt gilt als fehlend)."""
+    if not isinstance(value, dict):
+        return None
+    version, phase, slot = value.get("version"), value.get("phase"), value.get("slot_alt")
+    try:
+        bundles.parse_version(version)
+    except bundles.ManifestError:
+        return None
+    if phase not in SYSTEM_PHASEN or slot not in ("A", "B"):
+        return None
+    grund, ablehnen = value.get("grund"), value.get("ablehnen")
+    if phase == "zurueck" and not (grund in REASONS and isinstance(ablehnen, bool)):
+        return None
+    return {"version": version, "phase": phase, "slot_alt": slot, "seit": _zeit_text(value.get("seit")),
+            "grund": grund if grund in REASONS else None, "ablehnen": ablehnen if isinstance(ablehnen, bool) else None}
+
+
+def _system_abstand(value) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    version, anzahl = value.get("version"), value.get("rueckfaelle")
+    if not (isinstance(version, str) and isinstance(anzahl, int) and not isinstance(anzahl, bool) and anzahl > 0):
+        return None
+    return {"version": version, "rueckfaelle": anzahl, "naechster_versuch": _zeit_text(value.get("naechster_versuch"))}
+
+
+def abstand_sekunden(rueckfaelle: int) -> int:
+    """Abstand bis zum naechsten Systemwechsel nach dem n-ten Rueckfall ohne Ablehnung: 3600 * 2^(n-1) s, hoechstens 86400 s."""
+    return min(ABSTAND_GRUND_SECONDS * 2 ** min(max(rueckfaelle, 1) - 1, 5), ABSTAND_MAX_SECONDS)
+
+
+_STATE_FELDER = ("current", "previous", "rejected", "in_progress", "rejected_context", "pending_reports",
+                 "zertifikat_untergrenze", "system", "system_abstand", "system_installfehler")
+
+
 @dataclass
 class State:
     current: str | None = None
@@ -189,6 +248,10 @@ class State:
     rejected_context: dict | None = None
     pending_reports: list[dict] = field(default_factory=list)
     zertifikat_untergrenze: str | None = None
+    system: dict | None = None
+    system_abstand: dict | None = None
+    system_installfehler: int = 0
+    unbekannt: dict = field(default_factory=dict)  # Felder, die dieser Updater nicht kennt: `save` erhaelt sie (GPC24)
 
     @classmethod
     def load(cls, path: Path) -> "State":
@@ -202,14 +265,21 @@ class State:
             context = data.get("rejected_context")  # fehlt in aelteren Dateien
             if not (isinstance(context, dict) and all(isinstance(value, str) for value in context.values())):
                 context = None
-            return cls(_text_or_none(data.get("current")), _text_or_none(data.get("previous")), rejected, in_progress,
-                       context, _report_entries(data.get("pending_reports")),
-                       _zeit_text(data.get("zertifikat_untergrenze")))
+            fehler = data.get("system_installfehler")
+            return cls(
+                current=_text_or_none(data.get("current")), previous=_text_or_none(data.get("previous")),
+                rejected=rejected, in_progress=in_progress, rejected_context=context,
+                pending_reports=_report_entries(data.get("pending_reports")),
+                zertifikat_untergrenze=_zeit_text(data.get("zertifikat_untergrenze")),
+                system=_system_auftrag(data.get("system")), system_abstand=_system_abstand(data.get("system_abstand")),
+                system_installfehler=fehler if isinstance(fehler, int) and not isinstance(fehler, bool) and fehler > 0 else 0,
+                unbekannt={key: value for key, value in data.items() if key not in _STATE_FELDER})
         except (OSError, ValueError, AttributeError, TypeError):
             return cls()
 
     def save(self, path: Path) -> None:
-        dateien.schreiben_json(path, asdict(self), modus=dateien.LESBAR)
+        dateien.schreiben_json(path, {**self.unbekannt, **{name: getattr(self, name) for name in _STATE_FELDER}},
+                               modus=dateien.LESBAR)
 
 
 _REDIRECT_REFUSED = "Weiterleitung auf ein Schema, das nicht erlaubt ist (nur https)"
@@ -610,14 +680,29 @@ def fetch_health(url: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def health_ok(data: dict | None, containers: dict[str, str]) -> bool:
-    """Gesund: Serverkontakt laut /healthz, Laufzeit nicht im Zustand "startet"
-    und der Compose-Healthcheck der Laufzeit meldet "healthy". Der Healthcheck der Laufzeit (Lebenszeichen
-    der Konfigurationswache) unterscheidet eine ruhende ("nicht eingerichtet": Status abgeraeumt, runtime_status None)
-    von einer abstuerzenden Laufzeit."""
-    if not isinstance(data, dict) or data.get("server_ok") is not True or data.get("runtime_status") == "startet":
+def health_ok(data: dict | None, containers: dict[str, str], *, mit_server: bool = True) -> bool:
+    """Gesund: Serverkontakt laut /healthz (nicht mit `mit_server=False`: lokale Gesundheit im Probestart), Laufzeit nicht
+    im Zustand "startet" und der Compose-Healthcheck der Laufzeit meldet "healthy". Der Healthcheck der Laufzeit
+    (Lebenszeichen der Konfigurationswache) unterscheidet eine ruhende ("nicht eingerichtet": Status abgeraeumt,
+    runtime_status None) von einer abstuerzenden Laufzeit."""
+    if not isinstance(data, dict) or data.get("runtime_status") == "startet":
+        return False
+    if mit_server and data.get("server_ok") is not True:
         return False
     return all(containers.get(name) == "healthy" for name in REQUIRED_HEALTHY)
+
+
+def host_dienste_aktiv(run=subprocess.run) -> bool:
+    """Sind alle HOST_DIENSTE aktiv? (`systemctl is-active` je Dienst: bei mehreren Diensten genuegt ihm einer.) Ein
+    fehlendes systemctl oder eine abgelaufene Frist gilt als nein."""
+    for dienst in HOST_DIENSTE:
+        try:
+            if run(["systemctl", "is-active", "--quiet", dienst], capture_output=True, check=False,
+                   timeout=10).returncode != 0:
+                return False
+        except (OSError, subprocess.SubprocessError):
+            return False
+    return True
 
 
 def _roots_identity(roots_text: str) -> str:
@@ -649,6 +734,17 @@ def _hoehere_untergrenze(bisher: str | None, neu: object) -> str | None:
     return neue_zeit.isoformat()
 
 
+def _untergrenze_version(current: str | None, host: str) -> str:
+    """Die Version, unter der kein Angebot angenommen wird: die hoehere von `current` und der Version des laufenden
+    Host-Pakets (A7-22: ohne state.json, nach einem Werksreset oder auf einem frisch bespielten Gateway gilt sie allein)."""
+    try:
+        if current is not None and bundles.parse_version(current) > bundles.parse_version(host):
+            return current
+    except bundles.ManifestError:
+        pass
+    return host
+
+
 def _older_or_equal(version: str, current: str | None) -> bool:
     """Downgrade-Schutz: nur streng neuere Soll-Versionen. Der eigene Rueckweg (_rollback auf
     previous) ist davon unberuehrt; unlesbare Versionen entscheidet die Manifest-Pruefung."""
@@ -678,8 +774,11 @@ class Updater:
                  docker_load: Callable[[Path], None] = bundles.docker_load,
                  clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep, allow_http: bool = False,
-                 health_seconds: float = HEALTH_SECONDS, path_exists: Callable[[str], bool] = os.path.exists) -> None:
+                 health_seconds: float = HEALTH_SECONDS, path_exists: Callable[[str], bool] = os.path.exists,
+                 startauswahl: Startauswahl, lokal_health: Callable[[str], bool]) -> None:
         self._kanal, self._store, self._compose, self._fetch = kanal, store, compose, fetch
+        self._startauswahl, self._lokal_health = startauswahl, lokal_health
+        self._probestart_angefordert: str | None = None  # Version, fuer die dieser Prozess den Neustart schon angefordert hat
         self._fetch_datei, self._docker_load = fetch_datei, docker_load
         self._uhr, self._state_path, self._version = uhr, state_path, version
         self._health, self._clock, self._sleep, self._allow_http = health, clock, sleep, allow_http
@@ -701,9 +800,11 @@ class Updater:
     # --- Ablauf ---
 
     def recover(self) -> None:
-        """Nach einem Neustart: siehe `_recover`; ein Dateifehler wird geloggt und beendet den Aufruf."""
+        """Nach einem Neustart: siehe `_recover`; ein Dateifehler wird geloggt und beendet den Aufruf. Die Frist der lokalen
+        Gesundheit im Probestart beginnt hier, vor allem anderen."""
+        start = self._clock()
         try:
-            self._recover()
+            self._recover(start)
         except OSError as error:
             self._file_error("recover", error)
 
@@ -724,12 +825,15 @@ class Updater:
         logger.error("%s: Dateifehler %s (%s), Durchlauf vorlaeufig, naechster Durchlauf versucht es erneut", where, name,
                      error.strerror or error)
 
-    def _recover(self) -> None:
+    def _recover(self, start: float) -> None:
         """Nach einem Neustart: ein unterbrochenes Update zu Ende bringen oder zuruecknehmen. Nach einem Stromausfall
         laufen eventuell noch die alten Container (restart: unless-stopped) und wirken gesund; deshalb wird das neue
-        Bundle erst erneut hochgefahren (up ist idempotent), bevor die Gesundheit zaehlt."""
+        Bundle erst erneut hochgefahren (up ist idempotent), bevor die Gesundheit zaehlt. Ein Systemwechsel (`system`)
+        geht vor: `_recover_system` entscheidet nach der Lage der Startauswahl."""
         state = self._load()
         self._flush(state)  # offene Meldungen vor allen neuen
+        if self._recover_system(state, start):
+            return
         progress = state.in_progress
         if not progress:
             return
@@ -784,8 +888,10 @@ class Updater:
             logger.warning("Update %s wartet: die Uhr (%s) steht vor dem juengsten angenommenen Zertifikat (%s)", version,
                            jetzt.isoformat(), untergrenze.isoformat())
             return WARTET_AUF_ZEIT
-        if _older_or_equal(version, state.current):
-            logger.error("Soll-Version %s ist nicht neuer als %s, abgelehnt (Downgrade-Schutz)", version, state.current)
+        untergrenze_version = _untergrenze_version(state.current, self._version)
+        if _older_or_equal(version, untergrenze_version):
+            logger.error("Soll-Version %s ist nicht neuer als %s, abgelehnt (Downgrade-Schutz)", version,
+                         untergrenze_version)
             self._reject(state, version, VERSION_ZU_ALT, manifest_sha, signatur)
             return "abgelehnt"
         try:
@@ -794,9 +900,18 @@ class Updater:
             if missing:  # z. B. Zigbee-Stick abgezogen: up und Rueckweg scheiterten beide, kein Fehler des Bundles
                 logger.warning("Bundle %s wartet: Geraet fehlt (%s), naechster Durchlauf", version, ", ".join(missing))
                 return "vorlaeufig"  # vor dem Archiv: die rund 200 MB nicht umsonst holen
+            system = paket.manifest.system
+            if system is not None:  # vor dem Archiv und dem System-Bundle: nichts umsonst holen
+                if not self._system_freigabe(state, version, jetzt):
+                    return "vorlaeufig"
+                self._system_pruefen(system)
             self._image_bereitstellen(paket, version)
+            system_datei = None if system is None else self._system_bereitstellen(system, paket.basis_url, version)
         except FetchError as error:
             logger.warning("Bundle %s nicht ladbar (%s), naechster Durchlauf", version, error)
+            return "vorlaeufig"
+        except StartauswahlFehler as fehler:  # compatible des Geraets nicht lesbar: kein Fehler des Angebots
+            logger.warning("Systemwechsel auf %s wartet: Startauswahl nicht lesbar (%s)", version, fehler)
             return "vorlaeufig"
         except bundles.LoadError as error:  # Datentraeger voll, Daemon beschaeftigt: kein Fehler des Angebots
             logger.error("Image von %s nicht geladen (%s), naechster Durchlauf", version, error)
@@ -804,8 +919,11 @@ class Updater:
         except _Refused as refused:
             logger.error("Bundle %s abgelehnt: %s", version, refused)
             self._reject(state, version, refused.reason, manifest_sha, signatur)
+            self._system_aufraeumen()
             return "abgelehnt"
         zertifikat = paket.zertifikat
+        if system_datei is not None:
+            return self._system_wechsel(state, paket, system_datei, jetzt, manifest_sha, signatur)
         self._store.install(version, paket.files)  # erst nach allen Pruefungen, atomar
         try:
             self._compose.pull(version)
@@ -914,23 +1032,310 @@ class Updater:
         pfad.unlink()
 
     def _hole_archiv(self, url: str, archiv: bundles.Archiv, pfad: Path) -> None:
+        self._hole_datei(url, archiv.bytes, archiv.sha256, pfad, "Archiv", "des Archivs")
+
+    def _hole_datei(self, url: str, groesse: int, sha256: str, pfad: Path, was: str, des: str) -> None:
+        """Holt eine grosse Datei des Manifests (Archiv, System-Bundle) nach `pfad` mit der Frist nach Groesse; Fortsetzen
+        nach Abbruch, Groesse und SHA-256 gegen das signierte Manifest (zu gross oder falsch: MANIFEST_UNGUELTIG, nichts
+        bleibt liegen)."""
         teil = pfad.with_name(pfad.name + ".part")
         fortgesetzt = teil.exists()
         try:
-            sha = self._fetch_datei(url, archiv.bytes, pfad, archiv_frist(archiv.bytes))
+            sha = self._fetch_datei(url, groesse, pfad, archiv_frist(groesse))
         except TooLarge:
             teil.unlink(missing_ok=True)
             pfad.unlink(missing_ok=True)
-            raise _Refused(MANIFEST_UNGUELTIG, f"Archiv ist groesser als im Manifest ({archiv.bytes} Byte)") from None
+            raise _Refused(MANIFEST_UNGUELTIG, f"{was} ist groesser als im Manifest ({groesse} Byte)") from None
         size = pfad.stat().st_size
-        if size < archiv.bytes:  # Strom ohne Laengenangabe endete vor der Zeit: das Stueck ist der Anfang fuer den Rest
+        if size < groesse:  # Strom ohne Laengenangabe endete vor der Zeit: das Stueck ist der Anfang fuer den Rest
             os.replace(pfad, teil)
-            raise FetchError(f"{url}: nur {size} von {archiv.bytes} Byte")
-        if size != archiv.bytes or sha != archiv.sha256:
+            raise FetchError(f"{url}: nur {size} von {groesse} Byte")
+        if size != groesse or sha != sha256:
             pfad.unlink(missing_ok=True)
             if fortgesetzt:  # der Anfang stammte vielleicht aus einem anderen Angebot: neu laden statt ablehnen
                 raise FetchError(f"{url}: Pruefsumme nach dem Fortsetzen falsch, der Abruf beginnt neu")
-            raise _Refused(MANIFEST_UNGUELTIG, "SHA-256 oder Groesse des Archivs passt nicht")
+            raise _Refused(MANIFEST_UNGUELTIG, f"SHA-256 oder Groesse {des} passt nicht")
+
+    # --- Systemwechsel (GW 6.3) ---
+
+    def _system_freigabe(self, state: State, version: str, jetzt: datetime) -> bool:
+        """Darf jetzt ein Systemwechsel auf `version` beginnen? Nur ohne Probestart (sonst lage `rauc install` den alten,
+        guten Slot), mit lesbarer Startauswahl, bei erreichbarem Broker (ohne Broker kein Wechsel: die Netzprobe kaeme nie
+        durch) und nach dem Abstand seit einem Rueckfall ohne Ablehnung. Der Abstand beginnt erst mit der ersten
+        synchronen Uhr nach dem Rueckfall (`naechster_versuch` ist bis dahin null) und ist ein Wanduhr-Zeitpunkt."""
+        try:
+            if self._startauswahl.im_probestart():
+                logger.warning("Systemwechsel auf %s wartet: das System laeuft im Probestart", version)
+                return False
+        except StartauswahlFehler as fehler:
+            logger.warning("Systemwechsel auf %s wartet: Lage der Startauswahl nicht lesbar (%s)", version, fehler)
+            return False
+        if not self._reachable():
+            logger.info("Systemwechsel auf %s wartet: der Broker ist nicht erreichbar", version)
+            return False
+        abstand = state.system_abstand
+        if abstand is None or abstand["version"] != version:
+            return True
+        naechster = _zeit(abstand["naechster_versuch"])
+        grenze = jetzt + timedelta(seconds=ABSTAND_MAX_SECONDS)  # eine zurueckgesprungene Wanduhr haelt nicht laenger auf
+        if naechster is None or naechster > grenze:
+            naechster = min(jetzt + timedelta(seconds=abstand_sekunden(abstand["rueckfaelle"])), grenze)
+            abstand["naechster_versuch"] = naechster.isoformat()
+            state.save(self._state_path)
+        if jetzt < naechster:
+            logger.info("Systemwechsel auf %s wartet bis %s (Abstand nach %d Rueckfall/Rueckfaellen)", version,
+                        naechster.isoformat(), abstand["rueckfaelle"])
+            return False
+        return True
+
+    def _system_pruefen(self, system: bundles.SystemBundle) -> None:
+        """`compatible` gegen das der system.conf des Geraets, vor jedem Abruf (sonst MANIFEST_UNGUELTIG)."""
+        geraet = self._startauswahl.compatible()
+        if system.compatible != geraet:
+            raise _Refused(MANIFEST_UNGUELTIG, f"System-Bundle fuer {system.compatible}, dieses Geraet verlangt {geraet}")
+
+    def _system_bereitstellen(self, system: bundles.SystemBundle, basis_url: str, version: str) -> Path:
+        """Das System-Bundle holen, pruefen (Groesse, SHA-256 gegen das signierte Manifest) und fuer RAUC ablegen (root
+        0600: RAUC verlangt einen Besitzer root und keine Schreibrechte fuer Gruppe oder andere)."""
+        self._store.clean_system(version)
+        pfad = self._store.system_path(version)
+        pfad.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if pfad.is_file() and (pfad.stat().st_size != system.groesse or _file_sha256(pfad) != system.sha256):
+            pfad.unlink()  # ein Rest, der nicht zum jetzigen Angebot gehoert
+        if not pfad.is_file():
+            self._hole_datei(urllib.parse.urljoin(basis_url, system.datei), system.groesse, system.sha256, pfad,
+                             "System-Bundle", "des System-Bundles")
+        os.chmod(pfad, 0o600)
+        return pfad
+
+    def _system_aufraeumen(self) -> None:
+        """Loescht das System-Bundle (nach Bestaetigung, Ablehnung oder Rueckfall); ein Fehler dabei haelt nichts auf."""
+        with contextlib.suppress(OSError):
+            self._store.clean_system(None)
+
+    def _system_wechsel(self, state: State, paket: _Paket, datei: Path, jetzt: datetime, manifest_sha: object,
+                        signatur: object) -> str:
+        """Bundle-Dateien ablegen und `pull` (die Images der Registries muessen schon da sein, bevor der Neustart sie
+        braucht), dann Phase `installiere`, `rauc install`, Phase `installiert` samt `in_progress` (Vorlage fuer Rueckweg
+        und Abschluss) und der Neustart mit tryboot. Jede Phase ist gespeichert, bevor ihre Wirkung beginnt."""
+        version = paket.manifest.version
+        self._store.install(version, paket.files)
+        try:
+            self._compose.pull(version)
+        except bundles.ComposeError as error:
+            logger.warning("docker compose pull fuer %s gescheitert (%s), naechster Durchlauf", version, error)
+            return "vorlaeufig"
+        try:
+            slot_alt = self._startauswahl.gestartet()
+        except StartauswahlFehler as fehler:
+            logger.warning("Systemwechsel auf %s wartet: gestarteter Slot nicht lesbar (%s)", version, fehler)
+            return "vorlaeufig"
+        auftrag = {"version": version, "phase": "installiere", "slot_alt": slot_alt, "seit": jetzt.isoformat(),
+                   "grund": None, "ablehnen": None}
+        state.system = auftrag
+        state.save(self._state_path)
+        try:
+            self._startauswahl.installieren(datei)
+        except StartauswahlFehler as fehler:
+            state.system = None
+            state.system_installfehler += 1
+            logger.warning("rauc install fuer %s gescheitert (%s), %d von %d", version, fehler, state.system_installfehler,
+                           MAX_INSTALLFEHLER)
+            if state.system_installfehler < MAX_INSTALLFEHLER:
+                state.save(self._state_path)
+                return "vorlaeufig"
+            logger.error("system_grund=%s: rauc install fuer %s scheiterte zweimal in Folge", MANIFEST_UNGUELTIG, version)
+            state.system_installfehler = 0
+            self._reject(state, version, MANIFEST_UNGUELTIG, manifest_sha, signatur)
+            self._system_aufraeumen()
+            return "abgelehnt"
+        auftrag["phase"] = "installiert"
+        state.system_installfehler = 0
+        state.in_progress = {"version": version, "previous": state.current, "since": time.time(),
+                             "zertifikat_ab": paket.zertifikat.not_valid_before_utc.isoformat()}
+        state.save(self._state_path)
+        try:
+            self._startauswahl.probestart()
+        except StartauswahlFehler as fehler:  # der Neustart kam nicht zustande: das System-Bundle liegt im Slot, neuer Versuch
+            logger.error("Neustart mit tryboot fuer %s gescheitert (%s), naechster Durchlauf", version, fehler)
+            state.system, state.in_progress = None, None
+            state.save(self._state_path)
+            return "vorlaeufig"
+        self._probestart_angefordert = version
+        logger.warning("Systemwechsel auf %s: Neustart mit tryboot angefordert", version)
+        return "systemwechsel"
+
+    def _recover_system(self, state: State, start: float) -> bool:
+        """Nach einem Start: gehoert er einem Systemwechsel? Entscheidend ist die Lage der Startauswahl. True = der
+        Systemwechsel hat den Start uebernommen (der Rest von `_recover` entfaellt), False = kein Systemwechsel offen.
+        - Probestart ohne passenden Auftrag (fehlend, kaputt, andere Version): zurueckschalten, ohne Meldung.
+        - Im alten Slot (gestartet = slot_alt): Rueckfall nach der Phase (`_rueckfall`).
+        - Im neuen Slot: Probestart pruefen (`_probestart`) oder, schon bestaetigt, die Netzprobe fortsetzen.
+        Eine unlesbare Lage laesst alles stehen; der Frist-Timer der Startauswahl faengt einen haengenden Probestart ab."""
+        system = state.system
+        try:
+            gestartet, probe = self._startauswahl.gestartet(), self._startauswahl.im_probestart()
+        except StartauswahlFehler as fehler:
+            logger.log(logging.ERROR if system is not None else logging.WARNING,
+                       "Lage der Startauswahl nicht lesbar (%s), kein Systemwechsel in diesem Start", fehler)
+            return system is not None
+        if system is None:
+            if probe:
+                logger.error("Probestart ohne Systemauftrag, schalte zurueck (ohne Meldung)")
+                self._zurueckschalten(probe=True)
+                return True
+            return False
+        if gestartet == system["slot_alt"]:
+            if self._probestart_angefordert == system["version"] and system["phase"] == "installiert":
+                return True  # dieser Prozess hat den Neustart angefordert, er laeuft noch aus: nichts tun
+            self._rueckfall(state, system)
+            return True
+        # neuer Slot
+        passt = system["version"] == self._version and self._store.exists(system["version"])
+        if not passt and probe:
+            logger.error("Probestart mit anderem System als dem bestellten (Auftrag %s, Updater %s), schalte zurueck "
+                         "(ohne Meldung)", system["version"], self._version)
+            self._zurueckschalten(probe=True)
+            return True
+        if not passt or (not probe and system["phase"] not in ("bestaetigt", "zurueck")):
+            logger.warning("Systemauftrag %s (Phase %s) passt nicht zu diesem bestaetigten System, verworfen",
+                           system["version"], system["phase"])
+            state.system = None
+            state.save(self._state_path)
+            return False
+        if system["phase"] == "zurueck":
+            self._zurueckschalten(probe=probe)
+        elif probe:
+            self._probestart(state, system, start)
+        else:
+            self._netzprobe_und_abschluss(state, system)
+        return True
+
+    def _probestart(self, state: State, system: dict, start: float) -> None:
+        """Im neuen Slot, gestartet per tryboot: Phase `probestart`, Container der Version starten, lokale Gesundheit (fest
+        LOKAL_GESUND_SECONDS ab dem Start des Updaters, ohne Verlaengerung, ohne server_ok), Phase `bestaetigt`, mark-good,
+        dann die Netzprobe. Ungesund: Phase `zurueck` (`ungesund`, ablehnen), zurueckschalten."""
+        version = system["version"]
+        if system["phase"] == "installiert":
+            system["phase"] = "probestart"
+            state.save(self._state_path)
+        if system["phase"] == "probestart":
+            missing = self._missing_devices((self._store.dir(version) / "docker-compose.yml").read_text())
+            if missing:  # Umgebung, kein Fehler des Systems: zurueck, aber nicht ablehnen
+                logger.warning("Probestart %s: Geraet fehlt (%s), schalte zurueck", version, ", ".join(missing))
+                self._zurueck_melden(state, system, RETRY_REASON, ablehnen=False, probe=True)
+                return
+            try:
+                self._compose.up(version)
+            except bundles.ComposeError as error:
+                logger.error("system_grund=%s: Start von %s gescheitert: %s", START_FEHLGESCHLAGEN, version, error)
+                self._zurueck_melden(state, system, START_FEHLGESCHLAGEN, ablehnen=True, probe=True)
+                return
+            if not self._lokal_gesund(version, start):
+                logger.error("system_grund=%s: %s nach %d s lokal nicht gesund", UNGESUND, version, LOKAL_GESUND_SECONDS)
+                self._zurueck_melden(state, system, UNGESUND, ablehnen=True, probe=True)
+                return
+            system["phase"] = "bestaetigt"
+            state.save(self._state_path)  # vor mark-good: ein Stromausfall dazwischen ist ein Rueckfall ohne Ablehnung
+        try:
+            self._startauswahl.bestaetigen()
+        except StartauswahlFehler as fehler:
+            logger.error("system_grund=%s: mark-good fuer %s gescheitert (%s)", RETRY_REASON, version, fehler)
+            self._zurueck_melden(state, system, RETRY_REASON, ablehnen=False, probe=True)
+            return
+        self._netzprobe_und_abschluss(state, system)
+
+    def _netzprobe_und_abschluss(self, state: State, system: dict) -> None:
+        """Nach mark-good: der Broker muss NETZPROBE_SECONDS lang erreichbar werden, sonst zurueck (ohne Ablehnung; das
+        System ist bestaetigt, zurueckschalten setzt [all] auf den alten Slot). Bestanden: current/previous wechseln."""
+        version = system["version"]
+        if not self._netzprobe():
+            logger.error("system_grund=%s: %s erreicht den Broker nicht, schalte zurueck", RETRY_REASON, version)
+            self._zurueck_melden(state, system, RETRY_REASON, ablehnen=False, probe=False)
+            return
+        self._finish(state, version)
+
+    def _zurueck_melden(self, state: State, system: dict, grund: str, *, ablehnen: bool, probe: bool) -> None:
+        """Phase `zurueck` mit Grund speichern (vor mark-bad und Neustart), dann zurueckschalten. Der alte Slot meldet und
+        rollt die Container zurueck (`_rueckfall`)."""
+        system.update(phase="zurueck", grund=grund, ablehnen=ablehnen)
+        state.save(self._state_path)
+        self._zurueckschalten(probe=probe)
+
+    def _zurueckschalten(self, *, probe: bool) -> None:
+        """mark-bad und Neustart, nur im neuen Slot (im lange bestaetigten Slot kippte mark-bad [all] auf den anderen).
+        Scheitert es im Probestart, folgt ein normaler Neustart: tryboot gilt nur fuer einen Start, die Firmware nimmt
+        danach [all], den alten Slot. Scheitert es nach der Bestaetigung, bleibt die Phase `zurueck`, der naechste Durchlauf
+        versucht es erneut (das Scheitern des Neustarts nach mark-bad macht das System schon zum Probestart)."""
+        sa = self._startauswahl
+        try:
+            sa.zurueckschalten()
+            return
+        except StartauswahlFehler as fehler:
+            logger.error("Zurueckschalten gescheitert (%s)", fehler)
+        with contextlib.suppress(StartauswahlFehler):  # unlesbar: es gilt, was der Start wusste
+            probe = probe or sa.im_probestart()
+        if not probe:
+            return
+        try:
+            sa.normal_neustarten()
+        except StartauswahlFehler as fehler:
+            logger.error("Normaler Neustart gescheitert (%s), der Frist-Timer der Startauswahl schaltet zurueck", fehler)
+
+    def _rueckfall(self, state: State, system: dict) -> None:
+        """Im alten Slot gestartet, Auftrag offen: was ist passiert?
+        - installiere: das System-Bundle wurde nicht fertig installiert; vorlaeufig, neuer Versuch (keine Meldung).
+        - installiert: das neue System kam nie bis zum Updater: Fehlstart, `start_fehlgeschlagen`, abgelehnt.
+        - probestart/bestaetigt: Strom weg oder Frist-Timer; Rueckfall ohne Ablehnung, `server_unerreichbar`.
+        - zurueck: nach `grund` und `ablehnen`.
+        Ein Rueckfall ohne Ablehnung zaehlt (system_abstand.rueckfaelle) und setzt den Abstand bis zum naechsten Versuch;
+        der MAX_RUECKFAELLE-te in Folge lehnt die Version ab. Danach laufen die Container des alten Bundles (`_rollback`)."""
+        version, phase = system["version"], system["phase"]
+        if phase == "installiere":
+            logger.warning("Installation von %s unterbrochen, neuer Versuch", version)
+            state.system = None
+            state.save(self._state_path)
+            return
+        if phase == "installiert":
+            grund, ablehnen = START_FEHLGESCHLAGEN, True
+        elif phase == "zurueck":
+            grund, ablehnen = system["grund"] or RETRY_REASON, system["ablehnen"] is not False
+        else:
+            grund, ablehnen = RETRY_REASON, False
+        abstand = state.system_abstand
+        bisher = abstand["rueckfaelle"] if abstand is not None and abstand["version"] == version else 0
+        if ablehnen:
+            abstand = None
+        elif bisher + 1 >= MAX_RUECKFAELLE:
+            logger.error("system_grund=%s: dritter Rueckfall von %s in Folge, abgelehnt", grund, version)
+            ablehnen, abstand = True, None
+        else:
+            abstand = {"version": version, "rueckfaelle": bisher + 1, "naechster_versuch": None}
+        logger.error("Rueckfall auf das alte System: %s, Phase %s, system_grund=%s, abgelehnt=%s", version, phase, grund,
+                     ablehnen)
+        state.system, state.system_abstand, state.system_installfehler = None, abstand, 0
+        self._rollback(state, version, grund, reject=ablehnen)
+        self._system_aufraeumen()
+
+    def _lokal_gesund(self, version: str, start: float) -> bool:
+        """Lokale Gesundheit bis `start + LOKAL_GESUND_SECONDS` (monotone Uhr), ohne Verlaengerung."""
+        ende = start + LOKAL_GESUND_SECONDS
+        while True:
+            if self._lokal_health(version):
+                return True
+            if self._clock() >= ende:
+                return False
+            self._sleep(HEALTH_POLL_SECONDS)
+
+    def _netzprobe(self) -> bool:
+        """Erreicht der Host den Broker innerhalb von NETZPROBE_SECONDS (monotone Uhr)?"""
+        ende = self._clock() + NETZPROBE_SECONDS
+        while True:
+            if self._reachable():
+                return True
+            if self._clock() >= ende:
+                return False
+            self._sleep(HEALTH_POLL_SECONDS)
 
     def _missing_devices(self, compose_text: str) -> list[str]:
         return [path for path in bundles.compose_devices(compose_text) if not self._path_exists(path)]
@@ -1009,8 +1414,12 @@ class Updater:
         previous = progress.get("previous") if state.in_progress else state.current
         state.zertifikat_untergrenze = _hoehere_untergrenze(state.zertifikat_untergrenze, progress.get("zertifikat_ab"))
         state.previous, state.current, state.in_progress = previous, version, None
+        mit_system = state.system is not None
+        state.system, state.system_abstand, state.system_installfehler = None, None, 0
         self._queue(state, version, "ok", "")
         state.save(self._state_path)
+        if mit_system:
+            self._system_aufraeumen()
         keep: set[str] = set()
         for kept in (version, previous):
             if kept and self._store.exists(kept):
@@ -1062,6 +1471,7 @@ class Einstellungen:
     health_url: str = "http://127.0.0.1:8081/healthz"
     health_seconds: float = HEALTH_SECONDS
     compose_project: str = bundles.COMPOSE_PROJECT
+    startauswahl: Callable[[], Startauswahl] = RaucTryboot
 
 
 def main(argv: list[str] | None = None, *, einstellungen: Einstellungen | None = None) -> None:
@@ -1081,7 +1491,9 @@ def main(argv: list[str] | None = None, *, einstellungen: Einstellungen | None =
         uhr=lambda: zeit_aus_status(root / "host" / "status.json"),
         state_path=root / "updater" / "state.json", version=GATEWAY_VERSION,
         health=lambda version: health_ok(fetch_health(settings.health_url), compose.health(version)),
-        allow_http=settings.allow_http, health_seconds=settings.health_seconds,
+        allow_http=settings.allow_http, health_seconds=settings.health_seconds, startauswahl=settings.startauswahl(),
+        lokal_health=lambda version: host_dienste_aktiv() and health_ok(fetch_health(settings.health_url),
+                                                                         compose.health(version), mit_server=False),
     )
     try:
         run.recover()

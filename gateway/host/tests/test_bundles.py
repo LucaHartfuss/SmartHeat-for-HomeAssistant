@@ -14,6 +14,13 @@ ARCHIV = {"datei": "gateway-image.oci.tar", "sha256": "e" * 64, "bytes": 1000, "
 GOOD_COMPOSE = "services:\n  runtime:\n    image: " + IMAGE + "\n    pull_policy: never\n"
 
 
+SYSTEM = {"datei": "system.raucb", "sha256": "f" * 64, "groesse": 1000, "compatible": "smartheat-gateway-pi5"}
+
+
+def _system(**over) -> bytes:
+    return _manifest(system={**SYSTEM, **over})
+
+
 def _manifest(**over):
     data = {"version": "0.3.0", "min_updater_version": "0.2.0",
             "files": {"docker-compose.yml": "b" * 64, "mosquitto.conf": "c" * 64},
@@ -44,6 +51,65 @@ def test_parse_manifest():
     assert manifest.version == "0.3.0" and set(manifest.files) == set(bundles.MANIFEST_FILES)
     assert manifest.archiv == bundles.Archiv(**ARCHIV)
     assert manifest.archiv.ref == IMAGE
+
+
+def test_ein_manifest_ohne_system_hat_kein_system():
+    assert bundles.parse_manifest(_manifest()).system is None
+
+
+def test_system_gueltig():
+    manifest = bundles.parse_manifest(_manifest(system=dict(SYSTEM)))
+    assert manifest.system == bundles.SystemBundle("system.raucb", "f" * 64, 1000, "smartheat-gateway-pi5")
+    assert manifest.archiv == bundles.Archiv(**ARCHIV)  # das Archiv bleibt daneben
+
+
+def test_system_darf_genau_so_gross_sein_wie_die_grenze():
+    assert bundles.MAX_SYSTEM_BYTES == 2147483648
+    assert bundles.parse_manifest(_system(groesse=bundles.MAX_SYSTEM_BYTES)).system.groesse == 2147483648
+    assert bundles.parse_manifest(_system(groesse=1)).system.groesse == 1
+
+
+@pytest.mark.parametrize("raw", [
+    # system: kein Objekt (auch null: ein fehlendes Feld heisst fehlen, nicht null)
+    _manifest(system=None), _manifest(system="system.raucb"), _manifest(system=[]),
+    # falsche Schluessel: einer fehlt, einer zuviel, ein Archiv-Schluessel
+    *[_manifest(system={key: value for key, value in SYSTEM.items() if key != fehlt}) for fehlt in SYSTEM],
+    _system(extra="x"), _manifest(system={**SYSTEM, "bytes": 1000}),
+    # groesse: ueber der Grenze, null, negativ, Wahrheitswert, Text, Kommazahl
+    _system(groesse=bundles.MAX_SYSTEM_BYTES + 1), _system(groesse=0), _system(groesse=-1), _system(groesse=True),
+    _system(groesse="1000"), _system(groesse=1000.5), _system(groesse=None),
+    # sha256, Dateiname, compatible
+    _system(sha256="zz"), _system(sha256="F" * 64), _system(sha256="f" * 63), _system(sha256=None),
+    _system(datei="../system.raucb"), _system(datei="andere.raucb"), _system(datei=None),
+    _system(compatible=""), _system(compatible="a" * 65), _system(compatible="mit leerzeichen"), _system(compatible=None),
+    _system(compatible="x\n"),
+])
+def test_bad_system_manifests(raw):
+    with pytest.raises(bundles.ManifestError):
+        bundles.parse_manifest(raw)
+
+
+def test_system_pfad_liegt_ausserhalb_von_bundles_und_archive(tmp_path):
+    store = bundles.BundleStore(tmp_path)
+    assert store.system_path("0.3.0") == tmp_path / "updater" / "system" / "0.3.0.raucb"
+    store.install("0.3.0", {"docker-compose.yml": b"x", "mosquitto.conf": b"y"})
+    assert store.system_path("0.3.0").parent not in (store.dir("0.3.0"), store.archive_path("0.3.0").parent)
+
+
+def test_clean_system_behaelt_nur_die_datei_und_das_part_der_einen_version(tmp_path):
+    store = bundles.BundleStore(tmp_path)
+    ordner = store.system_path("0.3.0").parent
+    ordner.mkdir(parents=True)
+    namen = ("0.3.0.raucb", "0.3.0.raucb.part", "0.2.0.raucb", "0.4.0.raucb.part", "rest")
+    for name in namen:
+        (ordner / name).write_bytes(b"x")
+    store.clean_system("0.3.0")
+    assert sorted(p.name for p in ordner.iterdir()) == ["0.3.0.raucb", "0.3.0.raucb.part"]
+    store.clean_system(None)
+    assert list(ordner.iterdir()) == []
+    store.clean_system(None)  # ohne Ordner kein Fehler
+    (tmp_path / "x").mkdir()
+    bundles.BundleStore(tmp_path / "x").clean_system("0.3.0")
 
 
 def test_the_archive_may_be_exactly_as_large_as_the_limit():

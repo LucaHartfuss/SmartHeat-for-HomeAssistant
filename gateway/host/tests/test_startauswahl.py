@@ -210,6 +210,12 @@ def test_zurueckschalten_startet_nicht_neu_wenn_mark_bad_scheitert(tmp_path):
     assert [argv[0] for argv, _ in run.aufrufe] == ["rauc"]
 
 
+def test_normal_neustarten_ruft_nur_systemctl_reboot_ohne_mark_bad(tmp_path):
+    run = FakeRun()
+    echt(tmp_path, run).normal_neustarten()
+    assert run.aufrufe == [(["systemctl", "reboot"], 60)]
+
+
 def test_compatible_liest_rauc_status_im_shell_format(tmp_path):
     run = FakeRun("RAUC_SYSTEM_COMPATIBLE='smartheat-gateway-pi5'\nRAUC_SYSTEM_VARIANT=''\n"
                   "RAUC_SYSTEM_BOOTED_BOOTNAME='A'\n")
@@ -223,13 +229,13 @@ def test_compatible_ohne_wert_ist_ein_fehler(tmp_path, ausgabe):
         echt(tmp_path, FakeRun(ausgabe)).compatible()
 
 
-@pytest.mark.parametrize("aufruf", ["probestart", "bestaetigen", "zurueckschalten", "compatible"])
+@pytest.mark.parametrize("aufruf", ["probestart", "bestaetigen", "zurueckschalten", "compatible", "normal_neustarten"])
 def test_ein_fehlerhafter_befehl_ist_ein_startauswahlfehler(tmp_path, aufruf):
     with pytest.raises(StartauswahlFehler, match="Fehlermeldung"):
         getattr(echt(tmp_path, FakeRun(1)), aufruf)()
 
 
-@pytest.mark.parametrize("aufruf", ["probestart", "bestaetigen", "zurueckschalten", "compatible"])
+@pytest.mark.parametrize("aufruf", ["probestart", "bestaetigen", "zurueckschalten", "compatible", "normal_neustarten"])
 def test_ein_fehlendes_programm_ist_ein_startauswahlfehler(tmp_path, aufruf):
     with pytest.raises(StartauswahlFehler):
         getattr(echt(tmp_path, FakeRun(FileNotFoundError("rauc"))), aufruf)()
@@ -323,6 +329,15 @@ def test_fake_zurueckschalten_nach_bestaetigung_faellt_auf_den_anderen_slot_zuru
     fake.neustart()
     fake.bestaetigen()
     fake.zurueckschalten()
+    fake.neustart()
+    assert (fake.gestartet(), fake.primaer()) == ("A", "A")
+
+
+def test_fake_normal_neustarten_startet_den_primaeren_slot_ohne_tryboot():
+    fake = FakeStartauswahl(gestartet="A")
+    fake.probestart()
+    fake.neustart()  # Probestart in B
+    fake.normal_neustarten()
     fake.neustart()
     assert (fake.gestartet(), fake.primaer()) == ("A", "A")
 

@@ -1,5 +1,26 @@
 # Changelog SmartHeat-Gateway
 
+## 0.9.0
+
+- Systemteil im Updater (AP-05a, GW 6.3): Traegt das signierte Manifest das Feld `system` (`system.raucb`, SHA-256, Groesse
+  bis 2 GiB, `compatible` `smartheat-gateway-pi5`), wechselt der Updater zuerst das System (A/B, RAUC, Neustart mit tryboot)
+  und danach die Container. Ablauf mit gespeicherten Phasen (`system.phase` in `updater/state.json`, **vor** jeder Wirkung):
+  installiere, installiert, probestart, bestaetigt, oder zurueck (mit Grund und `ablehnen`). Im Probestart gilt die lokale
+  Gesundheit fest 600 s ab dem Start des Updaters (Host-Dienste, Container, `runtime` healthy, `/healthz` ohne `startet`,
+  ohne `server_ok`), danach `mark-good` und eine Netzprobe von 600 s; `current`/`previous` wechseln erst danach. Rueckfaelle:
+  Fehlstart = `start_fehlgeschlagen` (abgelehnt), ungesund = `ungesund` (abgelehnt), Netzprobe und Strom weg =
+  `server_unerreichbar` ohne Ablehnung mit Abstand 1 h, 2 h (hoechstens 24 h, Wanduhr, erst ab der ersten synchronen Uhr),
+  der dritte in Folge lehnt ab. `rauc install` scheitert einmal vorlaeufig, zweimal in Folge `manifest_ungueltig`. Ohne
+  erreichbaren Broker beginnt kein Systemwechsel; ein falsches `compatible`, eine falsche Pruefsumme oder Groesse sind
+  `manifest_ungueltig`. Das System-Bundle liegt unter `updater/system/<Version>.raucb` (root, 0600) und wird nach
+  Bestaetigung, Ablehnung oder Rueckfall geloescht. Der Erststart startet nichts, solange ein Systemwechsel offen ist.
+- Downgrade-Schutz mit Untergrenze `max(current, Version des Host-Pakets)` (A7-22): auch ohne `state.json` (frisches oder
+  zurueckgesetztes Gateway) wird kein Bundle angenommen, das nicht streng neuer als der laufende Updater ist.
+  `State.save` erhaelt Felder, die der Updater nicht kennt (ein aelterer Updater nach einem Rueckfall verwirft nichts).
+- `min_updater_version` der Bundles: 0.8.0 ohne Systemteil (der Updater 0.8.0 nimmt Container-Bundles weiter an), 0.9.0 mit
+  `system`. `build_bundle.py --system DATEI` bindet das System-Bundle im Manifest, `verify_bundle.py` prueft Groesse und
+  SHA-256 der Systemdatei.
+
 ## 0.8.0
 
 - Signierte Auslieferung (AP-04): Der Updater prueft das Manifest mit einer X.509-Kette (`release-roots.pem`,

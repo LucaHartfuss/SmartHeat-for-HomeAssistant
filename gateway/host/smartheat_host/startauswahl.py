@@ -44,6 +44,7 @@ class Startauswahl(Protocol):
     def probestart(self) -> None: ...
     def bestaetigen(self) -> None: ...
     def zurueckschalten(self) -> None: ...
+    def normal_neustarten(self) -> None: ...
 
 
 def andere(slot: str) -> str:
@@ -190,4 +191,9 @@ class RaucTryboot:
 
     def zurueckschalten(self) -> None:
         self._befehl(["rauc", "status", "mark-bad", "booted"])
+        self._befehl(["systemctl", "reboot"])
+
+    def normal_neustarten(self) -> None:
+        """Neustart ohne tryboot und ohne mark-bad: die Firmware startet danach [all]. Im Probestart der Rueckweg, wenn
+        zurueckschalten() scheitert (tryboot gilt nur fuer einen Start)."""
         self._befehl(["systemctl", "reboot"])

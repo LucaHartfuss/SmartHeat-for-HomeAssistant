@@ -5,7 +5,10 @@ Mosquitto und Zigbee2MQTT behalten ihre gepinnten Digests. Das Archiv kommt mit 
 (gateway-image.oci.tar), nach dem Einbau der Annotation `io.containerd.image.name`: so legt `docker load` auf dem Geraet
 das Image unter dem Namen der Compose-Datei an (die Blobs und damit der Index-Digest bleiben, die index.json liegt
 ausserhalb der Digests). Manifest mit Version, min_updater_version, SHA-256 der Dateien, Images und dem Feld `archiv`
-(Datei, SHA-256, Groesse, Name, Index-Digest). Geprueft mit denselben Funktionen wie auf dem Geraet."""
+(Datei, SHA-256, Groesse, Name, Index-Digest). Mit `--system DATEI` kommt das signierte RAUC-System-Bundle (`system.raucb`,
+von rauc_signieren.py) dazu: das Manifest bindet dann Datei, SHA-256, Groesse und `compatible` (`system`), und
+`min_updater_version` steigt auf 0.9.0 (ein aelterer Updater kennt den Systemwechsel nicht). Geprueft mit denselben
+Funktionen wie auf dem Geraet."""
 import argparse
 import hashlib
 import io
@@ -23,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "host"))  # Aufruf 
 from smartheat_host import bundles  # noqa: E402
 
 MIN_UPDATER_VERSION = "0.8.0"  # steigt nur, wenn sich das Manifest-Format aendert (0.8.0: Feld archiv)
+MIN_UPDATER_VERSION_SYSTEM = "0.9.0"  # Bundles mit Feld `system` (0.9.0: Systemwechsel); der Updater 0.8.0 nimmt die ohne an
 GATEWAY_SERVICES = ("init", "runtime")
 ANNOTATION = "io.containerd.image.name"
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -113,7 +117,13 @@ def write_named_archive(source: Path, target: Path, digest: str) -> None:
                     new.addfile(member, old.extractfile(member) if member.isfile() else None)
 
 
-def build(compose_path: Path, mosquitto_conf: Path, archive: Path, version: str, out: Path) -> dict:
+def min_updater_version(system: bool) -> str:
+    """Die Version, die der Updater des Geraets mindestens haben muss: mit Systemteil 0.9.0, sonst 0.8.0."""
+    return MIN_UPDATER_VERSION_SYSTEM if system else MIN_UPDATER_VERSION
+
+
+def build(compose_path: Path, mosquitto_conf: Path, archive: Path, version: str, out: Path,
+          system: Path | None = None) -> dict:
     bundles.parse_version(version)
     digest = oci_digest(archive)
     ref = f"{bundles.ARCHIVE_IMAGE}@{digest}"
@@ -121,6 +131,7 @@ def build(compose_path: Path, mosquitto_conf: Path, archive: Path, version: str,
     neu = not out.exists()
     out.mkdir(parents=True, exist_ok=True)
     pending = out / (bundles.ARCHIVE_NAME + ".tmp")
+    pending_system = out / (bundles.SYSTEM_NAME + ".tmp")
     try:
         write_named_archive(archive, pending, digest)
         archiv = bundles.Archiv(bundles.ARCHIVE_NAME, _sha256_file(pending), pending.stat().st_size,
@@ -131,18 +142,25 @@ def build(compose_path: Path, mosquitto_conf: Path, archive: Path, version: str,
         for other in bundles.compose_images(compose):
             if other != ref:
                 images[other.split("@", 1)[0].split("/")[-1].split(":")[0]] = other
-        manifest = {"version": version, "min_updater_version": MIN_UPDATER_VERSION,
+        manifest = {"version": version, "min_updater_version": min_updater_version(system is not None),
                     "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}, "images": images,
                     "archiv": {"datei": archiv.datei, "sha256": archiv.sha256, "bytes": archiv.bytes, "name": archiv.name,
                                "digest": archiv.digest}}
+        if system is not None:
+            shutil.copyfile(system, pending_system)
+            manifest["system"] = {"datei": bundles.SYSTEM_NAME, "sha256": _sha256_file(pending_system),
+                                  "groesse": pending_system.stat().st_size, "compatible": bundles.SYSTEM_COMPATIBLE}
         raw = json.dumps(manifest, indent=2, sort_keys=True).encode() + b"\n"
         bundles.parse_manifest(raw)  # alles pruefen, bevor etwas Endgueltiges liegt
         for name, data in files.items():
             (out / name).write_bytes(data)
         pending.replace(out / bundles.ARCHIVE_NAME)
+        if system is not None:
+            pending_system.replace(out / bundles.SYSTEM_NAME)
         (out / bundles.MANIFEST_NAME).write_bytes(raw)
     finally:
         pending.unlink(missing_ok=True)
+        pending_system.unlink(missing_ok=True)
         if neu and not (out / bundles.MANIFEST_NAME).exists():  # gescheitert: kein halbes Bundle zuruecklassen
             shutil.rmtree(out, ignore_errors=True)
     return manifest
@@ -161,10 +179,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--compose", type=Path, required=True)
     parser.add_argument("--mosquitto-conf", type=Path, required=True)
     parser.add_argument("--archive", type=Path, required=True, help="OCI-Archiv des Gateway-Images (buildx type=oci)")
+    parser.add_argument("--system", type=Path, help="signiertes RAUC-System-Bundle (rauc_signieren.py) fuer das Feld `system`")
     parser.add_argument("--version", required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
-    manifest = build(args.compose, args.mosquitto_conf, args.archive, args.version, args.out)
+    manifest = build(args.compose, args.mosquitto_conf, args.archive, args.version, args.out, args.system)
     print(json.dumps(manifest["files"], indent=2))
     return 0
 

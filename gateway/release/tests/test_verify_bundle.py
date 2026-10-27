@@ -53,6 +53,55 @@ def test_bundle_built_from_the_tag_passes(bundle):
     verify(bundle, "0.2.0")
 
 
+@pytest.fixture
+def system_bundle(tmp_path, archive):
+    roh = tmp_path / "gateway.raucb"
+    roh.write_bytes(b"signiertes-rauc-bundle" * 100)
+    out = tmp_path / "bundle-mit-system"
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out, roh)
+    return out
+
+
+def test_bundle_mit_system_aus_dem_tag_besteht(system_bundle):
+    verify(system_bundle, "0.2.0")
+
+
+def test_system_bundle_mit_anderem_inhalt_wird_abgelehnt(system_bundle):
+    """Gleiche Groesse, ein Byte anders: das Manifest bindet die SHA-256 der Systemdatei (S-3)."""
+    daten = bytearray((system_bundle / "system.raucb").read_bytes())
+    daten[0] ^= 1
+    (system_bundle / "system.raucb").write_bytes(bytes(daten))
+    with pytest.raises(BundleRejected, match="System-Bundle: SHA-256 oder Groesse"):
+        verify(system_bundle, "0.2.0")
+
+
+def test_system_bundle_mit_anderer_groesse_wird_abgelehnt(system_bundle):
+    with open(system_bundle / "system.raucb", "ab") as handle:
+        handle.write(b"\0")
+    with pytest.raises(BundleRejected, match="System-Bundle: SHA-256 oder Groesse"):
+        verify(system_bundle, "0.2.0")
+
+
+def test_system_bundle_ohne_eintrag_im_manifest_ist_eine_fremde_datei(bundle):
+    (bundle / "system.raucb").write_bytes(b"x")
+    with pytest.raises(BundleRejected, match="enthaelt"):
+        verify(bundle, "0.2.0")
+
+
+def test_manifest_mit_system_aber_ohne_datei_wird_abgelehnt(system_bundle):
+    (system_bundle / "system.raucb").unlink()
+    with pytest.raises(BundleRejected, match="enthaelt"):
+        verify(system_bundle, "0.2.0")
+
+
+def test_manifest_mit_anderem_compatible_wird_abgelehnt(system_bundle):
+    """Ein in sich stimmiges Manifest mit anderem `compatible` weicht vom Neubau aus dem Tag ab."""
+    manifest = json.loads((system_bundle / "manifest.json").read_text())
+    _rewrite(system_bundle, system={**manifest["system"], "compatible": "smartheat-gateway-anderes"})
+    with pytest.raises(BundleRejected, match="manifest.json weicht"):
+        verify(system_bundle, "0.2.0")
+
+
 def test_privileged_compose_from_a_compromised_build_is_refused(tmp_path, archive):
     text = COMPOSE.read_text().replace("    devices:", "    privileged: true\n    devices:", 1)
     assert "privileged: true" in text

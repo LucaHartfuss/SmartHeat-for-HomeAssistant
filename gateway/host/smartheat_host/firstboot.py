@@ -2,8 +2,8 @@
 (images/*.tar, bundles.docker_load mit Frist, kein Pull), startet das laufende Bundle (updater/state.json "current") und loescht danach
 die Archive. Die Unit smartheat-firstboot laeuft nur, solange images/ nicht leer ist (ConditionDirectoryNotEmpty).
 Fehlt ein Geraet aus devices: (Zigbee-Stick), endet sie mit EXIT_RETRY, bevor etwas geladen wird, und systemd versucht
-es nach 30 s erneut. Ein offener Updater-Auftrag (in_progress, auch erst waehrend des Ladens eroeffnet) oder ein
-Bundle-Wechsel gehoert dem Updater: dann nur laden, nicht starten."""
+es nach 30 s erneut. Ein offener Updater-Auftrag (in_progress oder ein Systemwechsel `system`, auch erst waehrend des
+Ladens eroeffnet) oder ein Bundle-Wechsel gehoert dem Updater: dann nur laden, nicht starten."""
 import logging
 import os
 import sys
@@ -22,7 +22,7 @@ def run(root: Path, compose, load: Callable[[Path], None] = bundles.docker_load,
     if not archives:
         return 0
     state = updater.State.load(root / "updater" / "state.json")
-    version = None if state.in_progress else state.current
+    version = None if state.in_progress or state.system else state.current
     if version is not None:
         text = (bundles.BundleStore(root).dir(version) / "docker-compose.yml").read_text()
         missing = [path for path in bundles.compose_devices(text) if not path_exists(path)]
@@ -36,7 +36,7 @@ def run(root: Path, compose, load: Callable[[Path], None] = bundles.docker_load,
         # Der Updater (startet parallel nach dem Laden der Unit) kann waehrend des Ladens einen Auftrag eroeffnet oder
         # das Bundle gewechselt haben: dann gehoert ihm der Stack, der Erststart startet nichts mehr.
         latest = updater.State.load(root / "updater" / "state.json")
-        if latest.in_progress or latest.current != version:
+        if latest.in_progress or latest.system or latest.current != version:
             logger.info("Updater hat uebernommen (Auftrag oder Bundle-Wechsel), Erststart startet nichts")
         else:
             compose.up(version)

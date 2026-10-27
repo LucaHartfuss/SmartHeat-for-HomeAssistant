@@ -61,6 +61,11 @@ class FakeStartauswahl:
         self.tryboot_vorgemerkt = False
         self.neustart_angefordert = True
 
+    def normal_neustarten(self) -> None:
+        self._ruf("normal_neustarten")
+        self.tryboot_vorgemerkt = False
+        self.neustart_angefordert = True
+
     def neustart(self) -> None:
         """Die Firmware: mit vorgemerktem tryboot startet [tryboot] (der andere Slot), einmalig; sonst [all]."""
         self._gestartet = andere(self._primaer) if self.tryboot_vorgemerkt else self._primaer
