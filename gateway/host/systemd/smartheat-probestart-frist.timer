@@ -1,0 +1,8 @@
+[Unit]
+Description=SmartHeat-Gateway Probestart-Frist, einmal je Start nach 20 min
+
+[Timer]
+OnBootSec=20min
+
+[Install]
+WantedBy=timers.target

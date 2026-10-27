@@ -1,0 +1,9 @@
+[Unit]
+Description=SmartHeat-Gateway Probestart-Frist (GW 6.3, Rueckfall ohne Updater)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/smartheat/probestart-frist
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
