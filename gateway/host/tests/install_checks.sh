@@ -49,7 +49,7 @@ mkdir -p /etc/ssh/sshd_config.d && echo "PasswordAuthentication yes" >/etc/ssh/s
 bash "$SRC/install.sh" "${ARGS[@]}" >/tmp/run1.log 2>&1 || { cat /tmp/run1.log; fail "erster Lauf"; }
 snapshot() { find /opt/smartheat /etc/smartheat /etc/systemd/system/smartheat-* /etc/systemd/system/emergency.service.d \
   /etc/systemd/system/rescue.service.d /etc/udev/rules.d/99-smartheat-zigbee.rules \
-  /etc/systemd/journald.conf.d/smartheat.conf /var/lib/smartheat \
+  /etc/systemd/journald.conf.d/smartheat.conf /etc/systemd/logind.conf.d/smartheat.conf /var/lib/smartheat \
   -exec stat -c '%n %a %u:%g %s %Y' {} + 2>/dev/null | sort; }
 snapshot >/tmp/before
 sleep 1
@@ -57,7 +57,7 @@ bash "$SRC/install.sh" "${ARGS[@]}" >/tmp/run2.log 2>&1 || fail "zweiter Lauf"
 snapshot >/tmp/after
 diff /tmp/before /tmp/after >/dev/null || { diff /tmp/before /tmp/after; fail "zweiter Lauf hat etwas geaendert"; }
 grep -q "Nichts zu tun" /tmp/run2.log || fail "zweiter Lauf meldet Aenderungen"
-for unit in updater led hoststatus waechter firewall firstboot ablage werk probestart-frist; do
+for unit in updater led hoststatus waechter knopf firewall firstboot ablage werk probestart-frist; do
   # Nur die fehlende docker.service-Abhaengigkeit (Container ohne Docker) wird ausgefiltert, Syntaxfehler nicht.
   systemd-analyze verify "/etc/systemd/system/smartheat-$unit.service" 2>&1 | grep -v "^$" | grep -vi "docker.service" \
     && fail "Unit smartheat-$unit ungueltig"
@@ -73,18 +73,18 @@ for unit in emergency rescue; do
   cmp -s "$SRC/systemd/$unit.service.d/smartheat-probestart.conf" "$drop" || fail "Drop-in $unit.service weicht vom Repo ab"
   grep -q '^ExecStartPre=-/opt/smartheat/probestart-frist sofort$' "$drop" || fail "Drop-in $unit.service ruft die Frist nicht"
 done
-for unit in updater led hoststatus waechter; do
+for unit in updater led hoststatus waechter knopf; do
   grep -q '^Restart=always$' "/etc/systemd/system/smartheat-$unit.service" || fail "Restart= fehlt in smartheat-$unit"
 done
 # gateway.env unter /opt/smartheat ist die einzige Quelle fuer Units und Compose; unter SHG_ROOT gibt es sie nicht mehr.
-for unit in updater led hoststatus waechter firstboot ablage werk; do
+for unit in updater led hoststatus waechter knopf firstboot ablage werk; do
   grep -q '^EnvironmentFile=/opt/smartheat/gateway.env$' "/etc/systemd/system/smartheat-$unit.service" \
     || fail "EnvironmentFile= fehlt in smartheat-$unit"
   grep -q '^Environment=SHG_ROOT' "/etc/systemd/system/smartheat-$unit.service" && fail "SHG_ROOT doppelt in smartheat-$unit"
   grep -q '^RequiresMountsFor=/var/lib/smartheat$' "/etc/systemd/system/smartheat-$unit.service" \
     || fail "RequiresMountsFor= fehlt in smartheat-$unit"
 done
-for unit in updater led hoststatus waechter firstboot ablage werk firewall; do
+for unit in updater led hoststatus waechter knopf firstboot ablage werk firewall; do
   grep -q '@ROOT@' "/etc/systemd/system/smartheat-$unit.service" && fail "@ROOT@ nicht ersetzt in smartheat-$unit"
 done
 grep -q '^SHG_ROOT=/var/lib/smartheat$' /opt/smartheat/gateway.env || fail "SHG_ROOT fehlt in gateway.env"
@@ -92,6 +92,13 @@ grep -q '^ReadWritePaths=/var/lib/smartheat/host$' /etc/systemd/system/smartheat
 grep -q '^After=.*smartheat-ablage.service' /etc/systemd/system/smartheat-updater.service || fail "Updater nicht nach der Ablage"
 grep -Eq '^(After|Requires|Wants)=.*smartheat-firstboot' /etc/systemd/system/smartheat-updater.service \
   && fail "Updater wartet auf den Erststart"
+# Knopf-Dienst (GP8): schreibt host/knopf.json und /run/smartheat; logind ignoriert den Einschaltknopf
+grep -q '^ReadWritePaths=/var/lib/smartheat/host$' /etc/systemd/system/smartheat-knopf.service || fail "ReadWritePaths der Knopf-Unit"
+grep -q '^RuntimeDirectory=smartheat$' /etc/systemd/system/smartheat-knopf.service || fail "RuntimeDirectory der Knopf-Unit"
+cmp -s "$SRC/logind/smartheat.conf" /etc/systemd/logind.conf.d/smartheat.conf || fail "logind-Drop-in weicht vom Repo ab"
+[ "$(stat -c '%a %u:%g' /etc/systemd/logind.conf.d/smartheat.conf)" = "644 0:0" ] || fail "logind-Drop-in hat falsche Rechte"
+grep -qx 'HandlePowerKey=ignore' /etc/systemd/logind.conf.d/smartheat.conf || fail "logind ignoriert den Einschaltknopf nicht"
+grep -qx 'HandlePowerKeyLongPress=ignore' /etc/systemd/logind.conf.d/smartheat.conf || fail "logind ignoriert langes Halten nicht"
 grep -q '^Before=network-pre.target$' /etc/systemd/system/smartheat-werk.service || fail "Werk-Unit nicht vor dem Netz"
 grep -q '^DefaultDependencies=no$' /etc/systemd/system/smartheat-firewall.service || fail "Firewall-Unit ohne DefaultDependencies=no"
 grep -q '^After=nftables.service$' /etc/systemd/system/smartheat-firewall.service || fail "Firewall-Unit nicht nach nftables.service"
@@ -132,7 +139,7 @@ dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null | grep -q "install ok i
 grep -q "WARNUNG: ohne --pilot-ssh" /tmp/run1.log && fail "SSH-Warnung trotz --pilot-ssh"
 [ "$(stat -c '%a' /root/.ssh/authorized_keys)" = "600" ] || fail "authorized_keys"
 PYTHONPATH=/opt/smartheat/host python3 -c "import smartheat_host.updater, smartheat_host.led, \
-  smartheat_host.hoststatus, smartheat_host.kette, smartheat_core.dateien" \
+  smartheat_host.hoststatus, smartheat_host.kette, smartheat_host.knopf, smartheat_core.dateien" \
   || fail "Host-Dienste mit dem System-Python nicht importierbar"
 PYTHONPATH=/opt/smartheat/host python3 -c "
 from pathlib import Path
@@ -200,7 +207,7 @@ done
 # steht diese implizite Regel hier als Drop-in explizit. Ein Gegenbeispiel (After=multi-user.target bei
 # WantedBy=multi-user.target) muss den Test ausloesen, sonst taugt er nichts.
 mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/multi-user.target.d
-for unit in updater led hoststatus waechter firewall firstboot ablage werk; do
+for unit in updater led hoststatus waechter knopf firewall firstboot ablage werk; do
   ln -sf "/etc/systemd/system/smartheat-$unit.service" "/etc/systemd/system/multi-user.target.wants/smartheat-$unit.service"
 done
 cycle_check() {  # Ausgabe von verify fuer multi-user.target mit der impliziten Reihenfolge fuer die Units $*
@@ -208,6 +215,7 @@ cycle_check() {  # Ausgabe von verify fuer multi-user.target mit der impliziten 
   systemd-analyze verify --man=no multi-user.target 2>&1
 }
 cycle_check smartheat-updater.service smartheat-led.service smartheat-hoststatus.service smartheat-waechter.service \
+  smartheat-knopf.service \
   smartheat-firewall.service smartheat-firstboot.service smartheat-ablage.service smartheat-werk.service >/tmp/cycle.log
 if grep -qi 'ordering cycle' /tmp/cycle.log; then grep -i cycle /tmp/cycle.log; fail "Ordnungszyklus in den Gateway-Units"; fi
 sed 's|^After=local-fs.target|After=multi-user.target|' /etc/systemd/system/smartheat-led.service \
@@ -242,6 +250,7 @@ grep -q "Geraet fehlt: $STICK" /tmp/act.log || { cat /tmp/act.log; fail "Aktivie
 compose_started && fail "Aktivierung ohne Stick: compose up trotzdem aufgerufen"
 grep -q "^systemctl enable --now docker.service smartheat-updater.service" /tmp/stub.log || fail "Updater nicht aktiviert"
 grep -q "^systemctl enable --now .*smartheat-waechter.service" /tmp/stub.log || fail "Waechter nicht aktiviert"
+grep -q "^systemctl enable --now .*smartheat-knopf.service" /tmp/stub.log || fail "Knopf-Dienst nicht aktiviert"
 grep -q "^systemctl enable --now smartheat-ablage.service smartheat-werk.service" /tmp/stub.log || fail "Ablage und Werk nicht aktiviert"
 grep -q "probestart-frist" /tmp/stub.log && fail "Probestart-Frist ausserhalb des Images aktiviert (kein A/B-System)"
 cmp -s "$SRC/docker-daemon.json" /etc/docker/daemon.json || fail "docker daemon.json (Speicherweg fuer den Erststart) fehlt"
@@ -266,7 +275,7 @@ IMAGE_ROOT=/var/lib/smartheat-img
 IMAGE_ARGS=(--image --no-docker --device-api-url https://api.example.test --root "$IMAGE_ROOT" --bundle "$SIGNED_BUNDLE")
 bash "$SRC/install.sh" "${IMAGE_ARGS[@]}" >/tmp/run-image.log 2>&1 || { cat /tmp/run-image.log; fail "Lauf mit --image"; }
 [ ! -e "$IMAGE_ROOT" ] || fail "--image hat $IMAGE_ROOT angelegt"
-for unit in smartheat-ablage smartheat-werk smartheat-firewall smartheat-hoststatus smartheat-led; do
+for unit in smartheat-ablage smartheat-werk smartheat-firewall smartheat-hoststatus smartheat-led smartheat-knopf; do
   [ -L "/etc/systemd/system/multi-user.target.wants/$unit.service" ] || fail "$unit mit --image nicht aktiviert"
 done
 [ -L /etc/systemd/system/timers.target.wants/smartheat-probestart-frist.timer ] \

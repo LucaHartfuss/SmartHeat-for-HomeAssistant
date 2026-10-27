@@ -150,6 +150,8 @@ system_files() {
   put /etc/smartheat/nftables.conf 0644 0:0 < <(sed -e "s|@PILOT_SSH@|$ssh_rule|" "$HERE/nftables.conf")
   if [ "$WROTE" = 1 ]; then FIREWALL_CHANGED=1; fi
   put /etc/systemd/journald.conf.d/smartheat.conf 0644 0:0 <"$HERE/journald.conf.d/smartheat.conf"
+  # Der Einschaltknopf gehoert dem Knopf-Dienst; logind (liest beim Start) ignoriert ihn
+  put /etc/systemd/logind.conf.d/smartheat.conf 0644 0:0 <"$HERE/logind/smartheat.conf"
   if [ -n "$PILOT_KEY" ]; then
     put /etc/ssh/sshd_config.d/00-smartheat.conf 0644 0:0 < <(printf \
       'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n')
@@ -211,7 +213,7 @@ activate() {
   udevadm trigger --subsystem-match=tty
   systemctl restart systemd-journald
   systemctl enable --now smartheat-ablage.service smartheat-werk.service smartheat-firewall.service \
-    smartheat-hoststatus.service smartheat-led.service
+    smartheat-hoststatus.service smartheat-led.service smartheat-knopf.service
   # Oneshot mit RemainAfterExit: geaenderte Regeln (z. B. Pilot-SSH an/aus) greifen erst nach einem Neustart der Unit.
   if [ "$FIREWALL_CHANGED" = 1 ]; then systemctl restart smartheat-firewall.service; fi
   # smartheat-firstboot hat Requires=docker.service: nur mit Docker aktivieren (sonst bricht enable --now ab).
@@ -229,7 +231,7 @@ activate() {
 enable_offline() {
   [ "$IMAGE" = 1 ] || return 0
   systemctl enable smartheat-ablage.service smartheat-werk.service smartheat-firewall.service \
-    smartheat-hoststatus.service smartheat-led.service smartheat-probestart-frist.timer
+    smartheat-hoststatus.service smartheat-led.service smartheat-knopf.service smartheat-probestart-frist.timer
   if [ "$DOCKER" = 1 ]; then
     systemctl enable docker.service smartheat-updater.service smartheat-firstboot.service smartheat-waechter.service
   fi

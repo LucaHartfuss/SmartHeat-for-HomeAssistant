@@ -101,7 +101,7 @@ fi
 
 # Dienste
 for unit in smartheat-ablage smartheat-werk smartheat-firewall smartheat-hoststatus smartheat-led smartheat-firstboot \
-            smartheat-updater smartheat-waechter docker; do
+            smartheat-updater smartheat-waechter smartheat-knopf docker; do
   [ -L "$WANTS/$unit.service" ] || fail "$unit nicht aktiviert"
 done
 # Probestart-Frist (ohne Updater schaltet sie 20 min nach dem Start zurueck, GW 6.3): Timer aktiviert, Programme root-eigen
@@ -214,6 +214,14 @@ if [ ! -f "$WATCHDOG" ]; then
 else
   grep -qx 'RuntimeWatchdogSec=10s' "$WATCHDOG" || fail "Watchdog-Drop-in: RuntimeWatchdogSec=10s fehlt"
   grep -qx 'RebootWatchdogSec=5min' "$WATCHDOG" || fail "Watchdog-Drop-in: RebootWatchdogSec=5min fehlt"
+fi
+# Einschaltknopf (GP8): logind ignoriert ihn, der Knopf-Dienst liest ihn
+LOGIND="$R/etc/systemd/logind.conf.d/smartheat.conf"
+if [ ! -f "$LOGIND" ]; then
+  fail "logind-Drop-in fehlt (etc/systemd/logind.conf.d/smartheat.conf)"
+else
+  grep -qx 'HandlePowerKey=ignore' "$LOGIND" || fail "logind-Drop-in: HandlePowerKey=ignore fehlt"
+  grep -qx 'HandlePowerKeyLongPress=ignore' "$LOGIND" || fail "logind-Drop-in: HandlePowerKeyLongPress=ignore fehlt"
 fi
 if [ ! -s "$R/etc/rauc/system.conf" ]; then
   fail "/etc/rauc/system.conf fehlt oder ist leer"

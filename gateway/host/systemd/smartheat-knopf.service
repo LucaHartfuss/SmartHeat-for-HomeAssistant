@@ -1,0 +1,24 @@
+[Unit]
+Description=SmartHeat-Gateway Knopf: Uebernahme-Code und Werksreset-Folge (GP8, FR-21)
+After=local-fs.target smartheat-ablage.service
+Wants=smartheat-ablage.service
+RequiresMountsFor=@ROOT@
+
+[Service]
+Environment=PYTHONPATH=/opt/smartheat/host
+EnvironmentFile=/opt/smartheat/gateway.env
+ExecStart=/usr/bin/python3 -m smartheat_host.knopf
+Restart=always
+RestartSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# /run/smartheat/led_knopf.json (Hinweise fuer die LED); bleibt bestehen, wenn der Dienst neu startet, ein Neustart loescht es
+RuntimeDirectory=smartheat
+RuntimeDirectoryPreserve=yes
+# host/knopf.json (Code)
+ReadWritePaths=@ROOT@/host
+
+[Install]
+WantedBy=multi-user.target

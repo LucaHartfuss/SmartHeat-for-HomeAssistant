@@ -10,7 +10,7 @@ SYSTEMD = Path(__file__).resolve().parents[1] / "systemd"
 UNITS = sorted(p.name for p in SYSTEMD.glob("smartheat-*.service"))
 GATEWAY_ENV = "EnvironmentFile=/opt/smartheat/gateway.env"
 MIT_ROOT = ("smartheat-ablage", "smartheat-werk", "smartheat-firstboot", "smartheat-updater", "smartheat-hoststatus",
-            "smartheat-led", "smartheat-waechter")
+            "smartheat-led", "smartheat-waechter", "smartheat-knopf")
 
 
 def _eintraege(name: str) -> dict[str, list[str]]:
@@ -134,3 +134,24 @@ def test_keine_unit_nennt_host_gateway_env_mehr():
 def test_der_frist_timer_hat_ein_install_und_laeuft_nach_20_minuten():
     timer = (SYSTEMD / "smartheat-probestart-frist.timer").read_text()
     assert "OnBootSec=20min" in timer and "WantedBy=timers.target" in timer
+
+
+def test_der_knopf_dienst_liest_das_geraet_und_schreibt_nur_host_und_run():
+    """GP8: schreibt host/knopf.json (ReadWritePaths) und /run/smartheat/led_knopf.json (RuntimeDirectory, bleibt bei einem
+    Neustart des Dienstes erhalten, die LED liest es); sonst nur lesend. Keine Abhaengigkeit von Docker oder Netz."""
+    knopf = _eintraege("smartheat-knopf.service")
+    assert knopf["ExecStart"] == ["/usr/bin/python3", "-m", "smartheat_host.knopf"]
+    assert knopf["Restart"] == ["always"] and knopf["WantedBy"] == ["multi-user.target"]
+    assert knopf["ReadWritePaths"] == ["@ROOT@/host"]
+    assert knopf["RuntimeDirectory"] == ["smartheat"] and knopf["RuntimeDirectoryPreserve"] == ["yes"]
+    assert knopf["ProtectSystem"] == ["strict"] and knopf["NoNewPrivileges"] == ["yes"]
+    assert set(knopf["After"]) == {"local-fs.target", "smartheat-ablage.service"}
+    assert "Requires" not in knopf and "docker.service" not in _nach("smartheat-knopf.service")
+    assert "smartheat-firstboot.service" not in _nach("smartheat-knopf.service")
+
+
+def test_logind_ignoriert_den_einschaltknopf():
+    """Fehlt der Knopf-Dienst (Absturz, Neustart), faehrt ein Druck das Geraet nicht herunter."""
+    text = (SYSTEMD.parent / "logind" / "smartheat.conf").read_text().splitlines()
+    assert text[0] == "[Login]"
+    assert "HandlePowerKey=ignore" in text and "HandlePowerKeyLongPress=ignore" in text
