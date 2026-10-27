@@ -1,7 +1,8 @@
 """LED des Gateways: spielt je Zustand des Geraetekerns (wire.ZUSTAENDE) ein Muster
 auf der ACT-LED. Zustand aus data/agent_state.json (die Laufzeit schreibt mindestens alle 60 s; der Name stammt aus
 0.5.0); aelter als 5 min oder unlesbar = stoerung. Die Schluessel von PATTERNS sind genau die Zustaende des
-Geraetekerns."""
+Geraetekerns. Dazu die Muster des Knopfs (KNOPF_MUSTER, nur am Host, GP8) mit dem Vorrang
+/run/smartheat/led_knopf.json (Knopf-Dienst, bis Wanduhr) > code_fenster in agent_state.json > Zustand."""
 import json
 import os
 import signal
@@ -12,6 +13,8 @@ from pathlib import Path
 from smartheat_host import lesen
 
 STALE_SECONDS = 300
+#: Hinweise des Knopf-Dienstes (smartheat_host.knopf); in /run, ein Neustart loescht sie
+KNOPF_DATEI = Path("/run/smartheat/led_knopf.json")
 _PULSE = 0.15
 PATTERNS: dict[str, tuple[tuple[bool, float], ...]] = {
     "startet": ((True, 0.1), (False, 0.1)),
@@ -24,18 +27,55 @@ PATTERNS: dict[str, tuple[tuple[bool, float], ...]] = {
     "gesperrt": ((True, 1.7), (False, 0.3)),
     "update_noetig": ((True, 0.6), (False, 0.2), (True, 0.6), (False, 0.6)),
 }
+# Muster des Knopfs, nicht in wire.ZUSTAENDE (der Geraetekern kennt sie nicht): Reset-Folge bereit, Reset laeuft, Code
+# sichtbar (Fenster der LAN-Seite offen). Jedes Muster ist von allen anderen verschieden (test_led.py), damit der Kunde an
+# einer Regel-4-Handlung sieht, was gilt: reset_bereit = Doppelblitz (nicht `startet`), reset_laeuft = gleichmaessig
+# 0,25 s an / 0,25 s aus (0,5/0,5 waere `keine_verbindung`, dauernd an `regelt`).
+KNOPF_MUSTER: dict[str, tuple[tuple[bool, float], ...]] = {
+    "reset_bereit": ((True, 0.1), (False, 0.1), (True, 0.1), (False, 0.7)),
+    "reset_laeuft": ((True, 0.25), (False, 0.25)),
+    "code_sichtbar": ((True, 0.2), (False, 0.8)),
+}
+MUSTER = {**PATTERNS, **KNOPF_MUSTER}
+#: Muster, die der Knopf-Dienst in led_knopf.json setzen darf
+KNOPF_DATEI_MUSTER = ("reset_bereit", "reset_laeuft", "stoerung")
 
 
 def state_from_file(path: Path, now: Callable[[], float] = time.time) -> str:
-    """Zustand des Geraetekerns; veraltete, unlesbare oder unbekannte Angaben zeigen stoerung."""
+    """Zustand des Geraetekerns; veraltete, unlesbare oder unbekannte Angaben zeigen stoerung. Meldet die frische Datei
+    `code_fenster: true`, zeigt die LED code_sichtbar (ein gueltiger Zustand vorausgesetzt)."""
     try:
         data, info = lesen.read_stat(path)  # data/ ist fuer Container schreibbar: begrenzt, ohne Symlink, ohne FIFO
         if now() - info.st_mtime > STALE_SECONDS:
             return "stoerung"
-        zustand = json.loads(data).get("zustand")
+        inhalt = json.loads(data)
+        zustand = inhalt.get("zustand")
+        fenster = inhalt.get("code_fenster") is True
     except (OSError, ValueError, AttributeError):
         return "stoerung"
-    return zustand if isinstance(zustand, str) and zustand in PATTERNS else "stoerung"
+    if not (isinstance(zustand, str) and zustand in PATTERNS):
+        return "stoerung"
+    return "code_sichtbar" if fenster else zustand
+
+
+def knopf_muster(path: Path, now: Callable[[], float] = time.time) -> str | None:
+    """Muster aus led_knopf.json, solange `bis` (Wanduhr, Sekunden) nicht erreicht ist; sonst None. Die Datei liegt in /run
+    und gehoert root; trotzdem begrenzt und ohne Symlink gelesen, Fehler zeigen keinen Hinweis (kein Log je 0,5 s)."""
+    try:
+        inhalt = json.loads(lesen.read_bytes(path))
+        muster, bis = inhalt.get("muster"), inhalt.get("bis")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not (isinstance(muster, str) and muster in KNOPF_DATEI_MUSTER):
+        return None
+    if isinstance(bis, bool) or not isinstance(bis, int | float) or now() >= bis:
+        return None
+    return muster
+
+
+def muster_waehlen(state_path: Path, knopf_path: Path = KNOPF_DATEI, now: Callable[[], float] = time.time) -> str:
+    """Vorrang: led_knopf.json > code_fenster in agent_state.json > Zustand."""
+    return knopf_muster(knopf_path, now) or state_from_file(state_path, now)
 
 
 def find_led(leds_dir: Path = Path("/sys/class/leds")) -> Path | None:
@@ -70,7 +110,7 @@ def play(led: Led, read_state: Callable[[], str], clock: Callable[[], float], sl
     """Spielt Muster ab; der Zustand wird hoechstens alle 0,5 s neu gelesen. steps begrenzt die Schritte (Tests)."""
     state, read_at, done = read_state(), clock(), 0
     while steps is None or done < steps:
-        for on, seconds in PATTERNS[state]:
+        for on, seconds in MUSTER[state]:
             if steps is not None and done >= steps:
                 return
             led.set(on)
@@ -98,7 +138,7 @@ def main() -> None:  # systemd-Einstieg
     try:
         # take liegt im try: SIGTERM kann schon zwischen dem Schreiben von none und der Rueckkehr aus take eintreffen.
         led.take()
-        play(led, lambda: state_from_file(state_path), time.monotonic, time.sleep)
+        play(led, lambda: muster_waehlen(state_path, KNOPF_DATEI), time.monotonic, time.sleep)
     finally:
         led.restore()
 

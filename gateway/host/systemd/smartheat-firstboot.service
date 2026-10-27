@@ -18,7 +18,8 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=@ROOT@ /run/docker.sock
+# /var/log/journal: ein zu Ende gefuehrter Werksreset leert das Journal (journalctl --vacuum-time)
+ReadWritePaths=@ROOT@ /run/docker.sock -/var/log/journal -/run/log/journal
 
 [Install]
 WantedBy=multi-user.target

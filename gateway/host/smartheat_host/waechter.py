@@ -49,13 +49,19 @@ def pruefe(health: dict[str, str], zustand: dict, jetzt: float, pausiert: bool) 
     return "neustart", {"unhealthy_folge": 0, "neustarts": [*neustarts, jetzt], "aufgegeben": False}
 
 
+def systemwechsel(state: updater.State) -> bool:
+    """Wechselt das System gerade (Phase installiere, installiert oder probestart)? Der Werksreset liest dieselbe Lesart
+    (der Werksreset weist dann ab)."""
+    return state.system is not None and state.system["phase"] in PAUSE_PHASEN
+
+
 def pausiert(root: Path) -> bool:
     """Stellt der Updater gerade um, wechselt das System oder laeuft ein Werksreset? (Eine unlesbare Zustandsdatei gilt als
     leer, siehe `updater.State.load`.)"""
     if (root / "host" / "werksreset.json").exists():
         return True
     state = updater.State.load(root / "updater" / "state.json")
-    return state.in_progress is not None or (state.system is not None and state.system["phase"] in PAUSE_PHASEN)
+    return state.in_progress is not None or systemwechsel(state)
 
 
 def schritt(root: Path, compose, zustand: dict, jetzt: float) -> dict:

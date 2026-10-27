@@ -711,6 +711,39 @@ def test_new_claim_code_only_while_not_claimed(tmp_path):
     assert world.device.identity.claim_code == new
 
 
+def test_neuer_uebernahme_code_meldet_neu_uebernommen_und_keine_verbindung(tmp_path):
+    """Die Methode, die auch der Knopfdruck des Gateways ruft: gespeichert wird nur bei "neu"."""
+    world = World(tmp_path)
+    world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang),
+                                       bootstrap.Unavailable("register: HTTP 503"),
+                                       bootstrap.Antwort("uebernommen", world.zugang)]
+    world.verbinden()
+    alt = world.device.identity.claim_code
+    assert world.device.neuer_uebernahme_code() == "neu"
+    neu = world.device.identity.claim_code
+    assert neu != alt and identity.load_or_create(world.dir).claim_code == neu
+    assert world.device.neuer_uebernahme_code() == "keine_verbindung"
+    assert world.device.identity.claim_code == neu and identity.load_or_create(world.dir).claim_code == neu
+    assert world.device.neuer_uebernahme_code() == "uebernommen"
+    assert world.device.identity.claim_code == neu and identity.load_or_create(world.dir).claim_code == neu
+    assert bootstrap.device_state(world.dir) == "uebernommen"
+
+
+@pytest.mark.parametrize(("ergebnis", "antwort"), [
+    ("neu", None), ("keine_verbindung", {"grund": "intern"}), ("uebernommen", {"grund": "bereits_uebernommen"})])
+def test_new_claim_code_befehl_unveraendert(tmp_path, ergebnis, antwort):
+    """Der Befehl (HA, Server) ruft dieselbe Methode wie der Knopf und antwortet wie vorher: Erfolg, intern,
+    bereits_uebernommen."""
+    world = World(tmp_path)
+    world.verbinden()
+    aufrufe = []
+    world.device.neuer_uebernahme_code = lambda: aufrufe.append(1) or ergebnis
+    world.empfangen("down/command", _command("new_claim_code", "c1"))
+    assert aufrufe == [1]
+    letzte = world.link.of("up/result")[-1]
+    assert (letzte["ok"], letzte.get("error")) == (antwort is None, antwort)
+
+
 def test_new_claim_code_mit_zu_grossem_koerper_endet_als_intern_und_sendet_nichts(tmp_path, caplog):
     """MAX_BODY_BYTES (V1): der ValueError der Bootstrap-Anfrage laeuft durch den Befehls-Waechter zu Failed("intern");
     der Geraete-Thread lebt weiter, an der HTTP-Grenze kommt nichts an, der Code bleibt unveraendert."""

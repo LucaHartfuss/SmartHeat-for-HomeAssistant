@@ -44,3 +44,24 @@ def test_check_47_meldet_gruende_ausserhalb_des_vertrags():
 def test_check_47_meldet_fehlende_konstanten():
     assert _probleme_47(SimpleNamespace(), wire.SOFTWARE_ERRORS) == [
         "RETRY_REASON fehlt im Gateway-Updater", "REASONS fehlt im Gateway-Updater"]
+
+
+def test_led_liest_das_code_fenster_so_wie_die_laufzeit_es_schreibt(tmp_path):
+    """Schreiber (smartheat_gateway.geraet_host.ZustandsDatei, Container) und Leser (led.state_from_file, Host) der
+    Datei agent_state.json: `code_fenster` als echtes bool neben `zustand`; ein offenes Fenster zeigt code_sichtbar,
+    ein geschlossenes den Zustand."""
+    import json
+
+    from smartheat_gateway.geraet_host import ZustandsDatei
+    from smartheat_host import led
+
+    pfad = tmp_path / "agent_state.json"
+    datei = ZustandsDatei(pfad, lambda: "2027-01-15T07:00:00+00:00", lambda: 0.0)
+    datei.update("nicht_uebernommen", True)
+    assert json.loads(pfad.read_text())["code_fenster"] is True
+    assert led.state_from_file(pfad) == "code_sichtbar"
+    datei.update("nicht_uebernommen", False)
+    assert json.loads(pfad.read_text())["code_fenster"] is False
+    assert led.state_from_file(pfad) == "nicht_uebernommen"
+    datei.update("nicht_uebernommen")  # ohne Angabe: kein Fenster
+    assert led.state_from_file(pfad) == "nicht_uebernommen"

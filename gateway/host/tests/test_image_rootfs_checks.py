@@ -16,7 +16,7 @@ SCRIPT = IMAGE / "rootfs_checks.sh"
 OWN_URL = IMAGE / "own_url.sh"
 WANTS = "etc/systemd/system/multi-user.target.wants"
 UNITS = ("smartheat-ablage", "smartheat-werk", "smartheat-firewall", "smartheat-hoststatus", "smartheat-led",
-         "smartheat-firstboot", "smartheat-updater", "smartheat-waechter", "docker")
+         "smartheat-firstboot", "smartheat-updater", "smartheat-waechter", "smartheat-knopf", "docker")
 TIMER = "etc/systemd/system/timers.target.wants/smartheat-probestart-frist.timer"
 ENV = "opt/smartheat/gateway.env"  # die einzige Quelle fuer Units und Compose (kein host/gateway.env unter SHG_ROOT)
 WERK = "opt/smartheat/werkseinstellung"
@@ -28,6 +28,7 @@ DPKG_STATUS = "var/lib/dpkg/status"
 SHARED = "etc/rpi-image-gen/slot-shared.d/smartheat.conf"
 WERK_MOUNT = "etc/systemd/system/werk.mount"
 WATCHDOG = "etc/systemd/system.conf.d/smartheat-watchdog.conf"
+LOGIND = "etc/systemd/logind.conf.d/smartheat.conf"
 RAUC_CONF = "etc/rauc/system.conf"
 MARK_GOOD = "etc/systemd/system/rauc-mark-good.service"
 TOOLS = ("ss", "ip", "vcgencmd")
@@ -41,6 +42,7 @@ GOOD_WERK_MOUNT = (
     "Options=ro,nodev,nosuid,noexec,noatime,nofail\n\n[Install]\nWantedBy=multi-user.target\n"
 )
 GOOD_WATCHDOG = "[Manager]\nRuntimeWatchdogSec=10s\nRebootWatchdogSec=5min\n"
+GOOD_LOGIND = (HOST / "logind" / "smartheat.conf").read_text()  # die Datei, die install.sh ablegt
 GOOD_RAUC_CONF = "[system]\ncompatible=smartheat-gateway-pi5\n\n[slot.rootfs.0]\nbootname=A\n\n[slot.rootfs.1]\nbootname=B\n"
 EMERGENCY_DROPIN = "etc/systemd/system/emergency.service.d/smartheat-probestart.conf"
 RESCUE_DROPIN = "etc/systemd/system/rescue.service.d/smartheat-probestart.conf"
@@ -280,6 +282,7 @@ def _good(root: Path) -> Path:
         SHARED: GOOD_SHARED,
         WERK_MOUNT: GOOD_WERK_MOUNT,
         WATCHDOG: GOOD_WATCHDOG,
+        LOGIND: GOOD_LOGIND,
         RAUC_CONF: GOOD_RAUC_CONF,
         # Zeitzone und Locale (locale_default.sh, Layer locale-base/locale-gen): so sieht es nach dem Bau aus
         "usr/share/zoneinfo/Europe/Berlin": "TZif",
@@ -791,6 +794,11 @@ def _replace(path: Path, old: str, new: str) -> None:
     (lambda r: _replace(r / WATCHDOG, "RuntimeWatchdogSec=10s", "RuntimeWatchdogSec=30s"), "RuntimeWatchdogSec=10s"),
     (lambda r: _replace(r / WATCHDOG, "RebootWatchdogSec=5min", "RebootWatchdogSec=10min"), "RebootWatchdogSec=5min"),
     (lambda r: _replace(r / WATCHDOG, "RebootWatchdogSec=5min\n", ""), "RebootWatchdogSec=5min"),
+    # Einschaltknopf (GP8): logind ignoriert ihn, der Knopf-Dienst liest ihn
+    (lambda r: (r / LOGIND).unlink(), "logind-Drop-in fehlt"),
+    (lambda r: _replace(r / LOGIND, "HandlePowerKey=ignore", "HandlePowerKey=poweroff"), "HandlePowerKey=ignore"),
+    (lambda r: _replace(r / LOGIND, "HandlePowerKeyLongPress=ignore", "HandlePowerKeyLongPress=poweroff"),
+     "HandlePowerKeyLongPress=ignore"),
     # RAUC
     (lambda r: (r / RAUC_CONF).unlink(), "system.conf fehlt"),
     (lambda r: (r / RAUC_CONF).write_text(""), "system.conf fehlt oder ist leer"),
@@ -815,7 +823,8 @@ def _replace(path: Path, old: str, new: str) -> None:
 ], ids=["no-shared", "shared-no-version", "shared-no-smartheat", "shared-no-docker", "shared-no-containerd",
         "shared-no-rauc", "shared-no-timesync", "no-werk-mount", "werk-where", "werk-what", "werk-not-ro",
         "werk-no-nodev", "werk-no-nosuid", "werk-no-noexec", "werk-no-nofail", "werk-not-enabled", "no-werk-dir", "no-watchdog",
-        "watchdog-30s", "reboot-watchdog-10min", "reboot-watchdog-missing", "no-rauc-conf", "empty-rauc-conf",
+        "watchdog-30s", "reboot-watchdog-10min", "reboot-watchdog-missing", "no-logind", "logind-power", "logind-longpress",
+        "no-rauc-conf", "empty-rauc-conf",
         "rauc-bootname", "rauc-not-enabled", "mark-good-linked", "mark-good-enabled",
         "usbboot-rule", "usbboot-hook", "unattended-upgrades", "docker-io", "docker-compose-v1", "apt-conf"])
 def test_ab_system_is_checked(tmp_path, breakit, problem):

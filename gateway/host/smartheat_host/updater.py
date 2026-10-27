@@ -134,7 +134,9 @@ SYSTEM_PHASEN = ("installiere", "installiert", "probestart", "bestaetigt", "zuru
 MAX_RUECKFAELLE = 3  # der dritte Rueckfall ohne Ablehnung derselben Version in Folge lehnt sie ab
 ABSTAND_GRUND_SECONDS = 3600
 ABSTAND_MAX_SECONDS = 86400
-MAX_INSTALLFEHLER = 2  # der zweite gescheiterte `rauc install` in Folge lehnt die Version ab
+# Unterbrechungen (Phase `installiere`) und Fehler von `rauc install` zaehlen zusammen in `system_installfehler`: ab 2 lehnt
+# ein Fehler von `rauc install` ab (auch nach einer Unterbrechung), ab 3 eine Unterbrechung
+MAX_INSTALLFEHLER = 2
 MAX_UNTERBRECHUNGEN = 3  # die dritte unterbrochene Installation (Phase `installiere`) in Folge lehnt die Version ab
 #: Host-Dienste, die im Probestart laufen muessen (ohne die LED: sie ist keine Voraussetzung der Regelung); der Waechter
 #: gehoert dazu (GA-09): ein neues System mit totem Waechter wird nicht bestaetigt

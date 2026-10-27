@@ -79,6 +79,12 @@ def abgemeldet(paths: Paths, konfiguration) -> bool:
     return dokument_config.abgemeldet(paths.abgemeldet, konfiguration)
 
 
+def abmeldung_vom_server(paths: Paths) -> None:
+    """Der Server hat abgemeldet (Befehl sign_off): die Abmeldung gehoert ihm, auch wenn ein Werksreset sie zuerst gesetzt
+    hat. Ein verworfener Reset hebt sie dann nie auf (Vermerk `werksreset_abmeldung.json` weg)."""
+    paths.werksreset_abmeldung.unlink(missing_ok=True)
+
+
 def abmelden(paths: Paths, anlage: str) -> bool:
     """Markierung setzen (Befehl sign_off); True, wenn sie neu ist (dann startet die Laufzeit neu)."""
     return dokument_config.abmelden(paths.abgemeldet, anlage)

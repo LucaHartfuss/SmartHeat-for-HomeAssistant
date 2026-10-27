@@ -157,13 +157,14 @@ def _iso(wall: float) -> str:
 def test_an_unchanged_state_rewrites_the_led_file_after_sixty_seconds_not_before(led):
     led.host.anzeigen(_anzeige("regelt"))
     erste = led.led()
-    assert erste == {"zustand": "regelt", "seit": _iso(WALL), "ts": _iso(WALL)}
+    assert erste == {"zustand": "regelt", "seit": _iso(WALL), "ts": _iso(WALL), "code_fenster": False}
     _weiter(led, 59)
     led.host.anzeigen(_anzeige("regelt"))
     assert led.led() == erste  # 59 s: unveraendert, auch ts
     _weiter(led, 1)
     led.host.anzeigen(_anzeige("regelt"))
-    assert led.led() == {"zustand": "regelt", "seit": _iso(WALL), "ts": _iso(WALL + 60)}  # 60 s: neu, seit bleibt
+    assert led.led() == {"zustand": "regelt", "seit": _iso(WALL), "ts": _iso(WALL + 60),
+                         "code_fenster": False}  # 60 s: neu, seit bleibt
 
 
 def test_the_led_minute_counts_from_the_last_write_not_from_the_first(led):

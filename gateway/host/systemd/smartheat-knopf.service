@@ -1,0 +1,30 @@
+[Unit]
+Description=SmartHeat-Gateway Knopf: Uebernahme-Code und Werksreset-Folge (GP8, FR-21)
+After=local-fs.target smartheat-ablage.service
+Wants=smartheat-ablage.service
+RequiresMountsFor=@ROOT@
+
+[Service]
+Environment=PYTHONPATH=/opt/smartheat/host
+EnvironmentFile=/opt/smartheat/gateway.env
+ExecStart=/usr/bin/python3 -m smartheat_host.knopf
+Restart=always
+RestartSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# /run/smartheat/led_knopf.json (Hinweise fuer die LED); bleibt bestehen, wenn der Dienst neu startet, ein Neustart loescht es
+RuntimeDirectory=smartheat
+RuntimeDirectoryPreserve=yes
+# Code: host/knopf.json. Werksreset (GP8): Anfrage und Protokoll unter host/, Loeschen unter data/, bus/ und zigbee2mqtt/, die
+# Compose-Sperre unter updater/, der Docker-Socket fuer `compose down`, das Journal fuer `journalctl --vacuum-time`.
+ReadWritePaths=@ROOT@/host @ROOT@/data @ROOT@/bus @ROOT@/zigbee2mqtt @ROOT@/updater -/run/docker.sock -/var/log/journal -/run/log/journal
+# Ein Werksreset laeuft nach dem Stopp des Dienstes zu Ende: SIGTERM geht nur an den Hauptprozess (der schiebt es waehrend des
+# Loeschens auf), `docker compose down` und `journalctl` behalten ihr Zeitfenster; erst danach SIGKILL. Bleibt ein Reset
+# dennoch stehen, fuehrt der Erststart ihn beim naechsten Start zu Ende (Phase loeschen in host/werksreset.json).
+KillMode=mixed
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target

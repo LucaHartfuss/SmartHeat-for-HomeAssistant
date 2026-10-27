@@ -41,6 +41,7 @@ _LIST_ITEM = re.compile(r"^(\s*)-\s+(.*?)\s*$")
 PULL_TIMEOUT_SECONDS = 900
 UP_TIMEOUT_SECONDS = 300
 PS_TIMEOUT_SECONDS = 60
+DOWN_TIMEOUT_SECONDS = 120  # Anhalten des Stapels (Werksreset, GPC9)
 RESTART_TIMEOUT_SECONDS = 120  # Neustart eines Dienstes durch den Waechter (stop_grace_period der Laufzeit: 20 s)
 IMAGE_TIMEOUT_SECONDS = 120
 LOAD_TIMEOUT_SECONDS = 600  # docker load: ein Archiv von rund 200 MB entpackt auf einem Pi 4 in ein bis drei Minuten
@@ -405,6 +406,11 @@ class ComposeRunner:
     def restart(self, version: str, dienst: str) -> None:
         """Startet einen Dienst des laufenden Bundles neu (der Waechter). Die Sperre haelt der Aufrufer (`sperre`)."""
         self._compose(version, "restart", dienst, timeout=RESTART_TIMEOUT_SECONDS)
+
+    def down(self, version: str) -> None:
+        """Haelt den ganzen Stapel des Projekts an und entfernt die Container (Werksreset; Images und Bind-Ordner bleiben).
+        Die Sperre haelt der Aufrufer (`sperre`)."""
+        self._compose(version, "down", "--remove-orphans", timeout=DOWN_TIMEOUT_SECONDS)
 
     def health(self, version: str) -> dict[str, str]:
         try:

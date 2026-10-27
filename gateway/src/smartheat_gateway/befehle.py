@@ -371,6 +371,7 @@ def sign_off(ctx: Kontext, payload: dict) -> Outcome:
         return Failed("nicht_eingerichtet")
     assert konfiguration is not None
     anlage = konfiguration["anlage"]
+    gateway_config.abmeldung_vom_server(ctx.paths)
     if gateway_config.abmelden(ctx.paths, anlage):
         ctx.neustart()
 

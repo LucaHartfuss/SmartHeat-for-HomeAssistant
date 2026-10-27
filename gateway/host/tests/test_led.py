@@ -34,6 +34,17 @@ def test_blocked_and_update_needed_are_distinct_from_each_other_and_from_stoerun
     assert len({led.PATTERNS[z] for z in ("gesperrt", "update_noetig", "stoerung")}) == 3
 
 
+def test_all_patterns_are_pairwise_distinct():
+    """F-1: der Kunde unterscheidet die Muster mit dem Auge, vor allem `reset_bereit` und `reset_laeuft` (Regel 4) von
+    `startet`, `keine_verbindung` und `regelt`. Gleich ist nur das Paar, das die Kurzanleitung gemeinsam beschreibt."""
+    gleiche: dict[tuple, set[str]] = {}
+    for name, muster in led.MUSTER.items():
+        gleiche.setdefault(muster, set()).add(name)
+    doppelt = [namen for namen in gleiche.values() if len(namen) > 1]
+    assert doppelt == [{"nicht_uebernommen", "wartet_auf_einrichtung"}]
+    assert len(led.MUSTER) == len(led.PATTERNS) + len(led.KNOPF_MUSTER)  # kein Knopf-Muster ueberschreibt einen Zustand
+
+
 def test_stale_unreadable_or_unknown_state_is_stoerung(tmp_path):
     assert led.state_from_file(_state(tmp_path, "regelt", age=301)) == "stoerung"
     assert led.state_from_file(tmp_path / "fehlt.json") == "stoerung"
@@ -215,3 +226,125 @@ def test_sigterm_right_after_taking_the_trigger_still_gives_it_back(tmp_path, mo
     assert ende.value.code == 0
     assert gesehen == ["none"]  # Gegenprobe: der Trigger war uebernommen, als das Signal kam
     assert (led_dir / "trigger").read_text() == "mmc0"
+
+
+# --- Knopf (GP8): Muster und Vorrang ---------------------------------------------------------------------------------
+
+def _knopf_datei(tmp_path, muster, bis):
+    pfad = tmp_path / "led_knopf.json"
+    pfad.write_text(json.dumps({"muster": muster, "bis": bis}))
+    return pfad
+
+
+def _state_mit_fenster(tmp_path, zustand, fenster):
+    path = tmp_path / "agent_state.json"
+    path.write_text(json.dumps({"zustand": zustand, "seit": "x", "ts": "x", "code_fenster": fenster}))
+    return path
+
+
+def test_knopf_muster_sind_nur_fuer_den_host_und_nicht_im_geraetekern():
+    from smartheat_device import wire
+
+    assert set(led.KNOPF_MUSTER) == {"reset_bereit", "reset_laeuft", "code_sichtbar"}
+    assert not set(led.KNOPF_MUSTER) & set(wire.ZUSTAENDE)
+    assert led.KNOPF_MUSTER["reset_bereit"] == ((True, 0.1), (False, 0.1), (True, 0.1), (False, 0.7))
+    assert led.KNOPF_MUSTER["reset_laeuft"] == ((True, 0.25), (False, 0.25))
+    assert led.KNOPF_MUSTER["code_sichtbar"] == ((True, 0.2), (False, 0.8))
+
+
+def test_led_vorrang(tmp_path):
+    """led_knopf.json > code_fenster in agent_state.json > Zustand."""
+    jetzt = time.time()
+    state = _state_mit_fenster(tmp_path, "regelt", True)
+    knopf = _knopf_datei(tmp_path, "reset_bereit", jetzt + 30)
+    assert led.muster_waehlen(state, knopf) == "reset_bereit"  # Knopf vor Code-Fenster
+    knopf = _knopf_datei(tmp_path, "reset_laeuft", jetzt + 30)
+    assert led.muster_waehlen(state, knopf) == "reset_laeuft"
+    knopf = _knopf_datei(tmp_path, "stoerung", jetzt + 30)
+    assert led.muster_waehlen(state, knopf) == "stoerung"
+    # abgelaufen oder ohne Datei: das Code-Fenster
+    knopf = _knopf_datei(tmp_path, "reset_bereit", jetzt - 1)
+    assert led.muster_waehlen(state, knopf) == "code_sichtbar"
+    assert led.muster_waehlen(state, tmp_path / "fehlt.json") == "code_sichtbar"
+    # ohne Fenster: der Zustand
+    assert led.muster_waehlen(_state_mit_fenster(tmp_path, "regelt", False), tmp_path / "fehlt.json") == "regelt"
+    assert led.muster_waehlen(_state(tmp_path, "keine_verbindung"), tmp_path / "fehlt.json") == "keine_verbindung"
+
+
+def test_nur_ein_echtes_true_oeffnet_das_code_fenster(tmp_path):
+    for wert in ("true", 1, "ja", None, [True]):
+        assert led.state_from_file(_state_mit_fenster(tmp_path, "regelt", wert)) == "regelt", wert
+    assert led.state_from_file(_state_mit_fenster(tmp_path, "regelt", True)) == "code_sichtbar"
+
+
+def test_ein_veralteter_oder_unbekannter_zustand_bleibt_stoerung_auch_mit_fenster(tmp_path):
+    veraltet = _state_mit_fenster(tmp_path, "regelt", True)
+    alt = time.time() - 301
+    os.utime(veraltet, (alt, alt))
+    assert led.state_from_file(veraltet) == "stoerung"
+    assert led.state_from_file(_state_mit_fenster(tmp_path, "unbekannt", True)) == "stoerung"
+
+
+@pytest.mark.parametrize("inhalt", [
+    "kaputt{", "[]", "{}", '{"muster": "reset_bereit"}', '{"bis": 99999999999}',
+    '{"muster": "regelt", "bis": 99999999999}',  # kein Muster der Knopf-Datei
+    '{"muster": "code_sichtbar", "bis": 99999999999}',  # kommt nur aus agent_state.json
+    '{"muster": ["reset_bereit"], "bis": 99999999999}', '{"muster": "reset_bereit", "bis": "99999999999"}',
+    '{"muster": "reset_bereit", "bis": true}', '{"muster": "reset_bereit", "bis": null}',
+])
+def test_unbrauchbare_knopf_datei_gilt_nicht(tmp_path, inhalt):
+    knopf = tmp_path / "led_knopf.json"
+    knopf.write_text(inhalt)
+    assert led.muster_waehlen(_state(tmp_path, "regelt"), knopf) == "regelt"
+
+
+def test_knopf_datei_als_symlink_oder_fifo_gilt_nicht_und_blockiert_nicht(tmp_path):
+    ziel = tmp_path / "ziel.json"
+    ziel.write_text(json.dumps({"muster": "reset_bereit", "bis": time.time() + 30}))
+    link = tmp_path / "link.json"
+    link.symlink_to(ziel)
+    assert led.muster_waehlen(_state(tmp_path, "regelt"), link) == "regelt"
+    fifo = tmp_path / "fifo.json"
+    os.mkfifo(fifo)
+    assert led.muster_waehlen(_state(tmp_path, "regelt"), fifo) == "regelt"
+
+
+def test_knopf_datei_endet_genau_bei_bis(tmp_path):
+    knopf = _knopf_datei(tmp_path, "reset_bereit", 1000.0)
+    state = _state(tmp_path, "regelt")
+    assert led.muster_waehlen(state, knopf, now=lambda: 999.99) == "reset_bereit"
+    assert led.muster_waehlen(state, knopf, now=lambda: 1000.0) == "regelt"
+
+
+@pytest.mark.parametrize("muster", ["reset_bereit", "reset_laeuft", "code_sichtbar"])
+def test_play_spielt_die_knopf_muster(tmp_path, muster):
+    base = tmp_path / "ACT"
+    base.mkdir()
+    writes = []
+    device = led.Led(base)
+    device.set = lambda on: writes.append(on)  # type: ignore[method-assign]
+    clock = [0.0]
+    pattern = led.KNOPF_MUSTER[muster]
+    led.play(device, lambda: muster, lambda: clock[0], lambda s: clock.__setitem__(0, clock[0] + s), steps=len(pattern))
+    assert writes == [on for on, _ in pattern]
+
+
+def test_main_waehlt_das_muster_mit_vorrang_des_knopfs(tmp_path, monkeypatch):
+    """`main` liest led_knopf.json (KNOPF_DATEI) vor agent_state.json."""
+    led_dir = tmp_path / "ACT"
+    led_dir.mkdir()
+    (led_dir / "trigger").write_text("none [mmc0]\n")
+    (tmp_path / "data").mkdir()
+    _state(tmp_path / "data", "regelt")
+    knopf = _knopf_datei(tmp_path, "reset_laeuft", time.time() + 60)
+    monkeypatch.setattr(led, "find_led", lambda: led_dir)
+    monkeypatch.setattr(led, "KNOPF_DATEI", knopf)
+    monkeypatch.setenv("SHG_ROOT", str(tmp_path))
+    gesehen = []
+
+    def spielen(device, read_state, clock, sleep, steps=None):
+        gesehen.append(read_state())
+
+    monkeypatch.setattr(led, "play", spielen)
+    led.main()
+    assert gesehen == ["reset_laeuft"]

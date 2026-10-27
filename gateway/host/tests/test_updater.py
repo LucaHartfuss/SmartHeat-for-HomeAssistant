@@ -3325,6 +3325,31 @@ def test_install_scheitert_einmal_vorlaeufig_zweimal_abgelehnt(tmp_path, caplog)
     assert world.updater.run_once() == "aktuell"
 
 
+def test_unterbrechung_dann_ein_installfehler_lehnt_ab(tmp_path, caplog):
+    """Gemischte Folge: Unterbrechungen und Fehler von `rauc install` teilen sich den Zaehler. Nach einer Unterbrechung (1)
+    lehnt schon der erste Fehler von `rauc install` ab (2), nicht erst der zweite."""
+    world = _system_world(tmp_path)
+    world.compose.images.add(IMAGE)
+
+    def stromausfall(bundle):
+        raise _Strom
+
+    world.sa.installieren = stromausfall
+    with pytest.raises(_Strom):
+        world.updater.run_once()
+    world.sa = FakeStartauswahl(gestartet="A")
+    _neustart(world, ALT)
+    world.updater.recover()
+    assert world.state().system_installfehler == 1 and world.state().rejected == []
+    world.sa.installieren_fehler = StartauswahlFehler("rauc install: Exit 1")
+    with caplog.at_level("ERROR"):
+        assert world.updater.run_once() == "abgelehnt"
+    assert "system_grund=manifest_ungueltig" in caplog.text
+    state = world.state()
+    assert (state.system_installfehler, state.rejected) == (0, [world.abgelehnt()])
+    assert _berichte(world) == [("manifest_ungueltig", "rollback")] and _system_dateien(world) == []
+
+
 def test_ein_gelungener_install_setzt_die_zaehlung_der_fehler_zurueck(tmp_path):
     """'In Folge': Fehler, Erfolg (mit Rueckfall), Fehler ist wieder der erste."""
     world = _system_world(tmp_path)
