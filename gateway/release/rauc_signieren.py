@@ -39,24 +39,29 @@ def _conf(roots: Path) -> str:
     return text.replace(KEYRING_ZEILE, f"path={roots}")
 
 
-def _lauf(befehl: Sequence[str], schluessel: str, name: str) -> None:
-    """Fuehrt einen Schritt aus; scheitert er, gehen die Meldungen des Programms geschwaerzt nach stderr (rauc meldet auch
-    im Erfolgsfall viel)."""
+def lauf(befehl: Sequence[str], schluessel: str, name: str, eingabe: bytes | None = None) -> bytes:
+    """Fuehrt einen Schritt aus und liefert seine Standardausgabe. Scheitert er, gehen die Meldungen des Programms
+    (rauc nennt den Grund auf stdout, openssl auf stderr) geschwaerzt nach stderr; im Erfolgsfall bleibt es still (rauc
+    meldet auch dann viel)."""
     try:
-        ergebnis = subprocess.run(list(befehl), capture_output=True, check=False)
+        ergebnis = subprocess.run(list(befehl), input=eingabe, capture_output=True, check=False)
     except OSError:
         raise SigniereFehler(f"{name}: Programm nicht aufrufbar") from None
     if ergebnis.returncode != 0:
-        meldung = geschwaerzt(ergebnis.stderr.decode(errors="replace"), schluessel)
-        if meldung:
-            print(meldung, end="" if meldung.endswith("\n") else "\n", file=sys.stderr)
+        for strom in (ergebnis.stdout, ergebnis.stderr):
+            meldung = geschwaerzt(strom.decode(errors="replace"), schluessel)
+            if meldung:
+                print(meldung, end="" if meldung.endswith("\n") else "\n", file=sys.stderr)
         raise SigniereFehler(f"{name} fehlgeschlagen (Exit {ergebnis.returncode})")
+    return ergebnis.stdout
 
 
 def signiere_bundle(roh: Path, ziel: Path, zertifikat_pem: Path, schluessel: str, *, roots: Path, wegwerf_ca: Path,
-                    rauc: Sequence[str]) -> None:
+                    rauc: Sequence[str], arbeit: Path | None = None) -> None:
     """Ersetzt die Wegwerf-Signatur von `roh` durch die der Release-Kette und schreibt das Ergebnis nach `ziel`.
-    `rauc` ist die Befehlszeile des Programms (etwa ["rauc"]). Wirft SigniereFehler; dann liegt kein `ziel` da."""
+    `rauc` ist die Befehlszeile des Programms (etwa ["rauc"]). Die Arbeitsdateien (system.conf, sig.cms, sig.neu) liegen
+    in einem neuen Ordner unter `arbeit` (Standard: TMPDIR); laeuft rauc in einem Container, muss er `arbeit`, `roh`, `ziel`,
+    `roots` und `wegwerf_ca` unter denselben Pfaden sehen. Wirft SigniereFehler; dann liegt kein `ziel` da."""
     neu = ziel.with_name(ziel.name + ".neu")
     ziel.unlink(missing_ok=True)
     neu.unlink(missing_ok=True)
@@ -66,21 +71,21 @@ def signiere_bundle(roh: Path, ziel: Path, zertifikat_pem: Path, schluessel: str
         if not schluessel.startswith(PKCS11) and not os.path.isfile(schluessel):
             raise SigniereFehler("Schluesseldatei fehlt")
         provider = ["-provider", "pkcs11", "-provider", "default"] if schluessel.startswith(PKCS11) else []
-        with tempfile.TemporaryDirectory(prefix="rauc-signieren-") as arbeit:
-            sig_alt, manifest, sig_neu, conf = (Path(arbeit) / n for n in
+        with tempfile.TemporaryDirectory(prefix="rauc-signieren-", dir=arbeit) as ordner:
+            sig_alt, manifest, sig_neu, conf = (Path(ordner) / n for n in
                                                 ("sig.cms", "manifest.raucm", "sig.neu", "system.conf"))
             conf.write_text(_conf(roots))
             basis = [*rauc, "--conf", str(conf)]
-            _lauf([*basis, "--keyring", str(wegwerf_ca), "extract-signature", str(roh), str(sig_alt)], schluessel,
-                  "rauc extract-signature")
-            _lauf(["openssl", "cms", "-verify", "-noverify", "-inform", "DER", "-in", str(sig_alt), "-out", str(manifest)],
-                  schluessel, "openssl cms -verify")
-            _lauf(["openssl", "cms", "-sign", *provider, "-binary", "-nodetach", "-outform", "DER", "-md", "sha256",
-                   "-nosmimecap", "-signer", str(zertifikat_pem), "-inkey", schluessel, "-in", str(manifest),
-                   "-out", str(sig_neu)], schluessel, "openssl cms -sign")
-            _lauf([*basis, "--keyring", str(wegwerf_ca), "replace-signature", "--signing-keyring", str(roots), str(roh),
-                   str(sig_neu), str(neu)], schluessel, "rauc replace-signature")
-            _lauf([*basis, "info", str(neu)], schluessel, "rauc info")
+            lauf([*basis, "--keyring", str(wegwerf_ca), "extract-signature", str(roh), str(sig_alt)], schluessel,
+                 "rauc extract-signature")
+            lauf(["openssl", "cms", "-verify", "-noverify", "-inform", "DER", "-in", str(sig_alt), "-out", str(manifest)],
+                 schluessel, "openssl cms -verify")
+            lauf(["openssl", "cms", "-sign", *provider, "-binary", "-nodetach", "-outform", "DER", "-md", "sha256",
+                  "-nosmimecap", "-signer", str(zertifikat_pem), "-inkey", schluessel, "-in", str(manifest),
+                  "-out", str(sig_neu)], schluessel, "openssl cms -sign")
+            lauf([*basis, "--keyring", str(wegwerf_ca), "replace-signature", "--signing-keyring", str(roots), str(roh),
+                  str(sig_neu), str(neu)], schluessel, "rauc replace-signature")
+            lauf([*basis, "info", str(neu)], schluessel, "rauc info")
         neu.chmod(0o644)
         neu.replace(ziel)
     finally:

@@ -33,7 +33,8 @@ elif "-verify" in argv:
 else:
     schritt = "sign"
 if os.environ.get("ATTRAPPE_FEHLER") == schritt:
-    sys.stderr.write(os.environ.get("ATTRAPPE_MELDUNG", "Fehler") + "\\n")
+    kanal = sys.stdout if os.environ.get("ATTRAPPE_KANAL") == "stdout" else sys.stderr
+    kanal.write(os.environ.get("ATTRAPPE_MELDUNG", "Fehler") + "\\n")
     sys.exit(1)
 if schritt in ("extract-signature", "replace-signature"):
     Path = argv[-1]
@@ -57,6 +58,7 @@ def umgebung(tmp_path, monkeypatch):
     monkeypatch.setenv("ATTRAPPE_LOG", str(tmp_path / "aufrufe.log"))
     monkeypatch.delenv("ATTRAPPE_FEHLER", raising=False)
     monkeypatch.delenv("ATTRAPPE_MELDUNG", raising=False)
+    monkeypatch.delenv("ATTRAPPE_KANAL", raising=False)
     monkeypatch.setattr(tempfile, "tempdir", str(arbeit))
     for name, inhalt in (("roh.raucb", b"ROH"), ("release.crt", b"cert"), ("release.key", b"key"),
                          ("wegwerf-root.pem", b"w"), ("roots.pem", b"r")):
@@ -73,9 +75,9 @@ def umgebung(tmp_path, monkeypatch):
             return [json.loads(zeile) for zeile in pfad.read_text().splitlines()] if pfad.exists() else []
 
         @classmethod
-        def signiere(cls, schluessel: str | None = None) -> None:
+        def signiere(cls, schluessel: str | None = None, **weitere) -> None:
             rauc_signieren.signiere_bundle(cls.roh, cls.ziel, cls.zertifikat, schluessel or cls.schluessel,
-                                           roots=cls.roots, wegwerf_ca=cls.wegwerf, rauc=cls.rauc)
+                                           roots=cls.roots, wegwerf_ca=cls.wegwerf, rauc=cls.rauc, **weitere)
 
     return Umgebung
 
@@ -192,6 +194,35 @@ def test_uri_und_pin_erscheinen_nie_in_ausgabe_oder_fehler(umgebung, monkeypatch
     for geheim in ("GEHEIME-PIN", "pkcs11:", "Setwell%20Release", "release-key"):
         assert geheim not in str(info.value) + ausgabe.out + ausgabe.err, geheim
     assert "[Schluessel]" in ausgabe.err and "kann" in ausgabe.err  # Gegenprobe: die Meldung kommt geschwaerzt durch
+
+
+def test_meldung_auf_stdout_kommt_geschwaerzt_in_den_fehler(umgebung, monkeypatch, capfd):
+    """rauc nennt den Grund einer Ablehnung auf stdout (Review Task 1): er darf nicht verloren gehen, und der Schluessel
+    erscheint auch dort nie."""
+    u = umgebung
+    monkeypatch.setenv("ATTRAPPE_FEHLER", "info")
+    monkeypatch.setenv("ATTRAPPE_KANAL", "stdout")
+    monkeypatch.setenv("ATTRAPPE_MELDUNG", f"certificate signature failure ({URI} pin-value=GEHEIME-PIN-4711)")
+    with pytest.raises(SigniereFehler):
+        u.signiere(URI)
+    ausgabe = capfd.readouterr()
+    assert "certificate signature failure" in ausgabe.err  # Gegenprobe: der Grund steht in der Fehlerausgabe
+    assert ausgabe.out == ""  # nichts auf stdout (dort stehen beim Release die Werte fuer bundle add)
+    for geheim in ("GEHEIME-PIN", "pkcs11:", "Setwell%20Release", "release-key"):
+        assert geheim not in ausgabe.out + ausgabe.err, geheim
+    assert "[Schluessel]" in ausgabe.err
+
+
+def test_arbeitsordner_ist_waehlbar_und_danach_leer(umgebung, tmp_path):
+    """Laeuft rauc in einem Container, sieht er nur gemountete Pfade: die Arbeitsdateien (system.conf, sig.cms, sig.neu)
+    liegen dann im vorgegebenen Ordner, nicht unter TMPDIR."""
+    u = umgebung
+    arbeit = tmp_path / "gemountet"
+    arbeit.mkdir()
+    u.signiere(arbeit=arbeit)
+    pfade = [a for aufruf in u.aufrufe() for a in aufruf["argv"] if "rauc-signieren-" in a]
+    assert len(pfade) >= 5 and all(p.startswith(f"{arbeit}/rauc-signieren-") for p in pfade), pfade
+    assert list(arbeit.iterdir()) == [] and list(u.tmp.iterdir()) == []
 
 
 def test_pin_value_wird_auch_ohne_die_uri_geschwaerzt(umgebung, monkeypatch, capfd):

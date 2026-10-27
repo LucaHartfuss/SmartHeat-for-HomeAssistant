@@ -70,7 +70,7 @@ toter_code() {
   vulture_in heizungsbruecke src ../gateway/src vulture_ausnahmen.py \
     ../gateway/vulture_ausnahmen.py \
   && vulture_in gateway/host smartheat_host vulture_ausnahmen.py \
-  && vulture_in gateway/release build_bundle.py verify_bundle.py ca.py signieren.py rauc_signieren.py changelog_section.py \
+  && vulture_in gateway/release build_bundle.py verify_bundle.py ca.py signieren.py rauc_signieren.py rauc_bundle.py changelog_section.py \
     vulture_ausnahmen.py
 }
 lint() { pyright_in heizungsbruecke && pyright_in gateway && pyright_in gateway/host && pyright_in gateway/release && toter_code \
