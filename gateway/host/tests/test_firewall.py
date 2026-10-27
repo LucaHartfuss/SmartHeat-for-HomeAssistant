@@ -31,8 +31,8 @@ KOPF = "type filter hook input priority 0"
 KETTEN = [("smartheat", "input"), ("smartheat", "prerouting")]
 # prerouting (GW-Weiterleitung): Kopf ohne Policy (Standard accept), genau diese zwei Regeln in dieser Reihenfolge
 VORROUTING_KOPF = "type filter hook prerouting priority raw"
-VORROUTING_REGELN = ['iifname != "lo" ip daddr 127.0.0.0/8 drop',
-                     'iifname != { "docker0", "br-*" } ip daddr 172.30.0.0/16 drop']
+VORROUTING_REGELN = ['iifname != "lo" ip daddr 127.0.0.0/8 drop', 'iifname "docker0" return', 'iifname "br-*" return',
+                     "ip daddr 172.30.0.0/16 drop"]
 
 
 def _ohne_kommentare(text: str) -> str:
@@ -201,7 +201,8 @@ def _pool() -> dict:
 
 
 def test_prerouting_drops_loopback_and_container_addresses_from_outside_the_host():
-    """Raw-Kette vor Conntrack und DNAT: Ziel 127.0.0.0/8 nur ueber `lo`, Ziel im Docker-Pool nur aus `docker0`/`br-*`.
+    """Raw-Kette vor Conntrack und DNAT: Ziel 127.0.0.0/8 nur ueber `lo`, Ziel im Docker-Pool nur aus `docker0`/`br-*`
+    (zwei `return`-Regeln vor dem `drop`, keine Menge mit Platzhalter).
     Alles andere (DNAT auf veroeffentlichte Ports laeuft ueber die Host-Adresse) bleibt unberuehrt: keine Policy, kein accept."""
     for mit_pilot_ssh in (False, True):
         anweisungen = _vorrouting(_wirksame_datei(mit_pilot_ssh))
@@ -213,8 +214,8 @@ def test_the_prerouting_range_equals_the_docker_address_pool():
     oder die Regel schnitte fremden Verkehr ab). Groesse 24: je Compose-Netz ein /24 aus dem /16."""
     pool = _pool()
     assert pool == {"base": "172.30.0.0/16", "size": 24}
-    regel = _vorrouting(NFTABLES.read_text())[2]
-    assert re.fullmatch(r'iifname != \{ "docker0", "br-\*" \} ip daddr (\S+) drop', regel).group(1) == pool["base"]
+    regel = _vorrouting(NFTABLES.read_text())[-1]
+    assert re.fullmatch(r"ip daddr (\S+) drop", regel).group(1) == pool["base"]
     assert json.loads(DOCKER_DAEMON.read_text())["features"] == {"containerd-snapshotter": True}  # Speicherweg bleibt
 
 
@@ -222,10 +223,15 @@ _VORROUTING_ABWEICHUNGEN = {
     "Prioritaet filter": lambda t: t.replace("priority raw", "priority filter"),
     "Hook input statt prerouting": lambda t: t.replace("hook prerouting", "hook input"),
     "Pool geaendert": lambda t: t.replace("172.30.0.0/16", "172.31.0.0/16"),
-    "Bruecken nicht ausgenommen": lambda t: t.replace('{ "docker0", "br-*" }', '"docker0"'),
+    "br-Bruecken nicht ausgenommen": lambda t: t.replace('    iifname "br-*" return\n', ""),
+    "docker0 nicht ausgenommen": lambda t: t.replace('    iifname "docker0" return\n', ""),
+    "Ausnahmen hinter dem drop": lambda t: t.replace('    iifname "docker0" return\n    iifname "br-*" return\n    ip daddr 172.30.0.0/16 drop\n',
+                                                     '    ip daddr 172.30.0.0/16 drop\n    iifname "docker0" return\n    iifname "br-*" return\n'),
+    "Menge mit Platzhalter": lambda t: t.replace('    iifname "docker0" return\n    iifname "br-*" return\n',
+                                                 '    iifname != { "docker0", "br-*" } return\n'),
     "Loopback-Regel entfernt": lambda t: t.replace('    iifname != "lo" ip daddr 127.0.0.0/8 drop\n', ""),
     "Loopback ueber alle Schnittstellen": lambda t: t.replace('iifname != "lo" ip daddr 127.0.0.0/8', "ip daddr 127.0.0.0/8"),
-    "Pool-Regel entfernt": lambda t: t.replace('    iifname != { "docker0", "br-*" } ip daddr 172.30.0.0/16 drop\n', ""),
+    "Pool-Regel entfernt": lambda t: t.replace("    ip daddr 172.30.0.0/16 drop\n", ""),
     "accept statt drop": lambda t: t.replace("172.30.0.0/16 drop", "172.30.0.0/16 accept"),
     "zusaetzliche Regel": lambda t: t.replace("172.30.0.0/16 drop", "172.30.0.0/16 drop\n    tcp dport 8081 accept"),
 }
