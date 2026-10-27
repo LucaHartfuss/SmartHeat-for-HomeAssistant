@@ -2,7 +2,7 @@
 JavaScript, Selbstaktualisierung alle 10 s. Zeigt den Zustand des Geraetekerns (wie die LED), Hinweise des Dienstes
 (Befehl hinweis), eigene Meldungen (Wunsch begrenzt, Soll-Quelle aus), eine abgelehnte Konfiguration und, solange das
 Gateway nicht uebernommen ist (Anzeige.code_zeigen) und nach einem Knopfdruck das Code-Fenster (15 min) offen ist,
-Geraete-ID, QR-Code (segno, SVG) und Uebernahme-Code - nur lokal; sonst nach einem Druck den Hinweis "keine Verbindung"
+Geraete-ID und Uebernahme-Code (kein QR-Code, kein Portal-Link mit Code, GW 7.1) - nur lokal; sonst nach einem Druck den Hinweis "keine Verbindung"
 bzw. "uebernommen".
 Den Uebernahmestand meldet der Server (claim_state, new_claim_code); bis dahin gilt der Stand des Bootstraps. /healthz
 fuer den Updater.
@@ -20,9 +20,6 @@ import socket
 import threading
 from collections.abc import Callable, Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import quote
-
-import segno
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +53,6 @@ def seite(geraet, device) -> dict:
     data["geraet"] = device.identity.device_id if device is not None and sichtbar else None
     data["code_hinweis"] = geraet.code_hinweis()
     return data
-
-
-def qr_url(portal_base: str, device) -> str | None:
-    portal = portal_base.rstrip("/")
-    if not portal or device is None:
-        return None
-    return f"{portal}/#/claim?d={quote(device.identity.device_id)}&c={quote(device.identity.claim_code)}"
 
 
 def parse_hostnames(text: str) -> frozenset[str]:
@@ -116,7 +106,7 @@ def _liste(titel: str, eintraege: list[str]) -> str:
     return f"<h2>{html.escape(titel)}</h2><ul>{items}</ul>"
 
 
-def render_html(data: dict, qr_url: str | None) -> str:
+def render_html(data: dict) -> str:
     host = data.get("host", {})
     zustand = data.get("zustand", "startet")
     rows = "".join([
@@ -133,8 +123,7 @@ def render_html(data: dict, qr_url: str | None) -> str:
     claim = ""
     if data.get("code"):
         code = html.escape(data["code"])
-        qr = segno.make(qr_url, error="m").svg_inline(scale=4) if qr_url else ""
-        claim = (f"<h2>Gerät übernehmen</h2>{qr}<p>Gerät: <strong>{html.escape(str(data.get('geraet')))}</strong></p>"
+        claim = (f"<h2>Gerät übernehmen</h2><p>Gerät: <strong>{html.escape(str(data.get('geraet')))}</strong></p>"
                  f"<p>Übernahme-Code: <strong>{code}</strong></p>")
     elif data.get("code_hinweis") in CODE_HINWEIS_TEXTE:
         claim = f"<h2>Gerät übernehmen</h2><p>{html.escape(CODE_HINWEIS_TEXTE[data['code_hinweis']])}</p>"
@@ -174,7 +163,7 @@ class _BegrenzterServer(ThreadingHTTPServer):
 
 
 def start_server(
-    port: int, snapshot_fn: Callable[[], dict], qr_url_fn: Callable[[], str | None], hostnames: Iterable[str] = (),
+    port: int, snapshot_fn: Callable[[], dict], hostnames: Iterable[str] = (),
     *, nur_health: bool = False,
 ) -> ThreadingHTTPServer:
     """`nur_health`: der Gesundheitsserver fuer Compose-Healthcheck und Updater antwortet nur auf /healthz (kein HTML,
@@ -229,7 +218,7 @@ def start_server(
                                    "zustand": data["zustand"]})
                 self._answer(200, body.encode(), "application/json")
                 return
-            body = render_html(data, qr_url_fn() if data.get("code") else None)
+            body = render_html(data)
             self._answer(200, body.encode(), "text/html; charset=utf-8")
 
     server = _BegrenzterServer(("0.0.0.0", port), Handler, MAX_VERBINDUNGEN)

@@ -19,7 +19,6 @@ from smartheat_gateway.diagnose import (
     ZUSTAND_TEXTE,
     host_allowed,
     parse_hostnames,
-    qr_url,
     render_html,
     seite,
     start_server,
@@ -59,21 +58,25 @@ def test_every_state_has_a_text():
     assert set(ZUSTAND_TEXTE) == set(wire.ZUSTAENDE)
 
 
-def test_html_shows_the_qr_only_while_not_set_up():
-    page = render_html(SNAPSHOT, "https://portal.example.test/#/claim?d=shg-abcdefghijklmnop&c=ABCDEFGHJKLM")
-    assert "<svg" in page and "ABCDEFGHJKLM" in page and "<script" not in page
-    eingerichtet = render_html({**SNAPSHOT, "eingerichtet": True, "zustand": "regelt", "code": None}, None)
-    assert "<svg" not in eingerichtet and "ABCDEFGHJKLM" not in eingerichtet
+def test_html_shows_device_id_and_code_only_while_not_set_up():
+    page = render_html(SNAPSHOT)
+    assert "ABCDEFGHJKLM" in page and "shg-abcdefghijklmnop" in page and "<script" not in page
+    eingerichtet = render_html({**SNAPSHOT, "eingerichtet": True, "zustand": "regelt", "code": None})
+    assert "ABCDEFGHJKLM" not in eingerichtet
 
 
-def test_html_without_portal_url_shows_the_code_without_qr():
-    page = render_html(SNAPSHOT, None)
-    assert "ABCDEFGHJKLM" in page and "<svg" not in page
+def test_the_page_has_no_qr_code_and_no_portal_link_with_the_code():
+    """GW 7.1: kein Portal-Link mit Code. Weder ein Link (`href`, `claim?`) noch ein QR-Bild (svg) enthaelt den Code,
+    auch nicht bei offenem Fenster."""
+    page = render_html(SNAPSHOT)
+    assert "ABCDEFGHJKLM" in page  # als Text, zum Abtippen im Portal
+    assert "claim?" not in page and "href" not in page and "<svg" not in page and "<img" not in page
+    assert page.count("ABCDEFGHJKLM") == 1
 
 
 @pytest.mark.parametrize("zustand", ["gesperrt", "update_noetig"])
 def test_blocking_states_are_explained_on_the_page(zustand):
-    page = render_html({**SNAPSHOT, "zustand": zustand, "code": None}, None)
+    page = render_html({**SNAPSHOT, "zustand": zustand, "code": None})
     assert ZUSTAND_TEXTE[zustand] in page
 
 
@@ -82,13 +85,13 @@ def test_page_lists_hints_own_messages_and_a_rejected_configuration():
             "hinweise": [{"key": "wartung", "stufe": "warnung", "text": "Wartung <heute>"}],
             "meldungen": [{"key": "wunsch_begrenzt", "text": "Wunsch auf 26 °C begrenzt"}],
             "konfiguration_abgelehnt": "Raumfühler ungültig"}
-    page = render_html(data, None)
+    page = render_html(data)
     assert "Wartung &lt;heute&gt;" in page and "Wunsch auf 26 °C begrenzt" in page
     assert "Raumfühler ungültig" in page and "<heute>" not in page
 
 
 def test_healthz_and_page_over_http():
-    server = start_server(0, lambda: SNAPSHOT, lambda: None)
+    server = start_server(0, lambda: SNAPSHOT)
     port = server.server_address[1]
     try:
         health = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5))
@@ -122,7 +125,7 @@ def test_the_code_is_on_the_page_only_while_not_claimed(geraet):
         data = seite(geraet, sicht)
         assert (data["code"] == sicht.identity.claim_code) is code, anzeige
         if not code:
-            assert sicht.identity.claim_code not in render_html(data, "https://portal.example.test/#/claim")
+            assert sicht.identity.claim_code not in render_html(data)
 
 
 def test_without_an_open_window_the_page_shows_neither_code_nor_device_id(geraet):
@@ -130,7 +133,7 @@ def test_without_an_open_window_the_page_shows_neither_code_nor_device_id(geraet
     geraet.code_fenster_bis = None
     data = seite(geraet, geraet.device)
     assert data["code"] is None and data["geraet"] is None
-    page = render_html(data, "https://portal.example.test/#/claim")
+    page = render_html(data)
     assert geraet.device.identity.claim_code not in page and geraet.device.identity.device_id not in page
     geraet.code_fenster_bis = geraet._clock() - 0.001  # abgelaufen
     assert seite(geraet, geraet.device)["code"] is None
@@ -143,18 +146,11 @@ def test_the_page_extract_takes_only_known_host_fields(geraet):
     assert "test-wlan-secret" not in json.dumps(data)
 
 
-def test_qr_url_needs_a_portal_and_escapes_the_parts():
-    sicht = SimpleNamespace(identity=SimpleNamespace(device_id="shg-aaaaaaaaaaaaaaaa", claim_code="AB&CD"))
-    assert qr_url("", sicht) is None
-    assert qr_url("https://portal.example.test/", sicht) == (
-        "https://portal.example.test/#/claim?d=shg-aaaaaaaaaaaaaaaa&c=AB%26CD")
-
-
 def test_without_a_device_the_page_still_renders(geraet):
     geraet.device = None
     data = seite(geraet, None)
     assert data["zustand"] == "startet" and data["code"] is None
-    assert "SmartHeat-Gateway" in render_html(data, None)
+    assert "SmartHeat-Gateway" in render_html(data)
 
 
 def _get(port: int, path: str, host: str) -> tuple[int, bytes, http.client.HTTPMessage]:
@@ -188,8 +184,7 @@ def test_docker_bridge_and_zone_scoped_clients_are_local():
 
 def test_foreign_client_gets_403_without_content_on_every_route(monkeypatch):
     monkeypatch.setattr(diagnostics, "client_allowed", lambda address: False)
-    server = start_server(0, lambda: {"server_ok": True, "laufzeit": "regelt", "uebernommen": False, "code": "ABCDEFGHJKLM"},
-                          lambda: None)
+    server = start_server(0, lambda: {"server_ok": True, "laufzeit": "regelt", "uebernommen": False, "code": "ABCDEFGHJKLM"})
     port = server.server_address[1]
     try:
         for path in ("/", "/healthz", "/unbekannt"):
@@ -202,7 +197,7 @@ def test_foreign_client_gets_403_without_content_on_every_route(monkeypatch):
 
 @pytest.mark.parametrize("path", ["/", "/healthz"])
 def test_dns_rebinding_host_is_refused_on_every_route(path):
-    server = start_server(0, lambda: SNAPSHOT, lambda: "https://portal.example.test/#/claim", parse_hostnames("shg.lan"))
+    server = start_server(0, lambda: SNAPSHOT, parse_hostnames("shg.lan"))
     port = server.server_address[1]
     try:
         status, body, headers = _get(port, path, f"evil.example:{port}")
@@ -240,7 +235,7 @@ def _lan_server_module():
         calls.append(1)
         return SNAPSHOT
 
-    server = start_server(0, snapshot, lambda: "https://portal.example.test/#/claim")
+    server = start_server(0, snapshot)
     try:
         yield SimpleNamespace(port=server.server_address[1], calls=calls)
     finally:
@@ -330,7 +325,7 @@ def test_fifty_simultaneous_requests_are_all_answered():
         barriere.wait()
         return SNAPSHOT
 
-    server = start_server(0, snapshot, lambda: None)
+    server = start_server(0, snapshot)
     port = server.server_address[1]
     ergebnisse: list[int] = []
 
@@ -366,7 +361,7 @@ def server_mit_grenzen(monkeypatch):
     def starten(frist: float, maximum: int, *, nur_health: bool = False):
         monkeypatch.setattr(diagnostics, "VERBINDUNG_FRIST_SECONDS", frist)
         monkeypatch.setattr(diagnostics, "MAX_VERBINDUNGEN", maximum)
-        server = start_server(0, lambda: SNAPSHOT, lambda: None, nur_health=nur_health)
+        server = start_server(0, lambda: SNAPSHOT, nur_health=nur_health)
         gestartet.append(server)
         return SimpleNamespace(port=server.server_address[1], sockets=sockets)
 

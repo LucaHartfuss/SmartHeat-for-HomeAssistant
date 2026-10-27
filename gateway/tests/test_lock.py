@@ -14,5 +14,5 @@ def test_shared_dependencies_have_the_addon_versions():
     gateway = _locked(REPO / "gateway" / "requirements.txt")
     for name in ("paho-mqtt", "requests", "certifi", "urllib3", "idna", "charset-normalizer"):
         assert gateway[name] == addon[name], name
-    for name in ("cryptography", "segno"):
-        assert name in gateway
+    assert "cryptography" in gateway
+    assert "segno" not in gateway  # kein QR-Code mehr auf der Seite (GW 7.1)

@@ -3,6 +3,7 @@ neuer Code je Druck (hoechstens einer je 60 s, sonst verlaengert der Druck nur),
 Ein Druck ist eine Aenderung des Paars (seq, ts) gegenueber dem zuletzt gesehenen (Ruling R30)."""
 import json
 import logging
+from pathlib import Path
 
 import pytest
 from geraet_welt import Welt
@@ -82,7 +83,7 @@ def test_druck_erzeugt_neuen_code_und_meldet_ihn(welt):
     assert welt.host.code_sichtbar() is True
     data = seite(welt.host, welt.device)
     assert data["code"] == welt.device.identity.claim_code and data["geraet"] == welt.device.identity.device_id
-    assert "ABCDEFGHIJKL" in render_html(data, None)
+    assert "ABCDEFGHIJKL" in render_html(data)
     # sofort in der LED-Datei, nicht erst im Minutentakt
     assert _led_datei(welt)["code_fenster"] is True
     _takt(welt)
@@ -102,7 +103,7 @@ def test_ohne_druck_keine_geraete_id_und_kein_code_auf_der_seite(welt):
     _takt(welt)
     data = seite(welt.host, welt.device)
     assert data["code"] is None and data["geraet"] is None and data["code_hinweis"] is None
-    page = render_html(data, None)
+    page = render_html(data)
     assert "ABCDEFGHIJKL" not in page and "shg-aaaaaaaaaaaaaaaa" not in page
 
 
@@ -160,7 +161,7 @@ def test_ohne_server_kein_code_und_hinweis(welt):
     assert welt.host.code_sichtbar() is False and _led_datei(welt)["code_fenster"] is False
     data = seite(welt.host, welt.device)
     assert data["code"] is None and data["code_hinweis"] == "keine_verbindung"
-    page = render_html(data, None)
+    page = render_html(data)
     assert "Keine Verbindung zum Server – kein Code" in page and "ABCDEFGHIJKL" not in page
 
 
@@ -192,7 +193,7 @@ def test_uebernommenes_geraet_zeigt_uebernommen(welt):
     assert welt.host.code_sichtbar() is False and _led_datei(welt)["code_fenster"] is False
     data = seite(welt.host, welt.device)
     assert data["code"] is None and data["code_hinweis"] == "uebernommen"
-    page = render_html(data, None)
+    page = render_html(data)
     assert CODE_HINWEIS_TEXTE["uebernommen"] == "übernommen"
     assert "<p>übernommen</p>" in page and "ABCDEFGHIJKL" not in page
 
@@ -267,11 +268,36 @@ def test_unlesbare_datei_ist_kein_druck_und_wird_nur_einmal_gemeldet(welt, inhal
     assert welt.device.code_aufrufe == 1
 
 
-def test_unlesbare_datei_beim_start_ist_grundlinie_keine_datei(welt):
+@pytest.mark.parametrize("fehler", [PermissionError(13, "nein"), OSError(5, "EIO"), ValueError("kaputt")])
+def test_unlesbare_erste_lesung_ist_keine_grundlinie_das_alte_paar_danach_kein_druck(welt, monkeypatch, fehler):
+    """Ein Neustart oeffnet kein Fenster (S-2, GPC2): scheitert die erste Lesung und ist die Datei danach mit dem alten
+    Paar lesbar, ist erst diese Lesung die Grundlinie; die unlesbare Lesung ist es nicht."""
+    _druck(welt, 7)
+    echt = Path.read_text
+    ausfaelle = [fehler]
+
+    def lesen(pfad, *args, **kwargs):
+        if pfad.name == "knopf.json" and ausfaelle:
+            raise ausfaelle.pop()
+        return echt(pfad, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", lesen)
+    _takt(welt)  # erste Lesung scheitert
+    _takt(welt)  # altes Paar lesbar: Grundlinie
+    assert welt.device.code_aufrufe == 0 and welt.host.code_sichtbar() is False
+    _druck(welt, 8)
+    _takt(welt)
+    assert welt.device.code_aufrufe == 1
+
+
+def test_kaputte_datei_beim_start_ist_keine_grundlinie_die_erste_lesbare_ist_es(welt):
     (welt.host_dir).mkdir(parents=True)
     (welt.host_dir / "knopf.json").write_text("{kaputt")
     _takt(welt)
     assert welt.device.code_aufrufe == 0
-    _druck(welt, 1)
+    _druck(welt, 1)  # der Host hat die zerstoerte Datei neu angelegt: erste lesbare Datei, nur Grundlinie
+    _takt(welt)
+    assert welt.device.code_aufrufe == 0
+    _druck(welt, 2)
     _takt(welt)
     assert welt.device.code_aufrufe == 1

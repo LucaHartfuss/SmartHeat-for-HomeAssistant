@@ -15,7 +15,7 @@ gesendete seq in software_quittung.json.
 
 Der Uebernahme-Code entsteht nur nach einem Knopfdruck am Geraet (SG-02, GPC21, S-2): der Knopf-Dienst des Hosts schreibt
 host/knopf.json {seq, ts}; ein Druck ist eine Aenderung dieses Paars gegenueber dem zuletzt gesehenen (nicht "seq
-groesser": der Host setzt eine zerstoerte Datei auf seq 1 zurueck). Die erste nach dem Start gelesene Datei (oder ihr
+groesser": der Host setzt eine zerstoerte Datei auf seq 1 zurueck). Die erste nach dem Start lesbare Datei (oder ihr
 Fehlen) ist nur Grundlinie, ein Neustart oeffnet kein Fenster. Ein Druck ruft Device.neuer_uebernahme_code; "neu" oeffnet
 das Code-Fenster fuer 15 min, ein Druck binnen 60 s nach dem letzten neuen Code verlaengert es nur. Fenster und Drossel
 stehen nur im Speicher (monotone Uhr); die LED-Datei meldet das offene Fenster als code_fenster."""
@@ -322,11 +322,10 @@ class GatewayDeviceHost(GeraetHostBasis):
 
     def _knopf_pruefen(self) -> None:
         """Wertet host/knopf.json: eine Aenderung des Paars (seq, ts) gegenueber dem zuletzt gesehenen ist ein Druck.
-        Die Grundlinie (erste Lesung nach dem Start, auch unlesbar oder ohne Datei) loest nie etwas aus."""
+        Die Grundlinie (erste lesbare Lesung nach dem Start, auch "keine Datei") loest nie etwas aus; eine unlesbare
+        Lesung ist keine Grundlinie (sonst wuerde dieselbe Datei danach lesbar zum Druck: ein Neustart oeffnete ein Fenster)."""
         lesbar, paar = self._knopf_paar()
         if not lesbar:
-            if self._knopf_stand is _UNBEKANNT:
-                self._knopf_stand = None
             return
         stand, self._knopf_stand = self._knopf_stand, paar
         if stand is not _UNBEKANNT and paar is not None and paar != stand:
