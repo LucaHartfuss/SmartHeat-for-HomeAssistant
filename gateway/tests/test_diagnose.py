@@ -491,3 +491,25 @@ def _anfrage_ohne_sitzung(port: int, path: str) -> tuple[int, bytes, http.client
         return response.status, response.read(), response.headers
     finally:
         connection.close()
+
+
+def test_a_client_that_resets_the_connection_leaves_no_traceback_but_a_real_error_does(capsys):
+    """Trennt oder setzt ein Client mitten in der Antwort zurueck (OSError), schreibt der Server keinen Traceback ins
+    Journal; ein anderer Fehler im Handler bleibt sichtbar (Gegenprobe)."""
+    server = start_server(0, lambda: SNAPSHOT, zugang=ZUGANG)
+    try:
+        for fehler in (ConnectionResetError("weg"), BrokenPipeError("weg"), TimeoutError("zu lang")):
+            try:
+                raise fehler
+            except OSError:
+                server.handle_error(None, ("192.168.2.5", 40000))
+        assert capsys.readouterr().err == ""
+        try:
+            raise ValueError("echter Fehler")
+        except ValueError:
+            server.handle_error(None, ("192.168.2.5", 40000))
+        fehler = capsys.readouterr().err
+        assert "Traceback" in fehler and "echter Fehler" in fehler
+    finally:
+        server.shutdown()
+        server.server_close()

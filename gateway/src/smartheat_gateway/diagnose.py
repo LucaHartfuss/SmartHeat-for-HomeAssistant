@@ -19,6 +19,7 @@ import ipaddress
 import json
 import logging
 import socket
+import sys
 import threading
 import urllib.parse
 from collections.abc import Callable, Iterable
@@ -33,6 +34,8 @@ VERBINDUNG_FRIST_SECONDS = 10.0  # Lebensdauer einer Verbindung, auch wenn der C
 SITZUNG_COOKIE = "shg_sitzung"
 SITZUNG_ATTRIBUTE = "HttpOnly; SameSite=Strict; Path=/; Max-Age=3600"
 ANMELDUNG_MAX_BYTES = 256  # Koerper des Anmeldeformulars; groesser wird nicht gelesen
+LAENGE_STELLEN_MAX = len(str(ANMELDUNG_MAX_BYTES))  # mehr Ziffern ergeben ohnehin mehr als 256 (und kein int() ueber 4300 Stellen)
+CROSS_SITE = ("cross-site", "same-site")  # Sec-Fetch-Site: eine fremde Seite loest die Anfrage aus
 FORMULAR_TYP = "application/x-www-form-urlencoded"
 MAX_VERBINDUNGEN = 64  # gleichzeitig bediente Verbindungen; weitere werden sofort geschlossen
 ZUSTAND_TEXTE = {
@@ -177,6 +180,15 @@ class _BegrenzterServer(ThreadingHTTPServer):
         self._plaetze = threading.BoundedSemaphore(maximum)
         super().__init__(adresse, handler)
 
+    def handle_error(self, request, client_address):
+        """Ein Client, der mitten in der Antwort trennt oder zuruecksetzt (OSError), ist kein Fehler des Dienstes: ohne
+        Traceback. Jeder andere Fehler bleibt mit Traceback im Journal (ein Angreifer im LAN soll das Journal nicht mit
+        Tracebacks fluten, S-12)."""
+        if isinstance(sys.exc_info()[1], OSError):
+            logger.debug("Verbindung von %s abgebrochen", client_address[0])
+            return
+        super().handle_error(request, client_address)
+
     def process_request(self, request, client_address):
         if not self._plaetze.acquire(blocking=False):
             self.shutdown_request(request)
@@ -255,15 +267,35 @@ def start_server(
         def _seite(self, code: int, text: str, extra: tuple[tuple[str, str], ...] = ()) -> None:
             self._answer(code, text.encode(), "text/html; charset=utf-8", extra)
 
+        def _namen(self) -> frozenset[str]:
+            """Erlaubte Host-Namen: SHG_DIAG_HOSTNAMES und der Hostname aus werk.json."""
+            if zugang is not None and (werk := zugang.werk()) is not None:
+                return allowed | {werk["hostname"]}
+            return allowed
+
+        def _fremder_ursprung(self) -> bool:
+            """Loest eine fremde Webseite im Browser eines Bewohners diese Anfrage aus? Dann wuerde sie die globale Sperre
+            der Anmeldung herbeifuehren (Aussperren des Kunden). Sec-Fetch-Site cross-site/same-site, ein Origin `null`
+            oder mit Host ausserhalb der erlaubten Namen (wie der Host-Header) zaehlt dazu; ohne Origin (curl, aeltere
+            Clients) bleibt der POST erlaubt."""
+            if (self.headers.get("Sec-Fetch-Site") or "").strip().lower() in CROSS_SITE:
+                return True
+            namen = self._namen()
+            for ursprung in self.headers.get_all("Origin", []):
+                try:
+                    teile = urllib.parse.urlsplit(ursprung.strip())
+                except ValueError:
+                    return True
+                if teile.scheme not in ("http", "https") or not host_allowed(teile.netloc, namen):
+                    return True
+            return False
+
         def _zugelassen(self) -> bool:
             """Client im privaten Netz und erlaubter Host-Header (auch der Hostname aus werk.json); sonst 403."""
             if not client_allowed(self.client_address[0]):
                 self._answer(403)
                 return False
-            namen = allowed
-            if zugang is not None and (werk := zugang.werk()) is not None:
-                namen = allowed | {werk["hostname"]}
-            if not host_allowed(self.headers.get("Host"), namen):
+            if not host_allowed(self.headers.get("Host"), self._namen()):
                 self._answer(403)
                 return False
             return True
@@ -320,6 +352,9 @@ def start_server(
         def _anmelden(self, zugang: Zugang) -> None:
             """Formular mit nur dem Passwort: Typ und Laenge werden vor dem Lesen geprueft (hoechstens 256 Byte)."""
             self.close_connection = True  # ein ungelesener Koerper darf nicht als naechste Anfrage gelten
+            if self._fremder_ursprung():
+                self._answer(403)  # ohne Pruefung und ohne Zaehlung
+                return
             if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != FORMULAR_TYP:
                 self._answer(415)
                 return
@@ -327,7 +362,7 @@ def start_server(
             if self.headers.get("Transfer-Encoding") is not None or not (laenge.isascii() and laenge.isdigit()):
                 self._answer(411)
                 return
-            if int(laenge) > ANMELDUNG_MAX_BYTES:
+            if len(laenge) > LAENGE_STELLEN_MAX or int(laenge) > ANMELDUNG_MAX_BYTES:  # erst die Stellen, dann int()
                 self._answer(413)
                 return
             try:

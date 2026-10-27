@@ -9,7 +9,6 @@ import logging
 import re
 import threading
 import time
-from pathlib import Path
 
 import pytest
 
@@ -336,8 +335,9 @@ class Seite:
         return self.formular(koerper, **kwargs)
 
     def formular(self, koerper: bytes, typ: str | None = "application/x-www-form-urlencoded",
-                 laenge: str | None = None, **kwargs) -> tuple[int, bytes, http.client.HTTPMessage]:
-        kopf = {"Content-Length": laenge if laenge is not None else str(len(koerper))}
+                 laenge: str | None = None, kopf_zusatz: dict | None = None,
+                 **kwargs) -> tuple[int, bytes, http.client.HTTPMessage]:
+        kopf = {"Content-Length": laenge if laenge is not None else str(len(koerper)), **(kopf_zusatz or {})}
         if typ:
             kopf["Content-Type"] = typ
         return self.anfrage("POST", "/anmelden", koerper, kopf, **kwargs)
@@ -557,6 +557,86 @@ def test_ohne_gueltige_laenge_411(seite, pruefer, laenge):
     assert pruefer.aufrufe == 0
 
 
+@pytest.mark.parametrize(("laenge", "status"), [
+    ("9" * 5000, 413), ("0" * 5000 + "1", 413), ("9" * 4301, 413), ("1" * 4, 413), ("0010", 413),
+    ("-1", 411), ("abc", 411), ("+10", 411), ("1_0", 411), ("\u00b2", 411),
+])
+def test_eine_unsinnige_laenge_wird_ohne_ausnahme_beantwortet(seite, pruefer, capsys, laenge, status):
+    """Ueber 4300 Ziffern wirft int() seit Python 3.11; ohne Pruefung der Stellenzahl bliebe die Anfrage ohne Antwort
+    und jedes Mal stuende ein Traceback im Journal (unangemeldet aus dem LAN). Die Zeichenfolge wird vor dem Rechnen
+    geprueft: 411 (keine Ziffernfolge) bzw. 413 (zu gross), nie eine Rechnung, nie ein Fehlversuch."""
+    kopf = {"Content-Type": "application/x-www-form-urlencoded", "Content-Length": laenge}
+    assert seite.anfrage("POST", "/anmelden", b"", kopf)[0] == status
+    assert pruefer.aufrufe == 0
+    assert "Traceback" not in capsys.readouterr().err
+    assert seite.anmelden(RICHTIG)[0] == 303  # und nichts wurde gezaehlt oder gesperrt
+
+
+def test_eine_laenge_mit_fuehrendem_leerraum_wird_wie_ohne_gelesen(seite, pruefer):
+    kopf = {"Content-Type": "application/x-www-form-urlencoded", "Content-Length": " 10"}
+    assert seite.anfrage("POST", "/anmelden", b"passwort=a", kopf)[0] == 401
+    assert pruefer.aufrufe == 1
+
+
+@pytest.mark.parametrize("zeichen", ["cross-site", "same-site", "Cross-Site", " cross-site "])
+def test_cross_site_anmeldung_wird_ohne_pruefung_und_ohne_zaehlung_abgewiesen(seite, pruefer, zeichen):
+    """M-1/R35: eine fremde Webseite im Browser eines Bewohners darf weder pruefen noch die globale Sperre ausloesen."""
+    for _ in range(10):
+        status, _, kopf = seite.anmelden("falsch", kopf_zusatz={"Sec-Fetch-Site": zeichen})
+        assert status == 403 and "Set-Cookie" not in kopf
+    assert pruefer.aufrufe == 0
+    assert seite.anmelden(RICHTIG)[0] == 303  # die Drossel ist unveraendert: weder gezaehlt noch gesperrt
+
+
+@pytest.mark.parametrize("zeichen", ["same-origin", "none"])
+def test_gleicher_ursprung_darf_sich_anmelden(seite, pruefer, zeichen):
+    assert seite.anmelden(RICHTIG, kopf_zusatz={"Sec-Fetch-Site": zeichen})[0] == 303
+
+
+@pytest.mark.parametrize("ursprung", [
+    "http://evil.example", "https://evil.example:443", "null", "http://smartheat-0001.local", "ftp://127.0.0.1",
+    "http://[::1", "http://nutzer@127.0.0.1", "evil.example", "", "http://127.0.0.1.evil.example",
+])
+def test_fremder_origin_wird_abgewiesen(seite, pruefer, ursprung):
+    for _ in range(6):
+        assert seite.anmelden("falsch", kopf_zusatz={"Origin": ursprung})[0] == 403, ursprung
+    assert pruefer.aufrufe == 0
+    assert seite.anmelden(RICHTIG)[0] == 303
+
+
+def test_ein_zweiter_origin_kopf_kann_den_ersten_nicht_verdecken(seite, pruefer):
+    verbindung = http.client.HTTPConnection("127.0.0.1", seite.port, timeout=10)
+    try:
+        verbindung.putrequest("POST", "/anmelden", skip_accept_encoding=True)
+        koerper = f"passwort={RICHTIG}".encode()
+        for name, wert in (("Content-Type", "application/x-www-form-urlencoded"),
+                           ("Content-Length", str(len(koerper))), ("Origin", f"http://127.0.0.1:{seite.port}"),
+                           ("Origin", "http://evil.example")):
+            verbindung.putheader(name, wert)
+        verbindung.endheaders(koerper)
+        assert verbindung.getresponse().status == 403
+    finally:
+        verbindung.close()
+    assert pruefer.aufrufe == 0
+
+
+@pytest.mark.parametrize("ursprung", [
+    "http://127.0.0.1", "http://127.0.0.1:{port}", "https://127.0.0.1:{port}", "http://localhost", "http://[::1]:80",
+    "http://192.168.2.5", "http://smartheat-0001", "http://SMARTHEAT-0001:80",
+])
+def test_passender_origin_laeuft_normal(seite, pruefer, ursprung):
+    ursprung = ursprung.format(port=seite.port)
+    assert seite.anmelden("falsch", kopf_zusatz={"Origin": ursprung})[0] == 401
+    assert seite.anmelden(RICHTIG, kopf_zusatz={"Origin": ursprung})[0] == 303
+    assert pruefer.aufrufe == 2
+
+
+def test_ohne_origin_laeuft_der_post_normal(seite, pruefer):
+    """curl und aeltere Clients senden keinen Origin."""
+    assert seite.anmelden("falsch")[0] == 401 and seite.anmelden(RICHTIG)[0] == 303
+    assert pruefer.aufrufe == 2
+
+
 def test_chunked_wird_abgelehnt(seite, pruefer):
     kopf = {"Content-Type": "application/x-www-form-urlencoded", "Transfer-Encoding": "chunked",
             "Content-Length": "5"}
@@ -606,4 +686,3 @@ def test_zugang_liest_das_werk_bei_jedem_aufruf(tmp_path):
     assert zugang.werk() is None and zugang.pruefstelle.anmelden(RICHTIG) == "kein_werk"
     pfad.write_text(json.dumps(WERK))
     assert zugang.werk() == WERK and zugang.pruefstelle.anmelden(RICHTIG) == "ok"
-    assert isinstance(pfad, Path)
