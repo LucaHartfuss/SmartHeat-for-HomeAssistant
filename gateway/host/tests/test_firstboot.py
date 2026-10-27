@@ -243,6 +243,22 @@ def test_main_start_maps_failures_to_exit_code_1(root, monkeypatch):
     assert stop.value.code == 1
 
 
+def test_main_start_maps_a_failed_deletion_of_the_werksreset_to_exit_code_1_without_traceback(root, monkeypatch, caplog):
+    """`werksreset.beim_start` wirft LoeschFehler (eine Exception, kein OSError), wenn ein Eintrag bleibt: Exit 1 und eine
+    ERROR-Zeile, kein Traceback alle 30 s im Journal (systemd versucht es erneut)."""
+    monkeypatch.setenv("SHG_ROOT", str(root))
+
+    def bleibt(*args, **kwargs):
+        raise firstboot.werksreset.LoeschFehler("1 Eintraege nicht geloescht")
+    monkeypatch.setattr(firstboot, "run", bleibt)
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as stop:
+        firstboot.main(["start"])
+    assert stop.value.code == 1
+    gescheitert = [r for r in caplog.records if "Start gescheitert" in r.getMessage()]
+    assert len(gescheitert) == 1 and gescheitert[0].exc_info is None
+    assert "1 Eintraege nicht geloescht" in gescheitert[0].getMessage()
+
+
 def test_main_starts_the_bundle_in_the_project_smartheat_whatever_the_environment_says(root, monkeypatch):
     """Der Projektname ist `bundles.COMPOSE_PROJECT` (install.sh startet mit `-p smartheat`); `SHG_COMPOSE_PROJECT`
     aus der Umgebung gilt nicht mehr."""

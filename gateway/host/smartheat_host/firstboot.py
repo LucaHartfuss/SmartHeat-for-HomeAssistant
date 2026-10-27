@@ -215,7 +215,7 @@ def main(argv: list[str] | None = None) -> None:
     compose = bundles.ComposeRunner(root)
     try:
         code = run(root, compose)
-    except (bundles.LoadError, bundles.ComposeError, OSError) as error:
+    except (bundles.LoadError, bundles.ComposeError, werksreset.LoeschFehler, OSError) as error:
         logger.error("Start gescheitert: %s", error)
         code = 1
     sys.exit(code)

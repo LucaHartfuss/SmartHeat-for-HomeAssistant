@@ -3,11 +3,21 @@
 ## 0.9.0
 
 - Uebernahme-Code nur nach einem Knopfdruck am Geraet (SG-02, GPC21): Der Container wertet `host/knopf.json` des
-  Knopf-Dienstes; ein Druck ist eine Aenderung des Paars (`seq`, `ts`), die erste Lesung nach dem Start ist nur Grundlinie
+  Knopf-Dienstes; ein Druck ist eine Aenderung des Paars (`seq`, `ts`), die erste lesbare Lesung nach dem Start ist nur Grundlinie
   (ein Neustart oeffnet kein Fenster). Jeder Druck erzeugt einen neuen Code (`Device.neuer_uebernahme_code`, derselbe Weg
   wie der Befehl `new_claim_code`), hoechstens einer je 60 s, ein Druck davor verlaengert nur das Fenster. Die Seite zeigt
   Geraete-ID und Code 15 min lang (nur im Speicher), sonst nach einem Druck "Keine Verbindung zum Server – kein Code"
   bzw. "uebernommen". `agent_state.json` meldet das offene Fenster als `code_fenster` (LED `code_sichtbar`).
+- Die Seite des Gateways (Port 80) liegt ganz hinter dem Etikett-Passwort (SG-05, S-13, GW 8): ohne Sitzung gibt es nur das
+  Anmeldeformular (`/anmelden`), auch `/healthz` an Port 80 antwortet nur mit Sitzung. **Sichtbare Aenderung fuer Pilot und
+  E2E:** Gesundheitsport fuer Updater, Compose-Healthcheck und E2E ist 8081 (nur Loopback des Hosts, ohne Sitzung, ohne
+  Version). Passwort nur als scrypt-Hash in `werk.json` auf der Partition `werk`; ohne gueltige `werk.json` ist keine
+  Anmeldung moeglich (503). Globale Drossel (ab dem 5. Fehlversuch 60 s Sperre, verdoppelnd bis 3600 s), hoechstens eine
+  scrypt-Pruefung zugleich, Sitzung im Speicher (Cookie `shg_sitzung`, 1 h, hoechstens 16), Origin-Pruefung (nur der eigene
+  Host) gegen fremde Webseiten im Browser eines Bewohners, Lesebudget von 16 KiB je Verbindung gegen Kopfzeilen-Fluten. Der
+  QR-Code und der Portal-Link mit dem Code auf der Seite entfallen (GW 7.1, R31), ebenso `segno`; `SHG_PORTAL_BASE_URL` wird nicht mehr gelesen.
+- LED-Muster des Knopfs unterscheidbar: `reset_bereit` ist ein Doppelblitz (0,1 s an, 0,1 s aus, 0,1 s an, 0,7 s aus),
+  `reset_laeuft` blinkt gleichmaessig 0,25 s an / 0,25 s aus; kein Muster gleicht einem Zustand des Geraetekerns.
 - Werksreset am Knopf mit Ursprungswerten (SG-01 Geraeteteil, GP8, GPC9, Regel 4): Nach der bestaetigten Folge fordert der
   Knopf-Dienst den Reset in `host/werksreset.json` (Phase `angefordert`) an; der Container setzt die Ursprungswerte zurueck
   wie beim Abmelden und antwortet in `data/werksreset_bereit.json` (hoechstens 120 s, ohne Antwort wird trotzdem geloescht).
@@ -19,7 +29,7 @@
   `data`, `bus`, `zigbee2mqtt` und `updater`, nutzt den Docker-Socket und das Journal und stoppt mit `KillMode=mixed`.
   Ein verworfener Reset (Strom weg oder Stopp beim Warten, Systemwechsel waehrend der Wartezeit, liegengebliebene Anfrage) hebt
   die Abmeldung wieder auf, die der Container bei der Anfrage gesetzt hat (Vermerk `data/werksreset_abmeldung.json`, auch nach
-  einem Neustart des Containers); eine Abmeldung des Servers bleibt. Eine vorerst unlesbare Anfragedatei wird nie geloescht.
+  einem Neustart des Containers); eine Abmeldung des Servers bleibt. Eine vorerst unlesbare Anfragedatei wird nie geloescht. Bestaetigt der Kunde einen neuen Reset, waehrend eine Anfrage in Phase `loeschen` liegt (oder die Datei unlesbar ist), fuehrt der Host die liegende Phase zu Ende bzw. loescht sofort, statt `angefordert` zu ueberschreiben.
 - Systemteil im Updater (AP-05a, GW 6.3): Traegt das signierte Manifest das Feld `system` (`system.raucb`, SHA-256, Groesse
   bis 2 GiB, `compatible` `smartheat-gateway-pi5`), wechselt der Updater zuerst das System (A/B, RAUC, Neustart mit tryboot)
   und danach die Container. Ablauf mit gespeicherten Phasen (`system.phase` in `updater/state.json`, **vor** jeder Wirkung):

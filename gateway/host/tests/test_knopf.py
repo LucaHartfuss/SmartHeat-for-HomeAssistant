@@ -138,9 +138,9 @@ def test_pause_ueber_zwei_sekunden_beendet_die_folge():
     assert spiele(folge, druecke) + folge.takt(T0 + 200.0) == ["reset_bereit", "reset_verfallen"]  # Gegenprobe: 2,0 s
     for luecke in (2.01, 2.5, 5.0):
         folge = knopf.KnopfFolge()
-        # die Pause vor dem vierten Druck ist zu lang, alle anderen 1,5 s; das fuenfte Druecken liegt bei 10,0 s
-        druecke = [(T0, 0.5), (T0 + 2.0, 0.5), (T0 + 4.0, 0.5), (T0 + 4.5 + luecke, 0.5), (T0 + 6.5 + luecke, 0.5)]
-        assert druecke[4][0] - druecke[0][0] <= 10.0 or luecke > 3.0
+        # nur die Pause vor dem vierten Druck ist zu lang (die uebrigen 0,5 s); das fuenfte Druecken liegt immer
+        # binnen 10 s nach dem ersten (hoechstens bei 7,3 s), allein die Pausenregel entscheidet
+        druecke = [(T0, 0.2), (T0 + 0.7, 0.2), (T0 + 1.4, 0.2), (T0 + 1.6 + luecke, 0.2), (T0 + 2.3 + luecke, 0.2)]
         ereignisse = spiele(folge, druecke) + folge.takt(T0 + 200.0)
         assert ereignisse == [], luecke  # zwei Gruppen aus 3 und 2 Druecken: je ohne Ereignis
 

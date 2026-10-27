@@ -5,6 +5,9 @@ einen unterbrochenen Reset zu Ende (`firstboot.py`). Kein Befehl, keine Route, k
 Ablauf von `ausfuehren` (jede Phase steht vor ihrer Wirkung in `host/werksreset.json`; der Waechter pausiert, solange die
 Datei liegt):
 1. Abweisen, solange der Systemwechsel in installiere, installiert oder probestart steht (gleiche Lesart wie der Waechter).
+   Liegt schon eine Anfrage in Phase `loeschen` oder eine vorerst unlesbare Datei, beginnt der Reset nicht neu (er
+   ueberschriebe den halben Reset mit `angefordert`, ein Verwerfen liesse den Stapel auf halb geloeschten Daten starten):
+   er fuehrt gleich Phase 3 aus, mit der liegenden Anfrage bzw. (unlesbar) einer neuen in Phase `loeschen` ohne Ursprungswerte.
 2. Phase `angefordert`: der Container setzt die Ursprungswerte zurueck wie beim Abmelden und antwortet in
    `data/werksreset_bereit.json` {seq, ts, ursprungswerte} (nicht eingerichtet: sofort `false`). Hoechstens 120 s warten
    (GPC9); ohne Antwort (Container tot, kein Treiber) wird trotzdem geloescht, die Anlage bleibt dann auf den zuletzt
@@ -324,6 +327,18 @@ def ausfuehren(root: Path, compose, *, warte: Callable[[Callable[[], bool], floa
         _protokollieren_best_effort(root, {"ts": _iso(jetzt()), "ergebnis": "abgewiesen", "grund": "systemwechsel"})
         logger.warning("Werksreset abgewiesen: Systemwechsel laeuft (Phase %s)", phase)
         raise Abgewiesen(f"Systemwechsel laeuft (Phase {phase})")
+    zustand, liegend = _anfrage_zustand(root)
+    if zustand == LOESCHEN and liegend is not None:
+        logger.warning("Werksreset: liegende Anfrage in Phase loeschen, sie wird zu Ende gefuehrt (statt neu zu beginnen)")
+        return _loeschphase(root, compose, liegend, schreiben=False, jetzt=jetzt, neustart=neustart,
+                            journal_leeren=journal_leeren)
+    if zustand == "unlesbar":
+        # Ob ein Reset halb getan ist, weiss der Host nicht: die Bestaetigung am Knopf ist der Wille zum Reset, also gleich
+        # loeschen (Ursprungswerte unbekannt) statt `angefordert` zu schreiben, das ein Verwerfen wieder entfernte.
+        logger.warning("Werksreset: Anfragedatei unlesbar, es wird sofort geloescht (ohne Warten auf die Ursprungswerte)")
+        anfrage = {"seq": _naechste_seq(root), "ts": _iso(jetzt()), "phase": LOESCHEN, "ursprungswerte": False}
+        return _loeschphase(root, compose, anfrage, schreiben=True, jetzt=jetzt, neustart=neustart,
+                            journal_leeren=journal_leeren)
     seq, ts = _naechste_seq(root), _iso(jetzt())
     anfrage = {"seq": seq, "ts": ts, "phase": ANGEFORDERT}
     dateien.schreiben_json(_anfrage_pfad(root), anfrage, modus=dateien.LESBAR)
@@ -344,9 +359,19 @@ def ausfuehren(root: Path, compose, *, warte: Callable[[Callable[[], bool], floa
         verwerfen_angefordert(root, jetzt, grund="systemwechsel")
         logger.warning("Werksreset verworfen: Systemwechsel hat waehrend des Wartens begonnen (Phase %s)", phase)
         raise Abgewiesen(f"Systemwechsel hat begonnen (Phase {phase})")
+    anfrage = {"seq": seq, "ts": ts, "phase": LOESCHEN, "ursprungswerte": ursprungswerte}
+    return _loeschphase(root, compose, anfrage, schreiben=True, jetzt=jetzt, neustart=neustart,
+                        journal_leeren=journal_leeren)
+
+
+def _loeschphase(root: Path, compose, anfrage: dict, *, schreiben: bool, jetzt: Callable[[], float],
+                 neustart: Callable[[], None], journal_leeren: Callable[[], None]) -> dict:
+    """Phase `loeschen` (`schreiben`: die Anfrage dieser Phase erst ablegen, sonst liegt sie schon) und Neustart; ein SIGTERM
+    wartet, bis beides getan ist."""
+    ergebnis = {"seq": anfrage["seq"], "ts": anfrage["ts"], "ursprungswerte": anfrage.get("ursprungswerte") is True}
     with _sigterm_aufschieben():
-        anfrage = {"seq": seq, "ts": ts, "phase": LOESCHEN, "ursprungswerte": ursprungswerte}
-        dateien.schreiben_json(_anfrage_pfad(root), anfrage, modus=dateien.LESBAR)
+        if schreiben:
+            dateien.schreiben_json(_anfrage_pfad(root), anfrage, modus=dateien.LESBAR)
         try:
             _abschliessen(root, compose, anfrage, jetzt=jetzt, journal_leeren=journal_leeren)
         except Exception as fehler:
@@ -354,9 +379,9 @@ def ausfuehren(root: Path, compose, *, warte: Callable[[Callable[[], bool], floa
             logger.error("Werksreset: Anhalten oder Loeschen gescheitert (%s), der Neustart fuehrt es zu Ende",
                          type(fehler).__name__)
             neustart()
-            return {"seq": seq, "ts": ts, "ursprungswerte": ursprungswerte, "abgeschlossen": False}
+            return {**ergebnis, "abgeschlossen": False}
         neustart()
-    return {"seq": seq, "ts": ts, "ursprungswerte": ursprungswerte, "abgeschlossen": True}
+    return {**ergebnis, "abgeschlossen": True}
 
 
 def beim_start(root: Path, compose, *, jetzt: Callable[[], float], journal_leeren: Callable[[], None]) -> bool:

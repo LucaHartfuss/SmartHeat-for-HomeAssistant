@@ -2,6 +2,7 @@
 abgelehnte Konfiguration, Code nur solange nicht eingerichtet und nach einem Knopfdruck. Schutz gegen DNS-Rebinding und
 fremde Clients. Die Seite verlangt eine Sitzung (Anmeldung: test_anmeldung.py); die Tests hier fragen mit einer
 gueltigen Sitzung (COOKIE), der Gesundheitsserver braucht keine."""
+import contextlib
 import http.client
 import json
 import socket
@@ -513,3 +514,90 @@ def test_a_client_that_resets_the_connection_leaves_no_traceback_but_a_real_erro
     finally:
         server.shutdown()
         server.server_close()
+
+
+# --- Lesebudget je Verbindung gegen die Kopfzeilen-Flut (A-01, S-13) ---
+
+
+def _get_mit_fuellung(fuellzeilen: int, zeilenlaenge: int = 60) -> bytes:
+    """Eine GET-Anfrage auf /healthz mit gueltiger Sitzung und `fuellzeilen` Kopfzeilen X-Fuell."""
+    zeilen = [b"GET /healthz HTTP/1.1", b"Host: 127.0.0.1", f"Cookie: {COOKIE}".encode()]
+    zeilen += [b"X-Fuell: " + b"a" * zeilenlaenge] * fuellzeilen
+    return b"\r\n".join(zeilen) + b"\r\n\r\n"
+
+
+def _gesamt_anfrage(laenge: int) -> bytes:
+    """Dieselbe Anfrage mit einer einzigen Fuellzeile, so gewaehlt, dass sie genau `laenge` Byte lang ist."""
+    leer = len(_get_mit_fuellung(1, 0))
+    anfrage = _get_mit_fuellung(1, laenge - leer)
+    assert len(anfrage) == laenge
+    return anfrage
+
+
+def _antwort_status(verbindung: socket.socket) -> int | None:
+    """Statuscode der Antwort oder None, wenn der Server ohne Antwort schliesst oder zuruecksetzt."""
+    verbindung.settimeout(5)
+    try:
+        kopf = verbindung.recv(32)
+    except ConnectionError:
+        return None
+    return int(kopf.split()[1]) if kopf.startswith(b"HTTP/") else None
+
+
+@pytest.mark.parametrize(("mehr", "angenommen"), [(0, True), (1, False)])
+def test_a_request_is_read_up_to_exactly_the_budget_per_connection(lan_server, mehr, angenommen):
+    """Randwert: eine Anfrage von genau 16384 Byte wird beantwortet, ein Byte mehr schliesst die Verbindung
+    ohne Antwort (Gegenprobe: ohne Budget bekaeme auch die laengere Anfrage 200)."""
+    anfrage = _gesamt_anfrage(16384 + mehr)  # das Budget aus der Spec, nicht aus der Konstante gelesen
+    verbindung = socket.create_connection(("127.0.0.1", lan_server.port), timeout=5)
+    lan_server.sockets.append(verbindung)
+    verbindung.sendall(anfrage)
+    assert _antwort_status(verbindung) == (200 if angenommen else None)
+
+
+def test_a_header_flood_closes_the_connection_without_traceback_and_a_login_works_afterwards(lan_server, capfd):
+    """98 Zeilen zu je 65 KB (das Maximum von http.client): der Server liest nur bis zum Budget, schliesst ohne Antwort und
+    ohne Traceback im Journal; die naechste Anfrage wird beantwortet."""
+    verbindung = socket.create_connection(("127.0.0.1", lan_server.port), timeout=5)
+    lan_server.sockets.append(verbindung)
+    with contextlib.suppress(OSError):  # der Server hat schon geschlossen
+        verbindung.sendall(_get_mit_fuellung(98, 65000))
+    assert _antwort_status(verbindung) is None
+    assert _anfrage(lan_server.port, "GET", "/healthz")[0] == 200
+    assert capfd.readouterr().err == ""
+
+
+def test_a_flood_of_connections_with_huge_headers_keeps_the_memory_of_the_process_small():
+    """32 Verbindungen gleichzeitig, je 98 Kopfzeilen zu 65 KB (rund 6,4 MB): ohne Budget haelt der Server je Verbindung die
+    ganze Anfrage (Spitze > 200 MB, im Feld ueber 3 GB bei 64 Verbindungen); mit dem Budget bleibt die Spitze der Python-
+    Allokationen unter 16 MB (gemessen rund 3 MB, ohne Budget rund 125 MB). tracemalloc statt RSS: stabil und unabhaengig vom Allokator."""
+    import tracemalloc
+    tracemalloc.start()
+    server = start_server(0, lambda: SNAPSHOT, zugang=ZUGANG)
+    port = server.server_address[1]
+    anfrage = _get_mit_fuellung(98, 65000)
+    los = threading.Barrier(32, timeout=20)
+
+    def flut() -> None:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=10) as verbindung:
+                los.wait()
+                verbindung.sendall(anfrage)
+        except (OSError, threading.BrokenBarrierError):
+            pass  # der Server hat frueh geschlossen: gewollt
+
+    faeden = [threading.Thread(target=flut) for _ in range(32)]
+    try:
+        tracemalloc.reset_peak()
+        basis = tracemalloc.get_traced_memory()[0]
+        for faden in faeden:
+            faden.start()
+        for faden in faeden:
+            faden.join(timeout=60)
+        spitze = tracemalloc.get_traced_memory()[1] - basis
+    finally:
+        tracemalloc.stop()
+        server.shutdown()
+        server.server_close()
+    assert not any(faden.is_alive() for faden in faeden)
+    assert spitze < 16 * 1024 * 1024, spitze

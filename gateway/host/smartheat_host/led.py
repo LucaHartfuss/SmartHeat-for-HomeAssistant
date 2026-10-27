@@ -28,10 +28,12 @@ PATTERNS: dict[str, tuple[tuple[bool, float], ...]] = {
     "update_noetig": ((True, 0.6), (False, 0.2), (True, 0.6), (False, 0.6)),
 }
 # Muster des Knopfs, nicht in wire.ZUSTAENDE (der Geraetekern kennt sie nicht): Reset-Folge bereit, Reset laeuft, Code
-# sichtbar (Fenster der LAN-Seite offen).
+# sichtbar (Fenster der LAN-Seite offen). Jedes Muster ist von allen anderen verschieden (test_led.py), damit der Kunde an
+# einer Regel-4-Handlung sieht, was gilt: reset_bereit = Doppelblitz (nicht `startet`), reset_laeuft = gleichmaessig
+# 0,25 s an / 0,25 s aus (0,5/0,5 waere `keine_verbindung`, dauernd an `regelt`).
 KNOPF_MUSTER: dict[str, tuple[tuple[bool, float], ...]] = {
-    "reset_bereit": ((True, 0.1), (False, 0.1)),
-    "reset_laeuft": ((True, 1.0),),
+    "reset_bereit": ((True, 0.1), (False, 0.1), (True, 0.1), (False, 0.7)),
+    "reset_laeuft": ((True, 0.25), (False, 0.25)),
     "code_sichtbar": ((True, 0.2), (False, 0.8)),
 }
 MUSTER = {**PATTERNS, **KNOPF_MUSTER}

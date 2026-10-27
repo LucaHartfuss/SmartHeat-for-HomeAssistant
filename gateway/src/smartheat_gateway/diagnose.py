@@ -38,6 +38,7 @@ LAENGE_STELLEN_MAX = len(str(ANMELDUNG_MAX_BYTES))  # mehr Ziffern ergeben ohneh
 CROSS_SITE = ("cross-site", "same-site")  # Sec-Fetch-Site: eine fremde Seite loest die Anfrage aus
 FORMULAR_TYP = "application/x-www-form-urlencoded"
 MAX_VERBINDUNGEN = 64  # gleichzeitig bediente Verbindungen; weitere werden sofort geschlossen
+ANFRAGE_MAX_BYTES = 16384  # alles, was eine Verbindung lesen darf (Anfragezeile, Kopf, Koerper); mehr schliesst sie
 ZUSTAND_TEXTE = {
     "startet": "Das Gateway startet.",
     "nicht_uebernommen": "Das Gateway ist noch keinem Konto zugeordnet. Bitte im Portal übernehmen.",
@@ -79,6 +80,12 @@ def _host_name(header: str) -> str | None:
         return name if closed and port_ok else None
     name, colon, port = header.partition(":")
     return None if colon and not port.isdigit() else name
+
+
+def _host_vergleich(header: str | None) -> str | None:
+    """Der Host ohne Port, klein geschrieben und ohne Punkt am Ende, zum Vergleich von Origin und Host-Header."""
+    name = _host_name(header.strip()) if header else None
+    return name.rstrip(".").lower() if name else None
 
 
 def host_allowed(header: str | None, hostnames: frozenset[str]) -> bool:
@@ -171,6 +178,42 @@ def render_anmeldung(ergebnis: str | None = None) -> str:
     )
 
 
+class _BegrenzterLeser:
+    """Der Lesestrom einer Verbindung mit festem Budget (ANFRAGE_MAX_BYTES). `http.server` sammelt Anfragezeile und Kopf
+    sonst bis zu 100 Zeilen zu je 64 KiB, bevor es Host, Sitzung oder Anmeldung prueft: 64 Verbindungen brachten den
+    Prozess, der auch die Regelung traegt, ueber 3 GB (A-01, S-13). Ist das Budget aufgebraucht oder endet eine Zeile
+    darin ohne Zeilenende, wirft der Leser ConnectionAbortedError (ein OSError: handle_error des Servers schliesst die
+    Verbindung ohne Traceback)."""
+
+    def __init__(self, strom, budget: int) -> None:
+        self._strom = strom
+        self._rest = budget
+
+    def readline(self, groesse: int = -1) -> bytes:
+        zeile = self._strom.readline(self._erlaubt(groesse))
+        self._rest -= len(zeile)
+        if self._rest <= 0 and not zeile.endswith(b"\n"):
+            raise ConnectionAbortedError("Anfrage ueber dem Lesebudget")  # eine Zeile, die das Budget sprengt
+        return zeile
+
+    def read(self, groesse: int = -1) -> bytes:
+        daten = self._strom.read(self._erlaubt(groesse))
+        self._rest -= len(daten)
+        return daten
+
+    def _erlaubt(self, groesse: int) -> int:
+        if self._rest <= 0:
+            raise ConnectionAbortedError("Anfrage ueber dem Lesebudget")
+        return self._rest if groesse < 0 else min(groesse, self._rest)
+
+    @property
+    def closed(self) -> bool:
+        return self._strom.closed
+
+    def close(self) -> None:
+        self._strom.close()
+
+
 class _BegrenzterServer(ThreadingHTTPServer):
     """Ein Faden je Verbindung, aber hoechstens `maximum` gleichzeitig; jede weitere Verbindung wird sofort
     geschlossen, statt Speicher und Faeden des Prozesses zu belegen, der auch den Geraetekern traegt."""
@@ -181,8 +224,8 @@ class _BegrenzterServer(ThreadingHTTPServer):
         super().__init__(adresse, handler)
 
     def handle_error(self, request, client_address):
-        """Ein Client, der mitten in der Antwort trennt oder zuruecksetzt (OSError), ist kein Fehler des Dienstes: ohne
-        Traceback. Jeder andere Fehler bleibt mit Traceback im Journal (ein Angreifer im LAN soll das Journal nicht mit
+        """Ein Client, der mitten in der Antwort trennt oder zuruecksetzt, oder dessen Anfrage das Lesebudget sprengt
+        (ConnectionAbortedError aus _BegrenzterLeser), ist kein Fehler des Dienstes: ohne Traceback. Jeder andere Fehler bleibt mit Traceback im Journal (ein Angreifer im LAN soll das Journal nicht mit
         Tracebacks fluten, S-12)."""
         if isinstance(sys.exc_info()[1], OSError):
             logger.debug("Verbindung von %s abgebrochen", client_address[0])
@@ -229,6 +272,7 @@ def start_server(
 
         def setup(self):
             super().setup()
+            self.rfile = _BegrenzterLeser(self.rfile, ANFRAGE_MAX_BYTES)  # pyright: ignore[reportAttributeAccessIssue]
             self._uhr = threading.Timer(frist, self._abbrechen)
             self._uhr.daemon = True
             self._uhr.start()
@@ -275,18 +319,21 @@ def start_server(
 
         def _fremder_ursprung(self) -> bool:
             """Loest eine fremde Webseite im Browser eines Bewohners diese Anfrage aus? Dann wuerde sie die globale Sperre
-            der Anmeldung herbeifuehren (Aussperren des Kunden). Sec-Fetch-Site cross-site/same-site, ein Origin `null`
-            oder mit Host ausserhalb der erlaubten Namen (wie der Host-Header) zaehlt dazu; ohne Origin (curl, aeltere
-            Clients) bleibt der POST erlaubt."""
+            der Anmeldung herbeifuehren (Aussperren des Kunden). Sec-Fetch-Site cross-site/same-site, ein Origin `null`,
+            ein Origin mit Host ausserhalb der erlaubten Namen (wie der Host-Header) oder mit einem anderen Host als der
+            Host-Header der Anfrage zaehlt dazu (ein IP-Literal einer fremden Seite besteht die Namensliste, aber nicht
+            den Vergleich); ohne Origin (curl, aeltere Clients) bleibt der POST erlaubt."""
             if (self.headers.get("Sec-Fetch-Site") or "").strip().lower() in CROSS_SITE:
                 return True
             namen = self._namen()
+            eigener = _host_vergleich(self.headers.get("Host"))
             for ursprung in self.headers.get_all("Origin", []):
                 try:
                     teile = urllib.parse.urlsplit(ursprung.strip())
                 except ValueError:
                     return True
-                if teile.scheme not in ("http", "https") or not host_allowed(teile.netloc, namen):
+                if (teile.scheme not in ("http", "https") or not host_allowed(teile.netloc, namen)
+                        or _host_vergleich(teile.netloc) != eigener):
                     return True
             return False
 

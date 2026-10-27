@@ -620,15 +620,35 @@ def test_ein_zweiter_origin_kopf_kann_den_ersten_nicht_verdecken(seite, pruefer)
     assert pruefer.aufrufe == 0
 
 
-@pytest.mark.parametrize("ursprung", [
-    "http://127.0.0.1", "http://127.0.0.1:{port}", "https://127.0.0.1:{port}", "http://localhost", "http://[::1]:80",
-    "http://192.168.2.5", "http://smartheat-0001", "http://SMARTHEAT-0001:80",
+@pytest.mark.parametrize(("ursprung", "host"), [
+    ("http://127.0.0.1", "127.0.0.1:{port}"), ("http://127.0.0.1:{port}", "127.0.0.1:{port}"),
+    ("https://127.0.0.1:{port}", "127.0.0.1"), ("http://localhost", "localhost"), ("http://[::1]:80", "[::1]"),
+    ("http://192.168.2.5", "192.168.2.5"), ("http://smartheat-0001", "smartheat-0001"),
+    ("http://SMARTHEAT-0001:80", "smartheat-0001."),
 ])
-def test_passender_origin_laeuft_normal(seite, pruefer, ursprung):
+def test_passender_origin_laeuft_normal(seite, pruefer, ursprung, host):
+    """Origin und Host-Header nennen denselben Host (Gross-/Kleinschreibung, Punkt am Ende und Port zaehlen nicht)."""
     ursprung = ursprung.format(port=seite.port)
-    assert seite.anmelden("falsch", kopf_zusatz={"Origin": ursprung})[0] == 401
-    assert seite.anmelden(RICHTIG, kopf_zusatz={"Origin": ursprung})[0] == 303
+    host = host.format(port=seite.port)
+    assert seite.anmelden("falsch", kopf_zusatz={"Origin": ursprung}, host=host)[0] == 401
+    assert seite.anmelden(RICHTIG, kopf_zusatz={"Origin": ursprung}, host=host)[0] == 303
     assert pruefer.aufrufe == 2
+
+
+@pytest.mark.parametrize(("ursprung", "host"), [
+    ("http://203.0.113.5", "192.168.1.50"), ("http://203.0.113.5", "127.0.0.1:{port}"),
+    ("http://192.168.2.5", "192.168.1.50"), ("http://localhost", "127.0.0.1:{port}"),
+    ("http://smartheat-0001", "localhost"), ("http://[2001:db8::1]", "[::1]"),
+])
+def test_origin_eines_anderen_hosts_wird_auch_bei_erlaubtem_namen_abgewiesen(seite, pruefer, ursprung, host):
+    """A-03: ein IP-Literal oder erlaubter Name besteht die Namensliste, aber eine Seite unter einer fremden Adresse (Safari
+    vor 16.4 ohne Sec-Fetch-Site) sendet einen anderen Host als der Host-Header der Anfrage: 403 ohne Zaehlung."""
+    for _ in range(6):
+        status = seite.anmelden("falsch", kopf_zusatz={"Origin": ursprung.format(port=seite.port)},
+                                host=host.format(port=seite.port))[0]
+        assert status == 403, (ursprung, host)
+    assert pruefer.aufrufe == 0
+    assert seite.anmelden(RICHTIG)[0] == 303
 
 
 def test_ohne_origin_laeuft_der_post_normal(seite, pruefer):

@@ -34,6 +34,17 @@ def test_blocked_and_update_needed_are_distinct_from_each_other_and_from_stoerun
     assert len({led.PATTERNS[z] for z in ("gesperrt", "update_noetig", "stoerung")}) == 3
 
 
+def test_all_patterns_are_pairwise_distinct():
+    """F-1: der Kunde unterscheidet die Muster mit dem Auge, vor allem `reset_bereit` und `reset_laeuft` (Regel 4) von
+    `startet`, `keine_verbindung` und `regelt`. Gleich ist nur das Paar, das die Kurzanleitung gemeinsam beschreibt."""
+    gleiche: dict[tuple, set[str]] = {}
+    for name, muster in led.MUSTER.items():
+        gleiche.setdefault(muster, set()).add(name)
+    doppelt = [namen for namen in gleiche.values() if len(namen) > 1]
+    assert doppelt == [{"nicht_uebernommen", "wartet_auf_einrichtung"}]
+    assert len(led.MUSTER) == len(led.PATTERNS) + len(led.KNOPF_MUSTER)  # kein Knopf-Muster ueberschreibt einen Zustand
+
+
 def test_stale_unreadable_or_unknown_state_is_stoerung(tmp_path):
     assert led.state_from_file(_state(tmp_path, "regelt", age=301)) == "stoerung"
     assert led.state_from_file(tmp_path / "fehlt.json") == "stoerung"
@@ -236,8 +247,8 @@ def test_knopf_muster_sind_nur_fuer_den_host_und_nicht_im_geraetekern():
 
     assert set(led.KNOPF_MUSTER) == {"reset_bereit", "reset_laeuft", "code_sichtbar"}
     assert not set(led.KNOPF_MUSTER) & set(wire.ZUSTAENDE)
-    assert led.KNOPF_MUSTER["reset_bereit"] == ((True, 0.1), (False, 0.1))
-    assert led.KNOPF_MUSTER["reset_laeuft"] == ((True, 1.0),)
+    assert led.KNOPF_MUSTER["reset_bereit"] == ((True, 0.1), (False, 0.1), (True, 0.1), (False, 0.7))
+    assert led.KNOPF_MUSTER["reset_laeuft"] == ((True, 0.25), (False, 0.25))
     assert led.KNOPF_MUSTER["code_sichtbar"] == ((True, 0.2), (False, 0.8))
 
 

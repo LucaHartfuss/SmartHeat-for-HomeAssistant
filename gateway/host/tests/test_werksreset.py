@@ -437,6 +437,66 @@ def test_ohne_sigterm_bleibt_der_handler_unberuehrt(welt):
         signal.signal(signal.SIGTERM, alt)
 
 
+# --- Ein neuer Reset bei liegender Datei (A-02, GA-16) ---
+
+def _teil_loeschen(welt) -> None:
+    for rel in ("data/device", "zigbee2mqtt/log"):  # ein Teil der Kundendaten ist schon weg
+        for p in sorted((welt.root / rel).rglob("*"), reverse=True):
+            p.unlink() if p.is_file() else p.rmdir()
+
+
+def test_ein_neuer_reset_bei_liegender_phase_loeschen_fuehrt_sie_zu_ende_statt_sie_zu_ueberschreiben(welt):
+    """Der halbe Reset (Phase loeschen, Strom weg oder SIGTERM beim Warten) darf nicht mit `angefordert` ueberschrieben
+    werden: ein Verwerfen liesse den Stapel auf teilweise geloeschten Daten starten. Kein Warten, keine neue seq."""
+    welt.anfrage("loeschen", seq=7, ursprungswerte=True)
+    _teil_loeschen(welt)
+    ergebnis = welt.ausfuehren(warte=lambda bedingung, frist: pytest.fail("kein Warten bei liegender Phase loeschen"))
+    assert ergebnis == {"seq": 7, "ts": "2027-01-15T08:00:00+00:00", "ursprungswerte": True, "abgeschlossen": True}
+    baum = welt.baum()
+    for rel in KUNDENDATEN:
+        assert rel not in baum, rel
+    for rel in BLEIBT:
+        assert rel in baum, rel
+    assert welt.compose.downs == ["0.3.0"] and welt.neustarts == [1]
+    assert [(e["seq"], e["ergebnis"], e["ursprungswerte"]) for e in welt.protokoll()] == [(7, "ausgefuehrt", True)]
+    assert not (welt.root / "host" / "werksreset.json").exists()
+
+
+def test_ein_neuer_reset_bei_unlesbarer_anfrage_loescht_sofort(welt, monkeypatch, caplog):
+    """Ob ein Reset halb getan ist, weiss der Host nicht; die Bestaetigung am Knopf ist der Wille zum Reset. Er schreibt
+    nie `angefordert` (das Verwerfen liesse die unlesbare Datei stehen), wartet nicht und loescht gleich."""
+    welt.anfrage("loeschen", seq=3, ursprungswerte=True)
+    echt = werksreset.lesen.read_bytes
+
+    def lesen(pfad, *a, **kw):
+        if Path(pfad).name == "werksreset.json":
+            raise PermissionError(13, "nein")
+        return echt(pfad, *a, **kw)
+
+    monkeypatch.setattr(werksreset.lesen, "read_bytes", lesen)
+    with caplog.at_level(logging.WARNING):
+        ergebnis = welt.ausfuehren(warte=lambda bedingung, frist: pytest.fail("kein Warten bei unlesbarer Anfrage"))
+    assert ergebnis["abgeschlossen"] is True and ergebnis["ursprungswerte"] is False and ergebnis["seq"] == 1
+    baum = welt.baum()
+    for rel in KUNDENDATEN:
+        assert rel not in baum, rel
+    assert welt.compose.downs == ["0.3.0"] and welt.neustarts == [1]
+    assert [(e["seq"], e["ergebnis"], e["ursprungswerte"]) for e in welt.protokoll()] == [(1, "ausgefuehrt", False)]
+    assert not (welt.root / "host" / "werksreset.json").exists()
+    assert "unlesbar" in caplog.text
+
+
+@pytest.mark.parametrize("inhalt", [None, "kaputt{", '{"seq": 1, "ts": "x", "phase": "angefordert"}'])
+def test_ein_neuer_reset_bei_fehlender_oder_unbrauchbarer_anfrage_beginnt_wie_immer(welt, inhalt):
+    """Gegenprobe zu den beiden Fallen oben: nur eine liegende Phase `loeschen` oder eine unlesbare Datei springt ueber
+    das Warten; fehlt die Datei oder ist sie sicher unbrauchbar, wartet der Reset auf die Ursprungswerte."""
+    if inhalt is not None:
+        (welt.root / "host").mkdir(exist_ok=True)
+        (welt.root / "host" / "werksreset.json").write_text(inhalt)
+    assert welt.ausfuehren()["abgeschlossen"] is True
+    assert welt.fristen == [werksreset.WARTE_SEKUNDEN] and welt.angefordert[0]["phase"] == "angefordert"
+
+
 # --- Abweisung ---
 
 @pytest.mark.parametrize("phase", ["installiere", "installiert", "probestart"])
