@@ -3,16 +3,21 @@
 # dem Image eine geteilte Identitaet (machine-id, SSH-Hostschluessel, Geraeteschluessel, Bus-Zugangsdaten), ein
 # Passwort, ein Tunnel-Token oder im Serien-Image SSH bekaeme, wenn der Erststart ohne Pull nicht moeglich waere, wenn
 # WLAN an waere, Zeitzone oder Standard-Locale nicht den Vorgaben entsprechen oder die Geraete-API-/Portal-Adresse
-# kein eigener DNS-Name per https in der eigenen Zone ist (own_url.sh) oder ss, ip, vcgencmd fehlen (Diagnose).
+# kein eigener DNS-Name per https in der eigenen Zone ist (own_url.sh) oder ss, ip, vcgencmd fehlen (Diagnose), und wenn
+# das A/B-System nicht vollstaendig ist (slot-shared.d, werk.mount, /werk, Watchdog, RAUC, Docker-Pins) oder Altlasten
+# des Pi-4-Images (usbboot, unattended-upgrades, docker.io) im Image stecken.
+# config.txt und cmdline.txt entstehen erst in der Phase preimage und stehen hier noch nicht; sie prueft
+# hooks/finalize10-bootfs-checks.
 # Aufruf: rootfs_checks.sh ROOTFS [--pilot] [--customize]
 #   --customize: Lauf im customize-Hook (customize.sh). Die machine-ids (systemd, dbus) bestehen dort noch;
-#                zurueckgesetzt werden sie erst beim Aufraeumen von mmdebstrap, geprueft dann im post-build-Hook
-#                (post-build.sh, voller Lauf).
+#                zurueckgesetzt werden sie erst beim Aufraeumen von mmdebstrap, geprueft dann im postbuild-Hook
+#                (hooks/postbuild50-rootfs-checks, voller Lauf). Der volle Lauf prueft auch die Docker-Pakete
+#                gegen docker-apt/version (neben diesem Skript; im Installer-Baum der Stage fehlt der Ordner).
 # Exit 0 = in Ordnung, 1 = Verstoesse (je Zeile "FAIL: ..."), 2 = falscher Aufruf.
 # Eigentuemer: alles unter /opt/smartheat und /var/lib/smartheat/images gehoert uid 0 (root fuehrt es aus bzw. laedt es;
 # uid 1000 waere auf dem Geraet der Benutzer pi bzw. die Container). SHG_ROOTFS_CHECK_UID setzt die erwartete uid -
 # NUR fuer die Tests (deren Fixtures gehoeren dem Testbenutzer, eine Gegenprobe mit fremdem Eigentuemer geht ohne root
-# nur so); customize.sh und post-build.sh rufen dieses Skript ausdruecklich ohne die Variable auf.
+# nur so); customize.sh und der postbuild-Hook rufen dieses Skript ausdruecklich ohne die Variable auf.
 # shellcheck source-path=SCRIPTDIR
 set -u
 R="${1:?ROOTFS fehlt}"
@@ -115,20 +120,86 @@ if [ ! -s "$R/opt/smartheat/host/release-roots.pem" ]; then
   fail "release-roots.pem fehlt oder ist leer (opt/smartheat/host)"
 fi
 
-# Start von der SSD am USB (usbboot.sh): Regel mit fester Disk-Signatur und initramfs-Hook, der sie mitnimmt.
-# Die Regel darf auf mehrere Zeilen (Backslash am Ende) verteilt sein und nicht nur in einem Kommentar stehen.
-USB_RULE="$R/etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules"
-USB_HOOK="$R/etc/initramfs-tools/hooks/smartheat-usbboot"
-usb_rule_lines() {  # Regelzeilen ohne Kommentare, Fortsetzungszeilen zu einer verbunden
-  sed -e ':a' -e '/\\$/{N;s/\\\n[[:space:]]*/ /;ba' -e '}' "$USB_RULE" 2>/dev/null | grep -v '^[[:space:]]*#'
+# Pi-4-Altlasten: der Start von der SSD am USB (usbboot.sh) und die automatischen Paket-Updates (unattended-upgrades)
+# gibt es nicht mehr; der Paketstand aendert sich nur mit einem neuen System-Bundle. Debian-docker.io liefert kein Docker 29.
+DPKG_STATUS="$R/var/lib/dpkg/status"
+pkg_version() {  # Version des installierten Pakets $1 (leer = nicht installiert)
+  awk -v pkg="$1" '
+    $1 == "Package:" { cur = $2; installed = 0; version = "" }
+    $1 == "Status:" { installed = ($NF == "installed" && $(NF - 1) == "ok") }
+    $1 == "Version:" { version = $2 }
+    /^$/ { if (cur == pkg && installed) { print version; done = 1; exit } cur = ""; installed = 0 }
+    END { if (!done && cur == pkg && installed) print version }' "$DPKG_STATUS" 2>/dev/null
 }
-usb_rule_lines | grep -q \
-  'KERNEL=="sd.*ENV{ID_PART_ENTRY_UUID}=="[0-9a-f]\{8\}-0\[12\]".*ENV{RPI_ONBOOTDEV}="1"' \
-  || fail "USB-Startregel fehlt oder unvollstaendig (usbboot.sh)"
-if [ ! -x "$USB_HOOK" ]; then
-  fail "initramfs-Hook fuer den USB-Start fehlt oder ist nicht ausfuehrbar"
-elif ! grep -q '^[[:space:]]*copy_file config /etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules' "$USB_HOOK"; then
-  fail "initramfs-Hook fuer den USB-Start nimmt die Regel nicht mit (copy_file fehlt)"
+[ -r "$DPKG_STATUS" ] || fail "var/lib/dpkg/status fehlt"
+for old in "$R/etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules" "$R/etc/initramfs-tools/hooks/smartheat-usbboot"; do
+  [ ! -e "$old" ] || fail "usbboot im Image (${old#"$R"}): der Pi 5 startet von NVMe"
+done
+for old in unattended-upgrades docker.io docker-compose; do
+  [ -z "$(pkg_version "$old")" ] || fail "Paket $old im Image (Release-Takt, Docker aus dem Docker-Archiv)"
+done
+[ ! -e "$R/etc/apt/apt.conf.d/52smartheat-unattended" ] || fail "52smartheat-unattended im Image (kein unattended-upgrades)"
+
+# A/B-System (GW 6.1, 6.3): Slot-uebergreifende Pfade, Werkspartition, Watchdog, RAUC
+SHARED="$R/etc/rpi-image-gen/slot-shared.d/smartheat.conf"
+if [ ! -f "$SHARED" ]; then
+  fail "slot-shared.d/smartheat.conf fehlt (etc/rpi-image-gen/slot-shared.d)"
+else
+  grep -qx 'Version=1' "$SHARED" || fail "slot-shared.d/smartheat.conf: Version=1 fehlt"
+  for path in /var/lib/smartheat /var/lib/docker /var/lib/containerd /var/lib/rauc /var/lib/systemd/timesync; do
+    grep -qx "Path=$path" "$SHARED" || fail "slot-shared.d/smartheat.conf: Path=$path fehlt"
+  done
+fi
+WERK_MOUNT="$R/etc/systemd/system/werk.mount"
+if [ ! -f "$WERK_MOUNT" ]; then
+  fail "werk.mount fehlt (etc/systemd/system)"
+else
+  grep -qx 'Where=/werk' "$WERK_MOUNT" || fail "werk.mount: Where=/werk fehlt"
+  grep -qx 'What=/dev/disk/by-partlabel/werk' "$WERK_MOUNT" || fail "werk.mount: What=/dev/disk/by-partlabel/werk fehlt"
+  options="$(sed -n 's/^Options=//p' "$WERK_MOUNT")"
+  for opt in ro nodev nosuid noexec; do
+    case ",$options," in *",$opt,"*) ;; *) fail "werk.mount: Option $opt fehlt (Options=$options)" ;; esac
+  done
+  [ -L "$WANTS/werk.mount" ] || fail "werk.mount nicht aktiviert"
+fi
+[ -d "$R/werk" ] || fail "/werk fehlt (Mountpunkt im schreibgeschuetzten Root-Dateisystem)"
+WATCHDOG="$R/etc/systemd/system.conf.d/smartheat-watchdog.conf"
+if [ ! -f "$WATCHDOG" ]; then
+  fail "Watchdog-Drop-in fehlt (etc/systemd/system.conf.d/smartheat-watchdog.conf)"
+else
+  grep -qx 'RuntimeWatchdogSec=10s' "$WATCHDOG" || fail "Watchdog-Drop-in: RuntimeWatchdogSec=10s fehlt"
+  grep -qx 'RebootWatchdogSec=5min' "$WATCHDOG" || fail "Watchdog-Drop-in: RebootWatchdogSec=5min fehlt"
+fi
+if [ ! -s "$R/etc/rauc/system.conf" ]; then
+  fail "/etc/rauc/system.conf fehlt oder ist leer"
+elif ! grep -qx 'bootname=A' "$R/etc/rauc/system.conf" || ! grep -qx 'bootname=B' "$R/etc/rauc/system.conf"; then
+  fail "/etc/rauc/system.conf: bootname=A und bootname=B erwartet"
+fi
+# rauc.service hat im Paket keinen [Install]-Abschnitt: ab_system.sh haengt sie per add-wants in multi-user.target
+[ -L "$WANTS/rauc.service" ] || fail "rauc.service nicht aktiviert (Link in multi-user.target.wants fehlt)"
+# rauc-mark-good.service bestaetigte jeden Probestart sofort: maskiert (Link auf /dev/null) oder gar nicht vorhanden
+MARK_GOOD="$R/etc/systemd/system/rauc-mark-good.service"
+if [ -L "$MARK_GOOD" ] && [ "$(readlink "$MARK_GOOD")" = /dev/null ]; then :
+elif [ -e "$MARK_GOOD" ] || [ -L "$MARK_GOOD" ] || [ -e "$R/usr/lib/systemd/system/rauc-mark-good.service" ] \
+     || [ -e "$R/lib/systemd/system/rauc-mark-good.service" ]; then
+  fail "rauc-mark-good.service nicht maskiert (etc/systemd/system/rauc-mark-good.service -> /dev/null erwartet)"
+fi
+bad="$(find "$R/etc/systemd/system" -path '*.wants/rauc-mark-good.service' -print -quit 2>/dev/null)"
+if [ -n "$bad" ]; then fail "rauc-mark-good.service aktiviert (${bad#"$R"})"; fi
+# Docker exakt aus docker-apt/version (FR-34); in der Stage (--customize) liegt der Ordner nicht neben dem Skript
+if [ "$CUSTOMIZE" = 0 ]; then
+  DOCKER_VERSIONS="$(dirname "${BASH_SOURCE[0]}")/docker-apt/version"
+  if [ ! -r "$DOCKER_VERSIONS" ]; then
+    fail "docker-apt/version fehlt (neben rootfs_checks.sh)"
+  else
+    for pkg in docker-ce docker-ce-cli containerd.io docker-compose-plugin; do
+      want="$(sed -n "s/^$pkg=//p" "$DOCKER_VERSIONS" | head -n 1)"
+      have="$(pkg_version "$pkg")"
+      if [ -z "$want" ]; then fail "docker-apt/version: $pkg fehlt"
+      elif [ "$have" != "$want" ]; then fail "Paket $pkg: ${have:-nicht installiert} statt $want (docker-apt/version)"
+      fi
+    done
+  fi
 fi
 
 # Diagnosewerkzeuge am Geraet: ss und ip (iproute2) in usr/bin oder usr/sbin, vcgencmd (raspi-utils) in usr/bin.
@@ -150,7 +221,7 @@ grep -rqs "archive.raspberrypi.com" "$R/etc/apt/sources.list.d" "$R/etc/apt/sour
   || fail "Raspberry-Pi-Archiv nicht eingebunden"
 
 # WLAN aus (wlan_off.sh, nur Ethernet): iwd maskiert und von keinem Ziel gewollt, keine systemd-networkd-Konfiguration
-# fuer WLAN, WLAN-Chip per dtoverlay=disable-wifi im Abschnitt [all] (bzw. vor jedem Abschnitt) der config.txt.
+# fuer WLAN. Den WLAN-Chip schaltet dtoverlay=disable-wifi-pi5 in der config.txt ab (hooks/finalize10-bootfs-checks).
 if [ "$(readlink "$R/etc/systemd/system/iwd.service" 2>/dev/null)" != /dev/null ]; then
   fail "iwd nicht maskiert (etc/systemd/system/iwd.service -> /dev/null erwartet)"
 fi
@@ -160,14 +231,6 @@ if [ -n "$bad" ]; then fail "iwd aktiviert (${bad#"$R"})"; fi
 bad="$(grep -lsE '^[[:space:]]*Name=.*wlan' "$R"/etc/systemd/network/*.network | head -n 1)"
 if [ -e "$R/etc/systemd/network/02-wlan0.network" ]; then bad=/etc/systemd/network/02-wlan0.network; fi
 if [ -n "$bad" ]; then fail "WLAN-Netzwerkkonfiguration im Image (${bad#"$R"})"; fi
-CONFIG_TXT="$R/boot/firmware/config.txt"
-if [ ! -f "$CONFIG_TXT" ]; then
-  fail "boot/firmware/config.txt fehlt"
-elif ! awk '/^[[:space:]]*\[/ { sec = $0; gsub(/[[:space:]]/, "", sec); next }
-            (sec == "" || sec == "[all]") && /^[[:space:]]*dtoverlay=disable-wifi[[:space:]]*$/ { found = 1 }
-            END { exit !found }' "$CONFIG_TXT"; then
-  fail "dtoverlay=disable-wifi fehlt in config.txt (Abschnitt [all])"
-fi
 
 # DHCPv4 auf eth0 mit der MAC als Client-ID (eth_dhcp.sh; mit der DUID kam am Router des Labors kein Angebot): im
 # Drop-in gilt die letzte Zuweisung im Abschnitt [DHCPv4].

@@ -20,6 +20,19 @@
 - `min_updater_version` der Bundles: 0.8.0 ohne Systemteil (der Updater 0.8.0 nimmt Container-Bundles weiter an), 0.9.0 mit
   `system`. `build_bundle.py --system DATEI` bindet das System-Bundle im Manifest, `verify_bundle.py` prueft Groesse und
   SHA-256 der Systemdatei.
+- Image fuer den Pi 5 (AP-05a, GW 6.1): `rpi-image-gen` v2.9.0 mit Layout `image-rota` statt `image-rpios`, NVMe statt USB
+  (`usbboot.sh`, `initramfs_check.sh`, feste MBR-Signatur und der Pi-4-Pfad entfallen). GPT mit sieben Partitionen:
+  `bootconfig`, `boot_a`/`boot_b` (je 256M), `system_a`/`system_b` (je 6G, ext4 mit 16-K-Bloecken, nur lesend), `werk` (16M,
+  ext4, `/werk` mit `ro,nodev,nosuid,noexec`; `hooks/preimage50-werk` fuegt sie in `genimage.cfg` ein) und `persistent`
+  (= `daten`, 4G). Slot-uebergreifend sind `/var/lib/{smartheat,docker,containerd,rauc,systemd/timesync}`. Kernel mit
+  `panic=10`, Hardware-Watchdog (`RuntimeWatchdogSec=10s`, `RebootWatchdogSec=5min`), WLAN und Bluetooth per Overlay
+  (`disable-wifi-pi5`, `disable-bt-pi5`) aus. Pakete: `rauc`, `rauc-service` (`/etc/rauc/system.conf` aus
+  `host/rauc/system.conf.in`; `rauc-mark-good.service` maskiert, bestaetigt wird nur vom Updater) und Docker 29 aus dem Docker-Archiv
+  (`docker-apt/`: Schluessel mit Fingerabdruck, vier Pakete exakt gepinnt); kein `docker.io`, kein `unattended-upgrades`
+  (`host/apt/` entfaellt, der Paketstand aendert sich nur mit einem neuen System-Bundle). Die Pruefungen des Bauergebnisses
+  laufen als Hooks (`hooks/postbuild50-rootfs-checks`, `hooks/finalize10-bootfs-checks`; v2.9.0 ignoriert den alten
+  `post-build.sh` ohne Meldung). `make_image.sh` liefert zusaetzlich `system-<Version>.ext4`, `boot-<Version>.vfat` und die
+  SBOM (`smartheat-gateway-<Version>.sbom.zst`, syft/SPDX-JSON), je mit `.sha256`; `--pilot-ssh` bricht bis AP-05b ab.
 
 ## 0.8.0
 

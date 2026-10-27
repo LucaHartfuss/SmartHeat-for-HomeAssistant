@@ -3,11 +3,12 @@
 # debian:trixie-Container fuer linux/arm64 (auf einem arm64-Host nativ, sonst ueber QEMU-binfmt, von rpi-image-gen
 # nicht offiziell unterstuetzt). Geraete-API- und Portal-Adresse: eigener DNS-Name per https (own_url.sh), geprueft vor
 # jeder anderen Arbeit.
-# Aufruf: make_image.sh --bundle ORDNER --out ORDNER --device-api-url URL --portal-base-url URL [--pilot-ssh PUBKEY]
-#         [--release-roots DATEI]
+# Aufruf: make_image.sh --bundle ORDNER --out ORDNER --device-api-url URL --portal-base-url URL [--release-roots DATEI]
+#   --pilot-ssh gibt es nicht mehr: das Pilot-Image (SSH-Schluessel im Image) kommt mit AP-05b neu; der Aufruf bricht ab.
 #   --release-roots wird an prepare.sh durchgereicht (eigener Schluesselbund der Roots fuer Labor-Images, Standard
 #   host/release-roots.pem); die Datei wird hier vor jeder Docker-Arbeit geprueft.
-# Ergebnis: OUT/smartheat-gateway-<version>[-pilot].img.zst und .sha256
+# Ergebnis (je Datei mit .sha256): OUT/smartheat-gateway-<version>.img.zst (Werks-Image, Pi 5 mit NVMe, A/B), OUT/system-<version>.ext4
+# und OUT/boot-<version>.vfat (Slot-Images fuer das System-Bundle), OUT/smartheat-gateway-<version>.sbom[.zst] (SBOM).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
@@ -20,14 +21,15 @@ usage() { echo "FEHLER: $1" >&2; exit 2; }
 OUT="" API_URL="" PORTAL_URL="" RELEASE_ROOTS="" API_SET=0 PORTAL_SET=0 RELEASE_ROOTS_SET=0 PASS=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --out|--bundle|--device-api-url|--portal-base-url|--pilot-ssh|--release-roots) [ $# -ge 2 ] || usage "$1 braucht einen Wert" ;;
+    --out|--bundle|--device-api-url|--portal-base-url|--release-roots) [ $# -ge 2 ] || usage "$1 braucht einen Wert" ;;
   esac
   case "$1" in
     --out) OUT="$2"; shift ;;
     --device-api-url) API_URL="$2"; API_SET=1; PASS+=("$1" "$2"); shift ;;
     --portal-base-url) PORTAL_URL="$2"; PORTAL_SET=1; PASS+=("$1" "$2"); shift ;;
     --release-roots) RELEASE_ROOTS="$2"; RELEASE_ROOTS_SET=1; PASS+=("$1" "$2"); shift ;;
-    --bundle|--pilot-ssh) PASS+=("$1" "$2"); shift ;;
+    --bundle) PASS+=("$1" "$2"); shift ;;
+    --pilot-ssh) usage "--pilot-ssh: das Pilot-Image gibt es bis AP-05b nicht (Pilot-Zugang kommt mit der Station)" ;;
     *) usage "Unbekannte Option: $1" ;;
   esac
   shift

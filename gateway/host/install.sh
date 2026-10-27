@@ -85,7 +85,7 @@ dir() {  # Ordner $1 mit Modus $2 und Eigentuemer $3
 subst() { sed -e "s|@ROOT@|$ROOT|g" "$1"; }
 
 # Speicherweg von Docker (containerd-Snapshotter, Erststart ohne Pull). MUSS vor der Installation von
-# docker.io stehen: dockerd legt seinen Speicher beim ersten Start an, ein spaeter umgestellter Speicher versteckt
+# Docker (docker-ce) stehen: dockerd legt seinen Speicher beim ersten Start an, ein spaeter umgestellter Speicher versteckt
 # alles, was vorher im klassischen angelegt wurde. Bestehende Installationen mit klassischem Speicher werden nicht
 # unterstuetzt (das Gateway-Image und frische Raspberry-Pi-OS-Installationen haben noch keinen). Eine abweichende
 # bestehende daemon.json wird nie ueberschrieben.
@@ -101,8 +101,9 @@ docker_daemon_config() {
 }
 
 packages() {
-  local wanted=(python3 python3-cryptography unattended-upgrades nftables ca-certificates iproute2)  # CA: Updater-HTTPS, pull; iproute2: ss, ip (Diagnose)
-  [ "$DOCKER" = 1 ] && wanted+=(docker.io docker-cli docker-compose)  # trixie: CLI ist nur "Recommends" von docker.io
+  local wanted=(python3 python3-cryptography nftables ca-certificates iproute2)  # CA: Updater-HTTPS, pull; iproute2: ss, ip (Diagnose)
+  # Docker kommt aus dem Docker-Archiv (gepinnt, gateway/image/docker-apt; im Image eingebunden, Debian liefert nur docker.io 26)
+  [ "$DOCKER" = 1 ] && wanted+=(docker-ce docker-ce-cli containerd.io docker-compose-plugin)
   [ -z "$PILOT_KEY" ] || wanted+=(openssh-server)  # Pilotgeraete (sshd); ohne --pilot-ssh bleibt ssh aus
   local missing=() pkg
   for pkg in "${wanted[@]}"; do
@@ -165,7 +166,6 @@ system_files() {
   put /etc/smartheat/nftables.conf 0644 0:0 < <(sed -e "s|@PILOT_SSH@|$ssh_rule|" "$HERE/nftables.conf")
   if [ "$WROTE" = 1 ]; then FIREWALL_CHANGED=1; fi
   put /etc/systemd/journald.conf.d/smartheat.conf 0644 0:0 <"$HERE/journald.conf.d/smartheat.conf"
-  put /etc/apt/apt.conf.d/52smartheat-unattended 0644 0:0 <"$HERE/apt/52smartheat-unattended"
   if [ -n "$PILOT_KEY" ]; then
     put /etc/ssh/sshd_config.d/00-smartheat.conf 0644 0:0 < <(printf \
       'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n')

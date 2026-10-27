@@ -48,7 +48,7 @@ ARGS=(--no-docker --no-activate --device-api-url https://api.example.test --root
 mkdir -p /etc/ssh/sshd_config.d && echo "PasswordAuthentication yes" >/etc/ssh/sshd_config.d/smartheat.conf
 bash "$SRC/install.sh" "${ARGS[@]}" >/tmp/run1.log 2>&1 || { cat /tmp/run1.log; fail "erster Lauf"; }
 snapshot() { find /opt/smartheat /etc/smartheat /etc/systemd/system/smartheat-* /etc/udev/rules.d/99-smartheat-zigbee.rules \
-  /etc/systemd/journald.conf.d/smartheat.conf /etc/apt/apt.conf.d/52smartheat-unattended /var/lib/smartheat \
+  /etc/systemd/journald.conf.d/smartheat.conf /var/lib/smartheat \
   -exec stat -c '%n %a %u:%g %s %Y' {} + 2>/dev/null | sort; }
 snapshot >/tmp/before
 sleep 1
@@ -78,15 +78,8 @@ grep -q '^After=nftables.service$' /etc/systemd/system/smartheat-firewall.servic
 [ -z "$(find /opt/smartheat /var/lib/smartheat -name 'updater_testlauf*' 2>/dev/null)" ] || fail "updater_testlauf.py ist auf dem Geraet installiert"
 [ -f /etc/ssh/sshd_config.d/00-smartheat.conf ] || fail "sshd-Drop-in 00-smartheat.conf fehlt"
 [ ! -e /etc/ssh/sshd_config.d/smartheat.conf ] || fail "alter sshd-Drop-in smartheat.conf nicht entfernt"
-# Sicherheitsupdates: Debian-Security und das Raspberry-Pi-Archiv (Kernel, Firmware), sonst nichts;
-# kein automatischer Neustart.
-patterns="$(apt-config dump | grep 'Unattended-Upgrade::Origins-Pattern::')"
-# shellcheck disable=SC2016  # ${distro_codename} bleibt in der apt-Konfiguration woertlich stehen
-if [ "$(printf '%s\n' "$patterns" | wc -l)" != 2 ] || ! grep -q 'codename=${distro_codename}-security,' <<<"$patterns" \
-   || ! grep -q 'origin=Raspberry Pi Foundation,codename=${distro_codename},label=Raspberry Pi Foundation' <<<"$patterns"; then
-  echo "$patterns"; fail "Origins-Pattern nicht genau Debian-Security und Raspberry-Pi-Archiv"
-fi
-apt-config dump | grep -q '^Unattended-Upgrade::Automatic-Reboot "false";$' || fail "Automatic-Reboot nicht aus"
+# Keine automatischen Paket-Updates (Release-Takt, S-10): der Installer legt keine apt-Konfiguration dafuer ab.
+[ ! -e /etc/apt/apt.conf.d/52smartheat-unattended ] || fail "52smartheat-unattended wurde abgelegt (kein unattended-upgrades)"
 nft_syntax_check "nftables-Regeln ungueltig"
 grep -q "tcp dport 22 accept" /etc/smartheat/nftables.conf || fail "Pilot-SSH fehlt in der Firewall"
 if udevadm --help 2>&1 | grep -q verify; then udevadm verify /etc/udev/rules.d/99-smartheat-zigbee.rules || fail "udev-Regel ungueltig"; fi
@@ -233,13 +226,13 @@ done
   && fail "firstboot mit --image --no-docker aktiviert"
 grep -q '^ConditionDirectoryNotEmpty=/var/lib/smartheat/images$' /etc/systemd/system/smartheat-firstboot.service \
   || fail "Firstboot-Bedingung fehlt oder @ROOT@ nicht ersetzt"
-# Docker-Speicherweg: daemon.json liegt VOR der Installation von docker.io, eine abweichende
+# Docker-Speicherweg: daemon.json liegt VOR der Installation von docker-ce, eine abweichende
 # bestehende Datei bricht ab und bleibt unberuehrt, identischer Inhalt ist ein No-op.
 ORD_STUBS=/tmp/stubs-order
 mkdir -p "$ORD_STUBS"
 cat >"$ORD_STUBS/dpkg-query" <<'STUB'
 #!/bin/sh
-case "$*" in *docker.io*|*docker-cli*|*docker-compose*) exit 1 ;; esac
+case "$*" in *docker-ce*|*containerd.io*|*docker-compose-plugin*) exit 1 ;; esac
 echo "install ok installed"
 STUB
 cat >"$ORD_STUBS/apt-get" <<'STUB'
@@ -251,8 +244,8 @@ chmod +x "$ORD_STUBS"/*
 ORD_ARGS=(--no-activate --device-api-url https://api.example.test --root /var/lib/smartheat-ord)
 rm -rf /etc/docker; : >/tmp/apt.log
 PATH="$ORD_STUBS:$STUBS:$PATH" bash "$SRC/install.sh" "${ORD_ARGS[@]}" >/tmp/ord.log 2>&1 || { cat /tmp/ord.log; fail "Docker-Lauf"; }
-grep -q 'apt-get install .*docker.io.* daemon.json=vorhanden$' /tmp/apt.log \
-  || { cat /tmp/apt.log; fail "daemon.json liegt nicht vor der Installation von docker.io"; }
+grep -q 'apt-get install .*docker-ce.* daemon.json=vorhanden$' /tmp/apt.log \
+  || { cat /tmp/apt.log; fail "daemon.json liegt nicht vor der Installation von docker-ce"; }
 cmp -s "$SRC/docker-daemon.json" /etc/docker/daemon.json || fail "daemon.json Inhalt"
 : >/tmp/apt.log
 PATH="$STUBS:$PATH" bash "$SRC/install.sh" "${ORD_ARGS[@]}" >/tmp/ord2.log 2>&1 || fail "zweiter Docker-Lauf"

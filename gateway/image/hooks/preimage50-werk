@@ -1,0 +1,46 @@
+#!/bin/bash
+# preimage-Hook: fuegt die Partition werk (16M, ext4, Label werk; GW 6.1) in <Ausgabeordner>/genimage.cfg ein. image-rota
+# schreibt die Datei in preimage05-templates aus einer festen Vorlage (genimage.cfg.in.<rootfs_type>), eine Variable fuer
+# eine eigene Vorlage gibt es nicht. Der Hook laeuft danach (50 > 05, Source-Tree-Hooks nach den Layer-Hooks) und setzt die
+# Partition VOR persistent, damit persistent die letzte bleibt (Nr. 6 = werk, 7 = persistent; die Station vergroessert
+# daten, AP-05b). Der Textersatz bricht laut ab, wenn der Anker nicht genau einmal vorkommt: ein Upstream-Wechsel
+# der Vorlage faellt so im Bau auf statt als Image ohne werk (oder mit falscher Nummer).
+# ext4 mit 4-K-Bloecken (nicht 16 K): die Station beschreibt werk am Rechner, der 4-K-Seiten hat. `empty = true`: ohne
+# diese Zeile fuellt genimage jedes Dateisystem-Image ohne mountpoint mit dem ganzen Root-Dateisystem (erster Bau
+# 2026-10-27: "Could not allocate block ... initrd.img" beim 16-MiB-Image); mit ihr entsteht ein leeres.
+# Aufruf (Runner, Phase preimage): preimage50-werk ROOTFS AUSGABEORDNER
+set -euo pipefail
+OUT="${2:?Ausgabeordner fehlt}"
+CFG="$OUT/genimage.cfg"
+ANCHOR='   partition persistent {'
+die() { echo "preimage50-werk: $1" >&2; exit 1; }
+[ -f "$CFG" ] || die "$CFG fehlt (image-rota, preimage05-templates)"
+[ "$(grep -cxF "$ANCHOR" "$CFG")" = 1 ] || die "Anker '${ANCHOR# *}' nicht genau einmal in $CFG (Vorlage von image-rota geaendert?)"
+! grep -qE '^[[:space:]]*(partition|image)[[:space:]]+werk' "$CFG" || die "werk ist schon in $CFG"
+[ "$(grep -cE '^[[:space:]]*partition[[:space:]]' "$CFG")" = 6 ] || die "$CFG: sechs Partitionen erwartet (image-rota)"
+tmp="$CFG.werk"
+awk -v anchor="$ANCHOR" '
+  $0 == anchor {
+    print "   partition werk {"
+    print "      in-partition-table = true"
+    print "      image = werk.ext4"
+    print "      partition-type-uuid = L"
+    print "   }"
+    print ""
+  }
+  { print }
+  END {
+    print ""
+    print "image werk.ext4 {"
+    print "   ext4 {"
+    print "      use-mke2fs = true"
+    print "      label = \"werk\""
+    print "      extraargs = \"-b 4096\""
+    print "   }"
+    print "   size = 16M"
+    print "   empty = true"
+    print "}"
+  }' "$CFG" >"$tmp"
+mv "$tmp" "$CFG"
+[ "$(grep -cE '^[[:space:]]*partition[[:space:]]' "$CFG")" = 7 ] || die "$CFG: sieben Partitionen erwartet"
+echo "preimage50-werk: Partition werk vor persistent eingefuegt ($CFG)"

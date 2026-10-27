@@ -1,0 +1,9 @@
+# Docker-Engine fuer das Gateway-Image (FR-34): Quelle, Schluessel und Paketversionen sind gepinnt, es gibt keinen
+# automatischen Paketstand (kein unattended-upgrades); eine neue Version kommt nur mit einem neuen Image/System-Bundle.
+# Eine Zeile je Eintrag, Name=Wert. docker_apt.sh prueft den Fingerabdruck von docker.asc und schreibt die Versionen als
+# apt-Pin ins Image, rootfs_checks.sh vergleicht sie mit dem installierten Stand.
+fingerprint=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+docker-ce=5:29.9.2-1~debian.13~trixie
+docker-ce-cli=5:29.9.2-1~debian.13~trixie
+containerd.io=2.4.2-3~debian.13~trixie
+docker-compose-plugin=5.6.1-1~debian.13~trixie

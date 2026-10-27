@@ -3,6 +3,7 @@ http, Port, Pfad) ab, bevor sie etwas tun; prepare.sh legt mit einer Docker-Attr
 Konfiguration und Installer passen zusammen (alle Pakete aus dem Layer, kein apt im chroot)."""
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -207,7 +208,7 @@ def test_layer_brings_every_package_install_sh_wants():
     trixie-minbase mit)."""
     install = (GW / "host" / "install.sh").read_text()
     wanted = set(re.search(r"local wanted=\(([^)]*)\)", install).group(1).split())
-    wanted |= set(re.search(r"wanted\+=\((docker\.io[^)]*)\)", install).group(1).split())
+    wanted |= set(re.search(r"wanted\+=\((docker-ce[^)]*)\)", install).group(1).split())
     assert wanted - _layer_packages() == set()
 
 
@@ -216,7 +217,7 @@ def test_layer_brings_the_diagnosis_tools_but_install_sh_does_not_need_the_raspb
     Raspberry-Pi-Archiv, das das Image einbindet: ein Debian-Host ohne dieses Archiv installiert ohne das Paket."""
     install = (GW / "host" / "install.sh").read_text()
     wanted = set(re.search(r"local wanted=\(([^)]*)\)", install).group(1).split())
-    wanted |= set(re.search(r"wanted\+=\((docker\.io[^)]*)\)", install).group(1).split())
+    wanted |= set(re.search(r"wanted\+=\((docker-ce[^)]*)\)", install).group(1).split())
     assert "iproute2" in wanted
     assert "raspi-utils" not in install
     assert {"iproute2", "raspi-utils"} <= _layer_packages()
@@ -236,25 +237,51 @@ def test_config_layer_and_hook_fit_together():
     assert re.search(rf"^  shg: {name}$", config, re.MULTILINE)
     assert re.search(r"^# X-Env-VarPrefix: shg$", layer, re.MULTILINE)
     assert "$IGconf_shg_stage/installer/gateway/image/customize.sh" in layer
-    assert re.search(r"^  layer: rpi4$", config, re.MULTILINE)
-    # v2.8.0: das IDP-Schema (post-image) kennt kein usb; der USB-Start kommt aus usbboot.sh (CI-Spike 2026-10-07)
-    assert re.search(r"^  storage_type: sd$", config, re.MULTILINE)
-    assert re.search(r'^  disksig: "0x[0-9a-f]{8}"$', config, re.MULTILINE)
-    assert layer.index('- bash "$SRCROOT/usbboot.sh"') < layer.index(
-        '- bash "$IGconf_shg_stage/installer/gateway/image/customize.sh"')
-    post_build = IMAGE / "post-build.sh"
-    assert post_build.stat().st_mode & stat.S_IXUSR, "rpi-image-gen fuehrt nur ausfuehrbare Hooks aus"
+    last = layer.index('- bash "$IGconf_shg_stage/installer/gateway/image/customize.sh"')
+    for hook in ("locale_default.sh", "wlan_off.sh", "eth_dhcp.sh", "ab_system.sh"):
+        assert (IMAGE / hook).stat().st_mode & stat.S_IXUSR, hook
+        assert layer.index(f'- bash "$SRCROOT/{hook}" "$1"') < last, hook
+    for gone in ("usbboot.sh", "initramfs_check.sh", "post-build.sh"):
+        assert not (IMAGE / gone).exists(), gone
+        assert gone not in layer
+
+
+def _config_value(section: str, key: str) -> str | None:
+    config = (IMAGE / "config" / "smartheat-gateway.yaml").read_text()
+    block = re.search(rf"^{section}:\n((?:[ \t]+.*\n|[ \t]*\n|#.*\n)+)", config, re.MULTILINE)
+    assert block, section
+    found = re.search(rf"^  {re.escape(key)}: (.+?)\s*$", block.group(1), re.MULTILINE)
+    return found.group(1) if found else None
+
+
+def test_config_builds_the_pi5_nvme_image_with_image_rota():
+    """GW 6.1: Pi 5 mit NVMe, A/B-Layout image-rota mit ext4 (RAUC schreibt rohe ext4-Images), feste Groessen;
+    die Pi-4-Reste (SD-Umweg fuer USB, feste MBR-Signatur) gibt es nicht mehr."""
+    config = (IMAGE / "config" / "smartheat-gateway.yaml").read_text()
+    assert _config_value("device", "layer") == "rpi5"
+    assert _config_value("device", "storage_type") == "nvme"  # nvme verlangt die zwei Traits darunter
+    assert re.search(r"^trait:\n  hw:storage:nvme: true\n  hw:pcie:m2: true$", config, re.MULTILINE)
+    assert _config_value("image", "layer") == "image-rota"
+    assert _config_value("image", "rootfs_type") == "ext4"
+    assert _config_value("image", "boot_part_size") == "256M"
+    assert _config_value("image", "system_part_size") == "6G"
+    assert _config_value("image", "data_part_size") == "4G"
+    assert _config_value("image", "name") == "smartheat-gateway"
+    assert _config_value("image", "idp_enable") == "n"  # kein IDP-Dokument: die Provisionierungs-Map kennt werk nicht
+    for gone in ("root_part_size", "disksig", "rpi4", "image-rpios", "storage_type: sd", "usbboot"):
+        assert gone not in config, gone
 
 
 def test_pins_are_the_same_everywhere():
-    """Basis-Image per Digest und rpi-image-gen per Commit (v2.8.0), ueberall dieselben Werte."""
+    """Basis-Image per Digest und rpi-image-gen per Commit (v2.9.0), ueberall dieselben Werte."""
     digests = set()
     for path in [*IMAGE.glob("*.sh"), REPO / "tests" / "test_gateway_firstboot.sh"]:
         code = "\n".join(line for line in path.read_text().splitlines() if not line.lstrip().startswith("#"))
         digests |= set(re.findall(r"debian:trixie@sha256:[0-9a-f]{64}", code))
         assert not re.search(r"debian:trixie(?!@sha256:[0-9a-f]{64})\b", code), path
     assert len(digests) == 1
-    assert "RIG_COMMIT=262d4df5a9f9d4133370465399a7958a7c22cdc7" in (IMAGE / "build.sh").read_text()
+    assert "RIG_COMMIT=d2d5705bcb37284c4b08c0ce43c039b1f1004e25\n" in (IMAGE / "build.sh").read_text()  # Tag v2.9.0
+    assert "v2.9.0" in (IMAGE / "config" / "smartheat-gateway.yaml").read_text()
 
 
 def test_no_tenant_ids_in_image_files():
@@ -262,62 +289,320 @@ def test_no_tenant_ids_in_image_files():
         assert not TENANT_ID.search(path.read_text(encoding="utf-8", errors="ignore")), path
 
 
-def _usbboot(root: Path, sig: str | None) -> subprocess.CompletedProcess:
-    env = {k: v for k, v in os.environ.items() if k != "IGconf_image_disksig"}
-    if sig is not None:
-        env["IGconf_image_disksig"] = sig
-    return subprocess.run(["bash", str(IMAGE / "usbboot.sh"), str(root)], capture_output=True, text=True,
+HOOK_NAME = re.compile(r"^(preimage|postbuild|finalize|deploy)[0-9]{2}-[a-zA-Z0-9-]+$")
+HOOKS = ("preimage50-werk", "postbuild50-rootfs-checks", "finalize10-bootfs-checks", "deploy50-slot-images")
+
+
+def test_source_tree_hooks_are_found_and_executable():
+    """rpi-image-gen v2.9.0 sucht nur <Phase>NN-Name in SRCROOT/hooks mit Namensstamm aus [a-zA-Z0-9-]; ein nicht
+    ausfuehrbarer Hook wird nur mit einer Warnung uebergangen (bin/runner), v2.8.0 ignorierte post-build.sh ganz
+    still. Genau diese vier Hooks, jeder passt auf das Namensmuster und ist ausfuehrbar."""
+    found = sorted(p.name for p in (IMAGE / "hooks").iterdir())
+    assert found == sorted(HOOKS)
+    for name in found:
+        assert HOOK_NAME.match(name), name
+        assert (IMAGE / "hooks" / name).stat().st_mode & stat.S_IXUSR, name
+
+
+# Vorlage genimage.cfg.in.ext4 von rpi-image-gen v2.9.0 (Commit d2d5705), unveraendert; die Platzhalter <...> bleiben
+# stehen, der Hook ersetzt nur Text.
+GENIMAGE_V290 = Path(__file__).parent / "fixtures" / "genimage.cfg.in.ext4"
+
+
+def _run_hook(name: str, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    """Wie der Runner: der Hook laeuft aus seinem eigenen Ordner."""
+    return subprocess.run(["./" + name, *args], capture_output=True, text=True, check=False, cwd=IMAGE / "hooks",
+                          env={**os.environ, **(env or {})})
+
+
+def _partitions(cfg: str) -> list[str]:
+    return re.findall(r"^\s*partition (\w+) \{", cfg, re.MULTILINE)
+
+
+def test_preimage_werk_inserts_the_partition_before_persistent(tmp_path):
+    cfg = tmp_path / "genimage.cfg"
+    cfg.write_text(GENIMAGE_V290.read_text())
+    assert _partitions(cfg.read_text()) == ["bootconfig", "boot_a", "boot_b", "system_a", "system_b", "persistent"]
+    result = _run_hook("preimage50-werk", str(tmp_path / "rootfs"), str(tmp_path))
+    assert result.returncode == 0, result.stderr
+    text = cfg.read_text()
+    assert _partitions(text) == ["bootconfig", "boot_a", "boot_b", "system_a", "system_b", "werk", "persistent"]
+    # genau das Eingefuegte kommt dazu: die Partition vor persistent, das Image am Ende, sonst bleibt die Vorlage
+    original = [ln for ln in GENIMAGE_V290.read_text().splitlines() if ln.strip()]
+    at = original.index("   partition persistent {")
+    partition = ["   partition werk {", "      in-partition-table = true", "      image = werk.ext4",
+                 "      partition-type-uuid = L", "   }"]
+    image = ["image werk.ext4 {", "   ext4 {", "      use-mke2fs = true", '      label = "werk"',
+             '      extraargs = "-b 4096"', "   }", "   size = 16M", "   empty = true", "}"]  # leer, 4-K-Bloecke
+    assert [ln for ln in text.splitlines() if ln.strip()] == original[:at] + partition + original[at:] + image
+
+
+@pytest.mark.parametrize("breakit, why", [
+    (lambda t: t.replace("   partition persistent {", "   partition daten {"), "Anker fehlt"),
+    (lambda t: t + "\n   partition persistent {\n}\n", "Anker doppelt"),
+    (lambda t: t.replace("   partition persistent {", "      partition persistent {"), "Anker eingerueckt"),
+    (lambda t: t.replace("   partition boot_b {\n      in-partition-table = true\n      image = boot.vfat\n"
+                         "      partition-type-uuid = F\n      bootable = true\n   }\n\n", ""), "Partition fehlt"),
+    (lambda t: t + "\nimage werk.ext4 {\n}\n", "werk schon da"),
+])
+def test_preimage_werk_fails_loudly_when_the_template_changed(tmp_path, breakit, why):
+    """Ein Upstream-Wechsel der Vorlage faellt im Bau auf: der Hook aendert nichts und scheitert mit Meldung."""
+    original = breakit(GENIMAGE_V290.read_text())
+    assert original != GENIMAGE_V290.read_text(), why
+    cfg = tmp_path / "genimage.cfg"
+    cfg.write_text(original)
+    result = _run_hook("preimage50-werk", str(tmp_path / "rootfs"), str(tmp_path))
+    assert result.returncode != 0 and "preimage50-werk:" in result.stderr, (why, result.stderr)
+    assert cfg.read_text() == original and not (tmp_path / "genimage.cfg.werk").exists()
+
+
+def test_preimage_werk_fails_without_genimage_cfg(tmp_path):
+    result = _run_hook("preimage50-werk", str(tmp_path / "rootfs"), str(tmp_path))
+    assert result.returncode != 0 and "genimage.cfg fehlt" in result.stderr
+
+
+def test_genimage_template_fixture_is_the_one_the_layout_assumes():
+    """Aenderte rpi-image-gen die Vorlage (Reihenfolge, Nummern), muessen autoboot.txt (Partition 2 und 3), der Hook und
+    die RAUC-Slots (system.conf.in) mit; die Fixture haelt den Stand, auf den sich das alles bezieht."""
+    names = _partitions(GENIMAGE_V290.read_text())
+    assert names[:3] == ["bootconfig", "boot_a", "boot_b"] and names[-1] == "persistent"
+    system_conf = (GW / "host" / "rauc" / "system.conf.in").read_text()
+    for label in ("system_a", "system_b", "boot_a", "boot_b"):
+        assert f"device=/dev/disk/by-partlabel/{label}" in system_conf and label in names
+
+
+def _deploy_env(tmp_path: Path, **extra: str) -> dict[str, str]:
+    out = tmp_path / "image-out"
+    out.mkdir(exist_ok=True)
+    return {"IGconf_image_outputdir": str(out), "IGconf_artefact_version": "0.9.0", "IGconf_image_rootfs_type": "ext4",
+            **extra}
+
+
+def test_deploy_slot_images_copies_the_raw_slot_images(tmp_path):
+    env = _deploy_env(tmp_path)
+    out = Path(env["IGconf_image_outputdir"])
+    (out / "system.ext4").write_bytes(b"ext4-roh")
+    (out / "boot.vfat").write_bytes(b"vfat-roh")
+    (out / "system.sparse").write_bytes(b"sparse-nicht")
+    deploy = tmp_path / "deploy"
+    deploy.mkdir()
+    result = _run_hook("deploy50-slot-images", str(deploy), env=env)
+    assert result.returncode == 0, result.stderr
+    assert sorted(p.name for p in deploy.iterdir()) == ["boot-0.9.0.vfat", "system-0.9.0.ext4"]
+    assert (deploy / "system-0.9.0.ext4").read_bytes() == b"ext4-roh"
+    assert (deploy / "boot-0.9.0.vfat").read_bytes() == b"vfat-roh"
+
+
+@pytest.mark.parametrize("missing", ["system.ext4", "boot.vfat"])
+def test_deploy_slot_images_fails_when_a_slot_image_is_missing_or_empty(tmp_path, missing):
+    env = _deploy_env(tmp_path)
+    out = Path(env["IGconf_image_outputdir"])
+    for name in ("system.ext4", "boot.vfat"):
+        (out / name).write_bytes(b"" if name == missing else b"x")
+    deploy = tmp_path / "deploy"
+    deploy.mkdir()
+    result = _run_hook("deploy50-slot-images", str(deploy), env=env)
+    assert result.returncode != 0 and missing in result.stderr
+
+
+def test_deploy_slot_images_wants_ext4_and_the_environment(tmp_path):
+    deploy = tmp_path / "deploy"
+    deploy.mkdir()
+    env = _deploy_env(tmp_path, IGconf_image_rootfs_type="erofs")
+    assert _run_hook("deploy50-slot-images", str(deploy), env=env).returncode != 0
+    assert _run_hook("deploy50-slot-images", str(deploy), env={"IGconf_image_outputdir": ""}).returncode != 0
+
+
+def test_make_image_refuses_pilot_ssh_until_ap05b(tmp_path):
+    """Das Pilot-Image (SSH-Schluessel im Image) gibt es bis AP-05b nicht: der Aufruf bricht ab, bevor irgendetwas
+    angelegt oder gestartet wird."""
+    out = tmp_path / "out"
+    result = _script("make_image.sh", tmp_path, "--bundle", str(_bundle(tmp_path / "b")), "--out", str(out), *GOOD,
+                     "--pilot-ssh", "ssh-ed25519 AAAA test-key")
+    assert result.returncode != 0 and "--pilot-ssh" in result.stderr and "AP-05b" in result.stderr, result.stderr
+    assert not out.exists() and _docker_calls(tmp_path) == []
+
+
+DOCKER_APT = IMAGE / "docker-apt"
+DOCKER_PACKAGES = ("docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin")
+
+
+def _docker_versions() -> dict[str, str]:
+    entries = [line for line in (DOCKER_APT / "version").read_text().splitlines() if line and not line.startswith("#")]
+    pairs = [line.split("=", 1) for line in entries]
+    assert len(pairs) == len({name for name, _ in pairs}), "doppelter Eintrag in docker-apt/version"
+    return dict(pairs)
+
+
+def test_docker_comes_from_the_docker_archive_pinned_to_29():
+    """FR-34: Docker >= 28 (Weiterleitung auf Loopback-Ports, GW-Weiterleitung) gibt es nicht im Debian-Archiv; vier
+    Pakete exakt gepinnt, keine Platzhalter, docker-ce und -cli gleich."""
+    versions = _docker_versions()
+    assert set(versions) == {"fingerprint", *DOCKER_PACKAGES}
+    assert versions["fingerprint"] == "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+    assert re.fullmatch(r"5:29\.\d+\.\d+-1~debian\.13~trixie", versions["docker-ce"])
+    assert versions["docker-ce-cli"] == versions["docker-ce"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+-\d+~debian\.13~trixie", versions["containerd.io"])
+    assert re.fullmatch(r"\d+\.\d+\.\d+-\d+~debian\.13~trixie", versions["docker-compose-plugin"])
+    sources = (DOCKER_APT / "docker.sources").read_text()
+    assert "URIs: https://download.docker.com/linux/debian\n" in sources and "Suites: trixie\n" in sources
+    assert "X-IG-Signed-By: /usr/share/keyrings/docker.asc" in sources  # wird zu Signed-By (cleanup10-deb822-signedby)
+    layer = (IMAGE / "layer" / "smartheat-gateway.yaml").read_text()
+    assert "- ${SRCROOT}/docker-apt/docker.sources" in layer
+    assert '- bash "$SRCROOT/docker_apt.sh" "$1"' in layer
+    assert set(DOCKER_PACKAGES) <= _layer_packages()
+
+
+def test_layer_packages_have_rauc_and_neither_docker_io_nor_unattended_upgrades():
+    packages = _layer_packages()
+    assert {"rauc", "rauc-service"} <= packages
+    assert packages.isdisjoint({"docker.io", "docker-cli", "docker-compose", "unattended-upgrades"})
+    assert not (GW / "host" / "apt").exists()
+    install = (GW / "host" / "install.sh").read_text()
+    assert "unattended" not in install and "apt.conf.d" not in install
+
+
+@pytest.fixture
+def need_gpg():
+    assert shutil.which("gpg"), "gpg fehlt: docker_apt.sh und dieser Test brauchen es (Paket gnupg)"
+
+
+def _docker_apt_copy(tmp_path: Path) -> Path:
+    """docker_apt.sh samt docker-apt/ in einen eigenen Ordner (das Skript liest neben sich), zum Verfaelschen."""
+    scripts = tmp_path / "scripts"
+    shutil.copytree(DOCKER_APT, scripts / "docker-apt")
+    shutil.copy(IMAGE / "docker_apt.sh", scripts / "docker_apt.sh")
+    return scripts
+
+
+def _docker_apt(scripts: Path, root: Path, keydir: Path | None = None) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if k != "IGconf_sys_apt_keydir"}
+    if keydir is not None:
+        env["IGconf_sys_apt_keydir"] = str(keydir)
+    return subprocess.run(["bash", str(scripts / "docker_apt.sh"), str(root)], capture_output=True, text=True,
                           check=False, env=env)
 
 
-def test_usbboot_writes_the_rule_for_the_configured_disk_signature(tmp_path):
-    """rpi-image-gen v2.8.0 legt /dev/disk/by-slot/* nur fuer SD/eMMC und NVMe an (CI-Spike 2026-10-07): usbboot.sh
-    markiert die Partitionen des Images am USB ueber die feste Disk-Signatur aus der Konfiguration, auch in der
-    initramfs, und rootfs_checks.sh erkennt die Regel."""
-    config = (IMAGE / "config" / "smartheat-gateway.yaml").read_text()
-    found = re.search(r'^  disksig: "(0x[0-9a-f]{8})"$', config, re.MULTILINE)
-    assert found
-    sig = found.group(1)
-    result = _usbboot(tmp_path, sig.upper().replace("0X", "0x"))
+def test_docker_apt_trusts_the_key_and_pins_the_four_packages(tmp_path, need_gpg):
+    root, keydir = tmp_path / "root", tmp_path / "keydir"
+    result = _docker_apt(_docker_apt_copy(tmp_path), root, keydir)
     assert result.returncode == 0, result.stderr
-    # Der Dateiname kommt aus dem, was usbboot.sh wirklich schreibt (nicht aus einem Literal im Test)
-    written = sorted(p.name for p in (tmp_path / "etc/udev/rules.d").iterdir())
-    assert len(written) == 1, written
-    name = written[0]
-    rule = _logical_rule_lines(tmp_path / "etc/udev/rules.d" / name)
-    assert len(rule) == 1, rule  # eine Regel, auch mit Fortsetzungszeilen
-    rule = rule[0]
-    assert f'ENV{{ID_PART_ENTRY_UUID}}=="{sig[2:]}-0[12]"' in rule and 'ENV{RPI_ONBOOTDEV}="1"' in rule
-    assert 'KERNEL=="sd[a-z]*[0-9]"' in rule
-    hook = tmp_path / "etc/initramfs-tools/hooks/smartheat-usbboot"
-    assert hook.stat().st_mode & stat.S_IXUSR
-    assert f"copy_file config /etc/udev/rules.d/{name}" in hook.read_text()
-    # udev liest die Regeldateien in lexikalischer Reihenfolge: nach 99-rpi-00-bootdev (rpi-storage-binder, setzt
-    # RPI_ONBOOTDEV fuer SD/NVMe) und vor 99-rpi-05-image (legt die by-slot-Links an)
-    assert "99-rpi-00-bootdev.rules" < name < "99-rpi-05-image.rules"
+    key = (DOCKER_APT / "docker.asc").read_bytes()
+    assert (root / "usr/share/keyrings/docker.asc").read_bytes() == key
+    assert (keydir / "docker.asc").read_bytes() == key
+    pref = (root / "etc/apt/preferences.d/smartheat-docker.pref").read_text()
+    versions = _docker_versions()
+    stanzas = {m.group(1): (m.group(2), m.group(3)) for m in
+               re.finditer(r"Package: (\S+)\nPin: version (\S+)\nPin-Priority: (\d+)\n", pref)}
+    assert stanzas == {pkg: (versions[pkg], "1001") for pkg in DOCKER_PACKAGES}
 
 
-def _logical_rule_lines(path: Path) -> list[str]:
-    """Regelzeilen einer udev-Datei ohne Kommentare, Zeilen mit Backslash am Ende zu einer verbunden."""
-    lines, current = [], ""
-    for raw in path.read_text().splitlines():
-        if not current and raw.lstrip().startswith("#"):
-            continue
-        if raw.endswith("\\"):
-            current += raw[:-1]
-            continue
-        current += raw
-        if current.strip():
-            lines.append(current.strip())
-        current = ""
-    return lines
+def test_docker_apt_needs_no_key_directory(tmp_path, need_gpg):
+    assert _docker_apt(_docker_apt_copy(tmp_path), tmp_path / "root").returncode == 0
 
 
-@pytest.mark.parametrize("sig", [None, "", "random", "0x123", "5348470a", "0x5348470g"])
-def test_usbboot_needs_a_fixed_disk_signature(tmp_path, sig):
-    result = _usbboot(tmp_path, sig)
+def test_docker_apt_refuses_a_key_with_another_fingerprint(tmp_path, need_gpg):
+    scripts = _docker_apt_copy(tmp_path)
+    home = tmp_path / "gnupg"
+    home.mkdir(mode=0o700)
+    gpg = ["gpg", "--homedir", str(home), "--batch", "--quiet"]
+    try:
+        subprocess.run([*gpg, "--passphrase", "", "--quick-generate-key", "Fremd <fremd@example.test>", "ed25519", "sign",
+                        "never"], check=True, capture_output=True)
+        other = subprocess.run([*gpg, "--armor", "--export"], check=True, capture_output=True).stdout
+    finally:  # der gpg-Agent des Testschluesselbunds bliebe sonst als Hintergrundprozess stehen
+        subprocess.run(["gpgconf", "--homedir", str(home), "--kill", "all"], check=False, capture_output=True)
+    (scripts / "docker-apt" / "docker.asc").write_bytes(other)
+    root = tmp_path / "root"
+    result = _docker_apt(scripts, root)
+    assert result.returncode != 0 and "Fingerabdruck" in result.stderr
+    assert not (root / "usr").exists() and not (root / "etc").exists()  # nichts vertraut, nichts gepinnt
+
+
+def test_docker_apt_refuses_a_file_that_is_no_key(tmp_path, need_gpg):
+    scripts = _docker_apt_copy(tmp_path)
+    (scripts / "docker-apt" / "docker.asc").write_text("kein Schluessel\n")
+    result = _docker_apt(scripts, tmp_path / "root")
+    assert result.returncode != 0 and not (tmp_path / "root" / "usr").exists()
+
+
+@pytest.mark.parametrize("edit, message", [
+    (lambda t: t.replace("docker-ce-cli=", "docker-ce-cli-x="), "docker-ce-cli fehlt"),
+    (lambda t: t.replace("fingerprint=9DC8", "fingerprint=9dc8"), "kein Fingerabdruck"),
+    (lambda t: t + "docker-ce=5:29.0.0-1~debian.13~trixie\n", "doppelt"),
+    (lambda t: t + "docker-ce 5:29\n", "unlesbare Zeile"),
+])
+def test_docker_apt_refuses_a_broken_version_file(tmp_path, need_gpg, edit, message):
+    scripts = _docker_apt_copy(tmp_path)
+    version = scripts / "docker-apt" / "version"
+    version.write_text(edit(version.read_text()))
+    result = _docker_apt(scripts, tmp_path / "root")
+    assert result.returncode != 0 and message in result.stderr, result.stderr
+    assert not (tmp_path / "root" / "etc").exists()
+
+
+def test_overlay_declares_the_shared_paths_the_watchdog_and_the_werk_mount():
+    overlay = IMAGE / "layer" / "smartheat-gateway.d" / "customize.overlay" / "etc"
+    shared = [ln for ln in (overlay / "rpi-image-gen/slot-shared.d/smartheat.conf").read_text().splitlines()
+              if ln and not ln.startswith("#")]
+    assert shared == ["Version=1", "Path=/var/lib/smartheat", "Path=/var/lib/docker", "Path=/var/lib/containerd",
+                      "Path=/var/lib/rauc", "Path=/var/lib/systemd/timesync"]
+    watchdog = [ln for ln in (overlay / "systemd/system.conf.d/smartheat-watchdog.conf").read_text().splitlines()
+                if ln and not ln.startswith("#")]
+    # GW 6.3 (21): Watchdog 10 s; Neustart-Watchdog 5 min (Rueckfall hoechstens 20 min Frist + 5 min Shutdown, R9)
+    assert watchdog == ["[Manager]", "RuntimeWatchdogSec=10s", "RebootWatchdogSec=5min"]
+    mount = [ln for ln in (overlay / "systemd/system/werk.mount").read_text().splitlines()
+             if ln and not ln.startswith("#")]
+    assert "What=/dev/disk/by-partlabel/werk" in mount and "Where=/werk" in mount and "Type=ext4" in mount
+    assert "Options=ro,nodev,nosuid,noexec,noatime" in mount
+    assert "WantedBy=multi-user.target" in mount  # nicht local-fs.target: eine fehlende Partition haelt den Start nicht auf
+    assert not any(ln.startswith(("Requires", "Before=local-fs")) for ln in mount)
+
+
+def test_kernel_and_firmware_fragments_set_panic_and_switch_off_wifi_and_bluetooth():
+    fragments = IMAGE / "layer" / "smartheat-gateway.d" / "for"
+    assert (fragments / "linux-base/cmdline.d/80-smartheat-panic").read_text() == "panic=10\n"
+    config = [ln for ln in (fragments / "rpi-boot-firmware/config.txt.d/80-smartheat-funk").read_text().splitlines()
+              if ln and not ln.startswith("#")]
+    assert config == ["[pi5]", "dtoverlay=disable-wifi-pi5", "dtoverlay=disable-bt-pi5", "dtoverlay="]
+
+
+def test_system_conf_is_laid_down_by_customize():
+    """R1: /etc/rauc/system.conf entsteht beim Bau aus host/rauc/system.conf.in (rootfs_checks.sh verlangt sie)."""
+    customize = (IMAGE / "customize.sh").read_text()
+    assert 'host/rauc/system.conf.in" "$R/etc/rauc/system.conf"' in customize
+    assert (GW / "host" / "rauc" / "system.conf.in").is_file()
+    lines = (GW / "host" / "rauc" / "system.conf.in").read_text().splitlines()
+    assert "bootname=A" in lines and "bootname=B" in lines
+
+
+def test_ab_system_hook_enables_werk_adds_rauc_to_the_boot_target_and_masks_rauc_mark_good(tmp_path):
+    env, log = _fake_chroot(tmp_path)
+    root = tmp_path / "root"
+    (root / "etc/systemd/system").mkdir(parents=True)
+    (root / "etc/systemd/system/werk.mount").write_text("[Mount]\n")
+    result = subprocess.run(["bash", str(IMAGE / "ab_system.sh"), str(root)], capture_output=True, text=True,
+                            check=False, env=env)
+    assert result.returncode == 0, result.stderr
+    assert (root / "werk").is_dir()
+    assert log.read_text().splitlines() == [f"{root}|systemctl enable werk.mount",
+                                            f"{root}|systemctl add-wants multi-user.target rauc.service",
+                                            f"{root}|systemctl mask rauc-mark-good.service"]
+
+
+def test_ab_system_hook_fails_without_the_werk_unit_or_when_systemctl_fails(tmp_path):
+    env, log = _fake_chroot(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    result = subprocess.run(["bash", str(IMAGE / "ab_system.sh"), str(root)], capture_output=True, text=True,
+                            check=False, env=env)
+    assert result.returncode != 0 and "werk.mount fehlt" in result.stderr and not log.exists()
+    (root / "etc/systemd/system").mkdir(parents=True)
+    (root / "etc/systemd/system/werk.mount").write_text("[Mount]\n")
+    env["SHG_FAKE_CHROOT_RC"] = "1"
+    result = subprocess.run(["bash", str(IMAGE / "ab_system.sh"), str(root)], capture_output=True, text=True,
+                            check=False, env=env)
     assert result.returncode != 0
-    assert not (tmp_path / "etc").exists()
 
 
 def _config_locale() -> dict[str, str]:
@@ -420,8 +705,8 @@ esac
 
 
 def _wlan_root(tmp_path: Path) -> Path:
-    """Stand nach den Layern von v2.8.0: iwd aktiviert (enable-units), 01-eth0/02-wlan0.network (rpi-device-base),
-    config.txt aus der Vorlage."""
+    """Stand nach den Layern von v2.9.0: iwd aktiviert (enable-units), 01-eth0/02-wlan0.network (rpi-device-base).
+    config.txt gibt es in der Phase customize nicht (entsteht erst in preimage)."""
     root = tmp_path / "root"
     wants = root / "etc/systemd/system/multi-user.target.wants"
     wants.mkdir(parents=True)
@@ -431,8 +716,6 @@ def _wlan_root(tmp_path: Path) -> Path:
     net.mkdir(parents=True)
     (net / "01-eth0.network").write_text("[Match]\nName=eth0\n")
     (net / "02-wlan0.network").write_text("[Match]\nName=wlan0\n")
-    (root / "boot/firmware").mkdir(parents=True)
-    (root / "boot/firmware/config.txt").write_text("dtparam=audio=on\n[pi4]\nenable_uart=1\n[all]\nuart_2ndstage=1\n")
     return root
 
 
@@ -447,7 +730,7 @@ def _wlan_off(tmp_path: Path, root: Path, rc: int = 0) -> subprocess.CompletedPr
                           check=False, env=env)
 
 
-def test_wlan_off_masks_iwd_drops_the_wlan_network_and_disables_the_chip(tmp_path):
+def test_wlan_off_masks_iwd_and_drops_the_wlan_network(tmp_path):
     root = _wlan_root(tmp_path)
     result = _wlan_off(tmp_path, root)
     assert result.returncode == 0, result.stderr
@@ -457,34 +740,9 @@ def test_wlan_off_masks_iwd_drops_the_wlan_network_and_disables_the_chip(tmp_pat
     assert not (root / "etc/systemd/system/multi-user.target.wants/iwd.service").is_symlink()
     assert (root / "etc/systemd/system/multi-user.target.wants/ssh.service").is_symlink()
     assert sorted(p.name for p in (root / "etc/systemd/network").iterdir()) == ["01-eth0.network"]
-    config = (root / "boot/firmware/config.txt").read_text()
-    assert config.startswith("dtparam=audio=on\n[pi4]\nenable_uart=1\n[all]\nuart_2ndstage=1\n")
-    assert config.rstrip().endswith("[all]\ndtoverlay=disable-wifi")
-    assert "disable-bt" not in config  # Bluetooth bleibt unberuehrt (kein Bluetooth-Dienst im Image)
-    # ein zweiter Lauf haengt nichts doppelt an
-    assert _wlan_off(tmp_path, root).returncode == 0
-    assert (root / "boot/firmware/config.txt").read_text() == config
-
-
-def test_wlan_off_appends_its_own_block_even_if_the_overlay_appears_elsewhere(tmp_path):
-    """Der Waechter gegen doppeltes Anhaengen erkennt nur den eigenen Block (Markierung, [all], Overlay): ein
-    dtoverlay=disable-wifi in einem anderen Abschnitt (hier [pi5]) wirkt auf dem Pi 4 nicht und zaehlt nicht."""
-    root = _wlan_root(tmp_path)
-    config = root / "boot/firmware/config.txt"
-    config.write_text("[pi5]\ndtoverlay=disable-wifi\n[all]\nuart_2ndstage=1\n")
-    assert _wlan_off(tmp_path, root).returncode == 0
-    text = config.read_text()
-    assert text.startswith("[pi5]\ndtoverlay=disable-wifi\n[all]\nuart_2ndstage=1\n")
-    marker = "# SmartHeat-Gateway: nur Ethernet, WLAN-Chip abgeschaltet (gateway/image/wlan_off.sh)"
-    assert text.rstrip().endswith(f"{marker}\n[all]\ndtoverlay=disable-wifi")
-    assert _wlan_off(tmp_path, root).returncode == 0
-    assert config.read_text() == text and text.count(marker) == 1
-
-
-def test_wlan_off_fails_without_config_txt(tmp_path):
-    root = _wlan_root(tmp_path)
-    (root / "boot/firmware/config.txt").unlink()
-    assert _wlan_off(tmp_path, root).returncode != 0
+    # config.txt gibt es hier nicht und der Hook legt keine an: den Chip schaltet das Fragment 80-smartheat-funk ab
+    assert not (root / "boot").exists()
+    assert _wlan_off(tmp_path, root).returncode == 0  # ein zweiter Lauf ist harmlos
 
 
 def test_wlan_off_fails_when_systemctl_fails(tmp_path):

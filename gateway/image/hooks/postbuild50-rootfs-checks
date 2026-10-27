@@ -1,0 +1,16 @@
+#!/bin/bash
+# postbuild-Hook: rpi-image-gen v2.9.0 ruft die Hooks aus <SRCROOT>/hooks nach bdebstrap und vor der SBOM mit dem
+# fertigen Root-Dateisystem als $1 auf (bin/runner, Phase postbuild; ein Fehler bricht den Bau ab). Voller Lauf von
+# rootfs_checks.sh auf dem Stand, der ins Image geht - nach dem Aufraeumen von mmdebstrap, also auch mit der machine-id.
+# Der Hook muss ausfuehrbar sein und der Name vor dem ersten Punkt aus [a-zA-Z0-9-] bestehen, sonst uebergeht der Runner
+# ihn nur mit einer Warnung (v2.8.0 ignorierte post-build.sh so, ganz ohne Meldung). Darum schreibt er seine Zeilen in
+# den Baulog: sie sind die Gegenprobe gegen stilles Ignorieren (Task 4a, Step 4).
+set -euo pipefail
+R="${1:?Root-Dateisystem fehlt}"
+HERE="$(cd "$(dirname "$0")/.." && pwd)"  # <SRCROOT>: der Runner startet den Hook in seinem eigenen Ordner
+STAGE="${IGconf_shg_stage:?IGconf_shg_stage fehlt}"
+check=(env -u SHG_ROOTFS_CHECK_UID bash "$HERE/rootfs_checks.sh" "$R")  # Variable nur fuer Tests
+if [ -f "$STAGE/pilot" ]; then check+=(--pilot); fi
+echo "postbuild50-rootfs-checks: pruefe $R"
+"${check[@]}"
+echo "postbuild50-rootfs-checks: bestanden"

@@ -1,0 +1,5 @@
+# SmartHeat-Gateway: nur Ethernet, WLAN- und Bluetooth-Chip des Pi 5 abgeschaltet (Nutzer-Vorgabe 2026-10-07).
+[pi5]
+dtoverlay=disable-wifi-pi5
+dtoverlay=disable-bt-pi5
+dtoverlay=
