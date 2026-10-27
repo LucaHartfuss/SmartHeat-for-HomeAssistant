@@ -7,7 +7,8 @@
 - Werksreset (Regel 4, freigegebene Parameter in den Konstanten unten): fuenf kurze Druecke (je <= 1,0 s, Pause <= 2,0 s,
   das fuenfte Druecken <= 10,0 s nach dem ersten) -> 60 s Fenster ab dem fuenften Loslassen; darin bestaetigt ein Druck von
   3,0 bis 4,5 s, dessen Druecken mindestens 5,0 s nach dem fuenften Loslassen liegt (gewertet beim Loslassen). Jeder
-  andere Druck im Fenster wird ignoriert. Nur dann ruft der Dienst den eingespeisten `reset` (Verdrahtung: Task 9).
+  andere Druck im Fenster wird ignoriert. Nur dann ruft der Dienst den eingespeisten `reset` (im Betrieb
+  `werksreset.ausfuehren`, `werksreset_fuer`).
 
 `KnopfFolge` ist rein (Uhr von aussen, Sekunden einer monotonen Uhr; intern ganze Mikrosekunden, damit die Kanten
 exakt gelten). Gleichstand an einer Kante: Pause und Fenster sind einschliesslich (Pause genau 2,0 s gehoert noch zur
@@ -29,7 +30,7 @@ from pathlib import Path
 
 from smartheat_core import dateien
 
-from smartheat_host import led, lesen
+from smartheat_host import bundles, led, lesen, werksreset
 
 logger = logging.getLogger("smartheat_host.knopf")
 
@@ -269,13 +270,33 @@ def _terminate(signum, frame) -> None:  # pragma: no cover - Signalhandler
     raise SystemExit(0)
 
 
+def _wurzel() -> Path:
+    return Path(os.environ.get("SHG_ROOT", "/var/lib/smartheat"))
+
+
+def werksreset_fuer(root: Path) -> Callable[[], None]:
+    """Der Reset des Dienstes: der Werksreset mit echtem Compose, echter Uhr, `systemctl reboot` und `journalctl`. Der einzige
+    Aufruf von `werksreset.ausfuehren` im Gateway (`test_reset_nur_ueber_knopf`)."""
+    compose = bundles.ComposeRunner(root)
+
+    def reset() -> None:
+        werksreset.ausfuehren(root, compose, warte=werksreset.warten, jetzt=time.time, neustart=werksreset.neustart_systemd,
+                              journal_leeren=werksreset.journal_leeren_systemd)
+
+    return reset
+
+
 def main(*, reset: Callable[[], None]) -> None:  # systemd-Einstieg
     logging.basicConfig(level=logging.INFO)
-    root = Path(os.environ.get("SHG_ROOT", "/var/lib/smartheat"))
+    root = _wurzel()
     pfad = finde_knopf()
     if pfad is None:
         raise SystemExit("Kein Knopf gefunden (kein Eingabegeraet mit KEY_POWER in /proc/bus/input/devices)")
+    # Eine Anfrage in der Phase angefordert aus einem frueheren Lauf dieses Dienstes (abgebrochen) darf der Container nicht
+    # mehr beantworten: verwerfen, bevor die erste Folge kommt. Eine Anfrage in der Phase loeschen bleibt fuer den Erststart.
+    werksreset.verwerfen_angefordert(root, time.time)
     # systemd beendet mit SIGTERM: als SystemExit abfangen, damit der Deskriptor (und mit ihm EVIOCGRAB) freigegeben wird.
+    # Waehrend des Loeschens im Werksreset schiebt `werksreset.ausfuehren` das Signal auf, bis alles getan ist.
     signal.signal(signal.SIGTERM, _terminate)
     fd = oeffne(pfad)
     try:
@@ -285,9 +306,5 @@ def main(*, reset: Callable[[], None]) -> None:  # systemd-Einstieg
         os.close(fd)
 
 
-def _reset_fehlt() -> None:
-    raise RuntimeError("Werksreset nicht verdrahtet (AP-05a Task 9)")
-
-
 if __name__ == "__main__":
-    main(reset=_reset_fehlt)
+    main(reset=werksreset_fuer(_wurzel()))

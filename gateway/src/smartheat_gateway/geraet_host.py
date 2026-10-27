@@ -18,7 +18,13 @@ host/knopf.json {seq, ts}; ein Druck ist eine Aenderung dieses Paars gegenueber 
 groesser": der Host setzt eine zerstoerte Datei auf seq 1 zurueck). Die erste nach dem Start lesbare Datei (oder ihr
 Fehlen) ist nur Grundlinie, ein Neustart oeffnet kein Fenster. Ein Druck ruft Device.neuer_uebernahme_code; "neu" oeffnet
 das Code-Fenster fuer 15 min, ein Druck binnen 60 s nach dem letzten neuen Code verlaengert es nur. Fenster und Drossel
-stehen nur im Speicher (monotone Uhr); die LED-Datei meldet das offene Fenster als code_fenster."""
+stehen nur im Speicher (monotone Uhr); die LED-Datei meldet das offene Fenster als code_fenster.
+
+Der Werksreset (GP8, GPC9) kommt vom Knopf-Dienst des Hosts, nie von hier: eine neue Anfrage (Paar seq, ts) in
+host/werksreset.json mit Phase angefordert setzt die Ursprungswerte zurueck wie sign_off (Abmelde-Markierung, Neustart der
+Laufzeit) und antwortet mit data/werksreset_bereit.json {seq, ts, ursprungswerte}, sobald die Laufzeit abgemeldet ohne Grund
+zeigt; ein nicht eingerichtetes Geraet antwortet sofort mit false. Die Anfrage beim Start gilt nur dann als neu, wenn die
+Datei sie noch nicht beantwortet (gleiche seq, ts nicht frueher); die Loeschung selbst macht der Host."""
 import json
 import logging
 import shutil
@@ -40,6 +46,8 @@ from smartheat_gateway.drivers.base import KIND_CLOUD
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
+from smartheat_runtime import dokument_config
+from smartheat_runtime.status import STATUS_ABGEMELDET
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +57,7 @@ HOST_FIELDS = ("netz", "dns", "zeit_synchron")
 CODE_FENSTER_SEKUNDEN = 900.0  # der Code ist 15 min sichtbar (GPC21)
 CODE_ABSTAND_SEKUNDEN = 60.0  # hoechstens ein neuer Code je 60 s (GPC21)
 KNOPF_DATEI = "knopf.json"  # im Host-Ordner, geschrieben vom Knopf-Dienst (smartheat_host.knopf)
+WERKSRESET_DATEI = "werksreset.json"  # im Host-Ordner, geschrieben vom Werksreset des Hosts (smartheat_host.werksreset)
 _UNBEKANNT = object()  # noch keine Datei gelesen
 
 
@@ -168,9 +177,12 @@ class GatewayDeviceHost(GeraetHostBasis):
     wunsch_herkunft = "thermostat"
 
     def __init__(self, paths: Paths, mirror: ZigbeeMirror, *, host_dir: Path,
-                 clock: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time,
+                 neustart: Callable[[], None] | None = None) -> None:
         super().__init__()
         self.paths, self.mirror, self._host_dir = paths, mirror, host_dir
+        #: Neustart der Laufzeit nach dem Markieren (sign_off und Werksreset); Standard: EV_RELOAD an den Worker
+        self._neustart_weg = neustart if neustart is not None else self.neustart_anfordern
         self._clock, self._wall = clock, wall
         self.zustand = GeraetZustand()
         self.status_sink = StatusSink(self.zustand)
@@ -183,6 +195,9 @@ class GatewayDeviceHost(GeraetHostBasis):
         self._code_hinweis: tuple[str, float] | None = None  # (keine_verbindung|uebernommen, bis) des letzten Drucks
         self._knopf_stand: object = _UNBEKANNT  # zuletzt gesehenes Paar (seq, ts), None = keine Datei
         self._knopf_fehler = False  # knopf.json unlesbar und schon gemeldet
+        self._reset_gesehen: tuple[int, str] | None = None  # zuletzt bearbeitete Anfrage (seq, ts) des Werksresets
+        self._reset_offen: tuple[int, str, str] | None = None  # (seq, ts, anlage): abgemeldet, Antwort steht aus
+        self._reset_fehler: str | None = None  # Fehlerart des letzten gescheiterten Schritts, schon gemeldet
 
     def aufraeumen_pfad(self) -> Path:
         return self.paths.aufraeumen
@@ -253,7 +268,7 @@ class GatewayDeviceHost(GeraetHostBasis):
     def befehle_eintragen(self, register: CommandRegister) -> None:
         befehle.eintragen(register, befehle.Kontext(
             self.paths, self.mirror, konfiguration=self.konfiguration, runtime_status=lambda: self.zustand.status,
-            neustart=self.neustart_anfordern, diagnostics=self.snapshot, clock=self._clock, wall=self._wall,
+            neustart=self._neustart_weg, diagnostics=self.snapshot, clock=self._clock, wall=self._wall,
             hintergrund=self.hintergrund))
 
     def software_soll(self, software: dict | None) -> None:
@@ -270,6 +285,7 @@ class GatewayDeviceHost(GeraetHostBasis):
     def anzeigen(self, anzeige: Anzeige) -> None:
         self.letzte_anzeige = anzeige
         self._knopf_pruefen()
+        self._reset_pruefen()
         try:
             self._datei.update(anzeige.zustand, self.code_sichtbar())
         except Exception as error:  # die Software-Bruecke haengt nicht an der LED-Datei
@@ -349,6 +365,79 @@ class GatewayDeviceHost(GeraetHostBasis):
             self.letzter_code, self.code_fenster_bis, self._code_hinweis = now, now + CODE_FENSTER_SEKUNDEN, None
         else:
             self.code_fenster_bis, self._code_hinweis = None, (ergebnis, now + CODE_FENSTER_SEKUNDEN)
+
+    # --- Werksreset (Anfrage des Hosts) ---
+
+    def _reset_anfrage(self) -> tuple[int, str] | None:
+        """(seq, ts) der Anfrage in der Phase angefordert; sonst None (keine Datei, unlesbar, anderer Aufbau, Phase loeschen)."""
+        try:
+            roh = json.loads((self._host_dir / WERKSRESET_DATEI).read_text())
+        except (OSError, ValueError):
+            return None
+        if not isinstance(roh, dict) or roh.get("phase") != "angefordert":
+            return None
+        seq, ts = roh.get("seq"), roh.get("ts")
+        return (seq, ts) if isinstance(seq, int) and not isinstance(seq, bool) and isinstance(ts, str) else None
+
+    def _reset_beantwortet(self, anfrage: tuple[int, str]) -> bool:
+        """Steht die Antwort auf genau diese Anfrage schon in data/werksreset_bereit.json (gleiche seq, ts nicht frueher)?"""
+        roh = dateien.lesen_json(self.paths.werksreset_bereit)
+        if not isinstance(roh, dict) or roh.get("seq") != anfrage[0] or isinstance(roh.get("seq"), bool):
+            return False
+        try:
+            return datetime.fromisoformat(roh["ts"]) >= datetime.fromisoformat(anfrage[1])
+        except (KeyError, TypeError, ValueError):  # ts fehlt, ist kein Text oder hat keine Zeitzone gegen die der Anfrage
+            return False
+
+    def _reset_antworten(self, anfrage: tuple[int, str], ursprungswerte: bool) -> None:
+        dateien.schreiben_json(self.paths.werksreset_bereit,
+                               {"seq": anfrage[0], "ts": _iso(self._wall()), "ursprungswerte": ursprungswerte},
+                               modus=dateien.LESBAR)
+        logger.warning("Werksreset: Anfrage beantwortet (Ursprungswerte zurueckgesetzt: %s)", "ja" if ursprungswerte else "nein")
+
+    def _reset_pruefen(self) -> None:
+        """Beantwortet eine neue Anfrage des Hosts. Wirft nie: die Anzeige haengt nicht am Reset; ohne Antwort loescht der Host
+        nach seiner Frist trotzdem (GPC9). Gemeldet wird einmal je Fehlerart."""
+        try:
+            anfrage = self._reset_anfrage()
+            if anfrage is None:
+                self._reset_offen = None
+            else:
+                if anfrage != self._reset_gesehen:
+                    self._reset_gesehen = anfrage
+                    if self._reset_beantwortet(anfrage):
+                        return  # schon beantwortet (Neustart des Containers nach der Antwort): nichts mehr tun
+                    self._reset_beginnen(anfrage)
+                self._reset_weiter()
+            self._reset_fehler = None
+        except Exception as error:
+            art = type(error).__name__
+            if art != self._reset_fehler:
+                logger.error("Werksreset-Anfrage nicht bearbeitet (%s)", art)
+                self._reset_fehler = art
+
+    def _reset_beginnen(self, anfrage: tuple[int, str]) -> None:
+        """Wie sign_off: Markierung setzen und Laufzeit neu starten; nicht eingerichtet: sofort die Antwort `false`."""
+        konfiguration = self.konfiguration()
+        if not dokument_config.eingerichtet(konfiguration):
+            self._reset_antworten(anfrage, False)
+            return
+        assert konfiguration is not None
+        anlage = konfiguration["anlage"]
+        if gateway_config.abmelden(self.paths, anlage):
+            self._neustart_weg()
+        self._reset_offen = (anfrage[0], anfrage[1], anlage)
+
+    def _reset_weiter(self) -> None:
+        """Antwort `true`, sobald die Laufzeit fuer diese Anlage abgemeldet ohne Grund zeigt (Ursprungswerte zurueck)."""
+        if self._reset_offen is None:
+            return
+        seq, ts, anlage = self._reset_offen
+        status = self.zustand.status
+        if (status and status.get("status") == STATUS_ABGEMELDET and status.get("tenant_id") == anlage
+                and status.get("grund") is None):
+            self._reset_offen = None
+            self._reset_antworten((seq, ts), True)
 
     # --- Software-Bruecke ---
 

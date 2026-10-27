@@ -6,7 +6,8 @@ Zwei Schritte, zwei Units (R10: der Updater darf nicht hinter dem Laden der Arch
 - `ablage` (smartheat-ablage.service, jeder Start, nur lokale Dateien, Sekunden): `ordner_angleichen` setzt Ordner,
   Besitzer und Modi unter SHG_ROOT, `anlegen` legt beim allerersten Start das erste Bundle und `updater/state.json` aus der
   Werkseinstellung an (nur ohne `updater/state.json`; danach gehoert der Zustand dem Updater).
-- `start` (smartheat-firstboot.service, jeder Start): laedt die Archive, die dieses Geraet noch nicht geladen hat (Merker
+- `start` (smartheat-firstboot.service, jeder Start): fuehrt zuerst einen unterbrochenen Werksreset zu Ende
+  (`werksreset.beim_start`, GP8), laedt die Archive, die dieses Geraet noch nicht geladen hat (Merker
   `host/geladen/<SHA-256>`, je Archiv einmal; Archive werden nie geloescht), und startet das laufende Bundle
   (`updater/state.json` "current") mit `compose.up`. Fehlt ein Geraet aus devices: (Zigbee-Stick), endet der Schritt mit
   EXIT_RETRY, bevor etwas geladen wird, und systemd versucht es nach 30 s erneut. Ein offener Updater-Auftrag
@@ -19,12 +20,13 @@ import os
 import re
 import stat
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
 from smartheat_core import dateien
 
-from smartheat_host import bundles, updater
+from smartheat_host import bundles, updater, werksreset
 
 logger = logging.getLogger(__name__)
 EXIT_RETRY = 75
@@ -152,7 +154,14 @@ def _archive(ordner: Path) -> list[Path]:
 
 
 def run(root: Path, compose, werkseinstellung: Path = WERKSEINSTELLUNG, load: Callable[[Path], None] = bundles.docker_load,
-        path_exists: Callable[[str], bool] = os.path.exists) -> int:
+        path_exists: Callable[[str], bool] = os.path.exists, jetzt: Callable[[], float] = time.time,
+        journal_leeren: Callable[[], None] = werksreset.journal_leeren_systemd,
+        angleichen: Callable[[Path], None] = ordner_angleichen) -> int:
+    # Ein unterbrochener Werksreset (Phase loeschen) wird zuerst zu Ende gefuehrt, vor dem Laden und vor jedem Start; die
+    # Anfrage in der Phase angefordert wird verworfen (ein Stromzyklus loest keinen Reset aus). Danach fehlen geloeschte
+    # Unterordner: die Bind-Quellen muessen mit uid 1000 bestehen, bevor Docker sie als root anlegte.
+    if werksreset.beim_start(root, compose, jetzt=jetzt, journal_leeren=journal_leeren):
+        angleichen(root)
     archives = _archive(werkseinstellung / "images")
     state = updater.State.load(root / "updater" / "state.json")
     version = None if state.in_progress or state.system else state.current

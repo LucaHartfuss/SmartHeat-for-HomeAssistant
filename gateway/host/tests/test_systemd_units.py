@@ -136,13 +136,17 @@ def test_der_frist_timer_hat_ein_install_und_laeuft_nach_20_minuten():
     assert "OnBootSec=20min" in timer and "WantedBy=timers.target" in timer
 
 
-def test_der_knopf_dienst_liest_das_geraet_und_schreibt_nur_host_und_run():
-    """GP8: schreibt host/knopf.json (ReadWritePaths) und /run/smartheat/led_knopf.json (RuntimeDirectory, bleibt bei einem
-    Neustart des Dienstes erhalten, die LED liest es); sonst nur lesend. Keine Abhaengigkeit von Docker oder Netz."""
+def test_der_knopf_dienst_liest_das_geraet_und_schreibt_nur_host_run_und_die_reset_ordner():
+    """GP8: schreibt host/knopf.json und fuer den Werksreset Anfrage, Protokoll und die Loeschordner (ReadWritePaths) und
+    /run/smartheat/led_knopf.json (RuntimeDirectory, bleibt bei einem Neustart des Dienstes erhalten, die LED liest es);
+    sonst nur lesend. Keine Abhaengigkeit von Docker oder Netz."""
     knopf = _eintraege("smartheat-knopf.service")
     assert knopf["ExecStart"] == ["/usr/bin/python3", "-m", "smartheat_host.knopf"]
     assert knopf["Restart"] == ["always"] and knopf["WantedBy"] == ["multi-user.target"]
-    assert knopf["ReadWritePaths"] == ["@ROOT@/host"]
+    assert knopf["ReadWritePaths"] == ["@ROOT@/host", "@ROOT@/data", "@ROOT@/bus", "@ROOT@/zigbee2mqtt", "@ROOT@/updater",
+                                       "-/run/docker.sock", "-/var/log/journal", "-/run/log/journal"]
+    # Werksreset: SIGTERM nur an den Hauptprozess (er schiebt es auf), `compose down` und `journalctl` werden nicht abgewuergt
+    assert knopf["KillMode"] == ["mixed"] and knopf["TimeoutStopSec"] == ["300"]
     assert knopf["RuntimeDirectory"] == ["smartheat"] and knopf["RuntimeDirectoryPreserve"] == ["yes"]
     assert knopf["ProtectSystem"] == ["strict"] and knopf["NoNewPrivileges"] == ["yes"]
     assert set(knopf["After"]) == {"local-fs.target", "smartheat-ablage.service"}

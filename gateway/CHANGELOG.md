@@ -8,6 +8,15 @@
   wie der Befehl `new_claim_code`), hoechstens einer je 60 s, ein Druck davor verlaengert nur das Fenster. Die Seite zeigt
   Geraete-ID und Code 15 min lang (nur im Speicher), sonst nach einem Druck "Keine Verbindung zum Server – kein Code"
   bzw. "uebernommen". `agent_state.json` meldet das offene Fenster als `code_fenster` (LED `code_sichtbar`).
+- Werksreset am Knopf mit Ursprungswerten (SG-01 Geraeteteil, GP8, GPC9, Regel 4): Nach der bestaetigten Folge fordert der
+  Knopf-Dienst den Reset in `host/werksreset.json` (Phase `angefordert`) an; der Container setzt die Ursprungswerte zurueck
+  wie beim Abmelden und antwortet in `data/werksreset_bereit.json` (hoechstens 120 s, ohne Antwort wird trotzdem geloescht).
+  Dann haelt der Host Compose an (unter der Compose-Sperre), loescht `data/`, `bus/credentials/`, `bus/mosquitto/`,
+  `bus/mosquitto-daten/`, `zigbee2mqtt/` und `host/knopf.json`, leert das Journal, schreibt `host/werksreset_protokoll.json`
+  (letzte 20) und startet neu; `werk`, Bundles, Images, `updater/` und der Slot bleiben. Stromausfall vor dem Loeschen
+  verwirft die Anfrage, im Loeschen fuehrt der Erststart den Reset zu Ende (Phase `loeschen`). Waehrend eines Systemwechsels
+  (installiere, installiert, probestart) wird der Reset abgewiesen (LED Stoerung 5 s). Die Knopf-Unit schreibt dafuer
+  `data`, `bus`, `zigbee2mqtt` und `updater`, nutzt den Docker-Socket und das Journal und stoppt mit `KillMode=mixed`.
 - Systemteil im Updater (AP-05a, GW 6.3): Traegt das signierte Manifest das Feld `system` (`system.raucb`, SHA-256, Groesse
   bis 2 GiB, `compatible` `smartheat-gateway-pi5`), wechselt der Updater zuerst das System (A/B, RAUC, Neustart mit tryboot)
   und danach die Container. Ablauf mit gespeicherten Phasen (`system.phase` in `updater/state.json`, **vor** jeder Wirkung):

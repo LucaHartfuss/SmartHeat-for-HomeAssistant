@@ -93,7 +93,9 @@ grep -q '^After=.*smartheat-ablage.service' /etc/systemd/system/smartheat-update
 grep -Eq '^(After|Requires|Wants)=.*smartheat-firstboot' /etc/systemd/system/smartheat-updater.service \
   && fail "Updater wartet auf den Erststart"
 # Knopf-Dienst (GP8): schreibt host/knopf.json und /run/smartheat; logind ignoriert den Einschaltknopf
-grep -q '^ReadWritePaths=/var/lib/smartheat/host$' /etc/systemd/system/smartheat-knopf.service || fail "ReadWritePaths der Knopf-Unit"
+grep -q '^ReadWritePaths=/var/lib/smartheat/host /var/lib/smartheat/data /var/lib/smartheat/bus /var/lib/smartheat/zigbee2mqtt /var/lib/smartheat/updater -/run/docker.sock -/var/log/journal -/run/log/journal$' \
+  /etc/systemd/system/smartheat-knopf.service || fail "ReadWritePaths der Knopf-Unit"
+grep -q '^KillMode=mixed$' /etc/systemd/system/smartheat-knopf.service || fail "KillMode der Knopf-Unit"
 grep -q '^RuntimeDirectory=smartheat$' /etc/systemd/system/smartheat-knopf.service || fail "RuntimeDirectory der Knopf-Unit"
 cmp -s "$SRC/logind/smartheat.conf" /etc/systemd/logind.conf.d/smartheat.conf || fail "logind-Drop-in weicht vom Repo ab"
 [ "$(stat -c '%a %u:%g' /etc/systemd/logind.conf.d/smartheat.conf)" = "644 0:0" ] || fail "logind-Drop-in hat falsche Rechte"
@@ -139,7 +141,7 @@ dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null | grep -q "install ok i
 grep -q "WARNUNG: ohne --pilot-ssh" /tmp/run1.log && fail "SSH-Warnung trotz --pilot-ssh"
 [ "$(stat -c '%a' /root/.ssh/authorized_keys)" = "600" ] || fail "authorized_keys"
 PYTHONPATH=/opt/smartheat/host python3 -c "import smartheat_host.updater, smartheat_host.led, \
-  smartheat_host.hoststatus, smartheat_host.kette, smartheat_host.knopf, smartheat_core.dateien" \
+  smartheat_host.hoststatus, smartheat_host.kette, smartheat_host.knopf, smartheat_host.werksreset, smartheat_core.dateien" \
   || fail "Host-Dienste mit dem System-Python nicht importierbar"
 PYTHONPATH=/opt/smartheat/host python3 -c "
 from pathlib import Path

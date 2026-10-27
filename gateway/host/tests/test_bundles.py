@@ -274,6 +274,22 @@ def test_compose_runner_restart_nutzt_dieselben_optionen_und_eine_frist_von_120_
         bundles.ComposeRunner(tmp_path, run=hanging).restart("0.3.0", "runtime")
 
 
+def test_compose_runner_down_haelt_den_ganzen_stapel_an_mit_einer_frist_von_120_s(tmp_path):
+    """Werksreset (GPC9): `down --remove-orphans` mit denselben Optionen wie `up`; ohne Volumes (`-v`), Images bleiben."""
+    seen = []
+    runner = bundles.ComposeRunner(tmp_path, run=lambda cmd, **kw: seen.append((cmd, kw.get("timeout"))) or _Done(0, ""))
+    runner.down("0.3.0")
+    compose = str(tmp_path / "bundles" / "0.3.0" / "docker-compose.yml")
+    assert seen == [(["docker", "compose", "-p", "smartheat", "--env-file", "/opt/smartheat/gateway.env", "-f", compose,
+                      "down", "--remove-orphans"], 120)]
+    with pytest.raises(bundles.ComposeError, match="down"):
+        bundles.ComposeRunner(tmp_path, run=lambda cmd, **kw: _Done(1, "boom")).down("0.3.0")
+    with pytest.raises(bundles.ComposeError, match="Frist von 120 s"):
+        def hanging(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+        bundles.ComposeRunner(tmp_path, run=hanging).down("0.3.0")
+
+
 def test_die_sperre_ohne_warten_meldet_belegt_statt_zu_blockieren(tmp_path):
     """`sperre(blockieren=False)` (der Waechter): frei -> True und gehalten; belegt durch einen anderen Runner -> False sofort,
     ohne die Sperre des Halters anzutasten oder selbst zu halten."""

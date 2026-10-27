@@ -671,7 +671,28 @@ def test_finde_knopf_nimmt_standardmaessig_die_wortbreite_des_systems(tmp_path):
     assert knopf.finde_knopf(datei) == knopf.Path("/dev/input/event6")
 
 
-def test_der_einstieg_der_unit_hat_noch_keinen_reset_und_scheitert_laut():
-    """Bis Task 9 verdrahtet ist, bestaetigt der Dienst eine Folge mit Stoerung statt still nichts zu tun."""
-    with pytest.raises(RuntimeError, match="nicht verdrahtet"):
-        knopf._reset_fehlt()
+def test_main_verwirft_eine_angeforderte_anfrage_aus_einem_frueheren_lauf(monkeypatch, tmp_path, rohr):
+    """Wurde der Dienst mitten im Warten hart beendet, bleibt die Anfrage liegen; der Container wuerde sie sonst beim naechsten
+    Start beantworten (abmelden). Eine Anfrage in der Phase loeschen bleibt fuer den Erststart."""
+    lesen, schreiben = _main_umgebung(monkeypatch, tmp_path, rohr)
+    os.close(schreiben)
+    host = tmp_path / "root" / "host"
+    host.mkdir(parents=True)
+    anfrage = {"seq": 3, "ts": "2027-01-15T08:00:00+00:00", "phase": "angefordert"}
+    (host / "werksreset.json").write_text(json.dumps(anfrage))
+    with pytest.raises(EOFError):
+        knopf.main(reset=lambda: pytest.fail("kein Reset"))
+    assert not (host / "werksreset.json").exists()
+    assert json.loads((host / "werksreset_protokoll.json").read_text())[0]["ergebnis"] == "verworfen"
+
+
+def test_main_laesst_eine_anfrage_in_der_phase_loeschen_fuer_den_erststart_stehen(monkeypatch, tmp_path, rohr):
+    lesen, schreiben = _main_umgebung(monkeypatch, tmp_path, rohr)
+    os.close(schreiben)
+    host = tmp_path / "root" / "host"
+    host.mkdir(parents=True)
+    anfrage = {"seq": 3, "ts": "2027-01-15T08:00:00+00:00", "phase": "loeschen", "ursprungswerte": True}
+    (host / "werksreset.json").write_text(json.dumps(anfrage))
+    with pytest.raises(EOFError):
+        knopf.main(reset=lambda: pytest.fail("kein Reset"))
+    assert json.loads((host / "werksreset.json").read_text()) == anfrage

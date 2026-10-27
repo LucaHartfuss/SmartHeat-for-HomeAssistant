@@ -1,6 +1,6 @@
 """Dateien unter /data. Ein Schreiber je Datei: Geraetekern = device/ (Identitaet,
 Zertifikat, Dokumente, Befehle); Laufzeit = runtime/, agent_state.json (LED), inventur.json,
-aufraeumen.json, software_soll.json, software_quittung.json, secrets/drivers/ (Treiber-Anmeldungen); Host-Updater =
+aufraeumen.json, werksreset_bereit.json, software_soll.json, software_quittung.json, secrets/drivers/ (Treiber-Anmeldungen); Host-Updater =
 software_meldungen.json; quota/ unter einem Lock je Pfad im Prozess."""
 import os
 from dataclasses import dataclass
@@ -22,6 +22,7 @@ class Paths:
     room_target = property(lambda self: self.data / "runtime" / "room_target.json")
     inventur = property(lambda self: self.data / "inventur.json")
     abgemeldet = property(lambda self: self.data / "runtime" / "abgemeldet.json")
+    werksreset_bereit = property(lambda self: self.data / "werksreset_bereit.json")
     aufraeumen = property(lambda self: self.data / "aufraeumen.json")
     software_soll = property(lambda self: self.data / "software_soll.json")
     software_meldungen = property(lambda self: self.data / "software_meldungen.json")
