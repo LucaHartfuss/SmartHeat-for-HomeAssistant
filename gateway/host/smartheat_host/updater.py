@@ -252,6 +252,9 @@ class State:
     system_abstand: dict | None = None
     system_installfehler: int = 0
     unbekannt: dict = field(default_factory=dict)  # Felder, die dieser Updater nicht kennt: `save` erhaelt sie (GPC24)
+    #: Ein vorhandener, aber nicht lesbarer Systemauftrag (etwa eine Phase oder ein Grund eines neueren Updaters): bleibt
+    #: unveraendert in der Datei (GPC24) und sperrt Start und Abschluss der Container dieses Auftrags (`_auftrag_unlesbar`)
+    system_roh: object = None
 
     @classmethod
     def load(cls, path: Path) -> "State":
@@ -266,20 +269,24 @@ class State:
             if not (isinstance(context, dict) and all(isinstance(value, str) for value in context.values())):
                 context = None
             fehler = data.get("system_installfehler")
+            system = _system_auftrag(data.get("system"))
             return cls(
                 current=_text_or_none(data.get("current")), previous=_text_or_none(data.get("previous")),
                 rejected=rejected, in_progress=in_progress, rejected_context=context,
                 pending_reports=_report_entries(data.get("pending_reports")),
                 zertifikat_untergrenze=_zeit_text(data.get("zertifikat_untergrenze")),
-                system=_system_auftrag(data.get("system")), system_abstand=_system_abstand(data.get("system_abstand")),
+                system=system, system_roh=data.get("system") if system is None and data.get("system") is not None else None,
+                system_abstand=_system_abstand(data.get("system_abstand")),
                 system_installfehler=fehler if isinstance(fehler, int) and not isinstance(fehler, bool) and fehler > 0 else 0,
                 unbekannt={key: value for key, value in data.items() if key not in _STATE_FELDER})
         except (OSError, ValueError, AttributeError, TypeError):
             return cls()
 
     def save(self, path: Path) -> None:
-        dateien.schreiben_json(path, {**self.unbekannt, **{name: getattr(self, name) for name in _STATE_FELDER}},
-                               modus=dateien.LESBAR)
+        daten = {name: getattr(self, name) for name in _STATE_FELDER}
+        if self.system is None and self.system_roh is not None:
+            daten["system"] = self.system_roh  # nicht lesbar, aber nicht unser: unveraendert zurueckschreiben
+        dateien.schreiben_json(path, {**self.unbekannt, **daten}, modus=dateien.LESBAR)
 
 
 _REDIRECT_REFUSED = "Weiterleitung auf ein Schema, das nicht erlaubt ist (nur https)"
@@ -778,6 +785,7 @@ class Updater:
                  startauswahl: Startauswahl, lokal_health: Callable[[str], bool]) -> None:
         self._kanal, self._store, self._compose, self._fetch = kanal, store, compose, fetch
         self._startauswahl, self._lokal_health = startauswahl, lokal_health
+        self._unlesbar_gemeldet = False
         self._probestart_angefordert: str | None = None  # Version, fuer die dieser Prozess den Neustart schon angefordert hat
         self._fetch_datei, self._docker_load = fetch_datei, docker_load
         self._uhr, self._state_path, self._version = uhr, state_path, version
@@ -838,6 +846,8 @@ class Updater:
         if not progress:
             return
         version = progress["version"]
+        if self._auftrag_unlesbar(state, version):
+            return
         if isinstance(progress.get("rollback"), str):
             logger.warning("Rueckweg von %s war nicht abgeschlossen, wiederhole ihn", version)
             self._rollback(state, version, progress["rollback"], reject=progress.get("reject") is not False)
@@ -901,6 +911,8 @@ class Updater:
                 logger.warning("Bundle %s wartet: Geraet fehlt (%s), naechster Durchlauf", version, ", ".join(missing))
                 return "vorlaeufig"  # vor dem Archiv: die rund 200 MB nicht umsonst holen
             system = paket.manifest.system
+            if system is not None and self._auftrag_unlesbar(state, version):
+                return "vorlaeufig"
             if system is not None:  # vor dem Archiv und dem System-Bundle: nichts umsonst holen
                 if not self._system_freigabe(state, version, jetzt):
                     return "vorlaeufig"
@@ -1132,7 +1144,7 @@ class Updater:
             return "vorlaeufig"
         auftrag = {"version": version, "phase": "installiere", "slot_alt": slot_alt, "seit": jetzt.isoformat(),
                    "grund": None, "ablehnen": None}
-        state.system = auftrag
+        state.system, state.system_roh = auftrag, None
         state.save(self._state_path)
         try:
             self._startauswahl.installieren(datei)
@@ -1149,6 +1161,8 @@ class Updater:
             self._reject(state, version, MANIFEST_UNGUELTIG, manifest_sha, signatur)
             self._system_aufraeumen()
             return "abgelehnt"
+        # Bekannte Grenze: ein Absturz oder Stromausfall zwischen diesem Speichern und dem Neustart gilt im alten Slot als
+        # Fehlstart (`start_fehlgeschlagen`, abgelehnt): eine sichere, aber unter Umstaenden unnoetige Ablehnung.
         auftrag["phase"] = "installiert"
         state.system_installfehler = 0
         state.in_progress = {"version": version, "previous": state.current, "since": time.time(),
@@ -1164,6 +1178,27 @@ class Updater:
         self._probestart_angefordert = version
         logger.warning("Systemwechsel auf %s: Neustart mit tryboot angefordert", version)
         return "systemwechsel"
+
+    def _auftrag_unlesbar(self, state: State, version: str) -> bool:
+        """Sperrt ein vorhandener, aber nicht lesbarer Systemauftrag (`State.system_roh`) die Container der Version
+        `version`? Ja, wenn seine Version `version` ist oder nicht lesbar: ohne Wissen um Phase und Slot darf der Updater
+        weder `up(version)` auf dem alten System starten noch die Version abschliessen (current/previous wechseln erst nach
+        der Netzprobe). Der Auftrag bleibt in state.json; die Warnung kommt einmal je Prozess."""
+        roh = state.system_roh
+        if roh is None:
+            return False
+        gelesen = roh.get("version") if isinstance(roh, dict) else None
+        try:
+            bundles.parse_version(gelesen)
+        except bundles.ManifestError:
+            gelesen = None
+        if gelesen is not None and gelesen != version:
+            return False
+        if not self._unlesbar_gemeldet:
+            self._unlesbar_gemeldet = True
+            logger.warning("Systemauftrag in state.json nicht lesbar (Version %s): Container von %s werden weder gestartet "
+                           "noch abgeschlossen, der Auftrag bleibt unveraendert", gelesen or "unbekannt", version)
+        return True
 
     def _recover_system(self, state: State, start: float) -> bool:
         """Nach einem Start: gehoert er einem Systemwechsel? Entscheidend ist die Lage der Startauswahl. True = der
@@ -1221,9 +1256,10 @@ class Updater:
             state.save(self._state_path)
         if system["phase"] == "probestart":
             missing = self._missing_devices((self._store.dir(version) / "docker-compose.yml").read_text())
-            if missing:  # Umgebung, kein Fehler des Systems: zurueck, aber nicht ablehnen
-                logger.warning("Probestart %s: Geraet fehlt (%s), schalte zurueck", version, ", ".join(missing))
-                self._zurueck_melden(state, system, RETRY_REASON, ablehnen=False, probe=True)
+            if missing:  # der alte Slot sah das Geraet im selben Lauf: ein Fehler des neuen Systems (Treiber, udev)
+                logger.error("system_grund=%s: Probestart %s: Geraet fehlt (%s)", START_FEHLGESCHLAGEN, version,
+                             ", ".join(missing))
+                self._zurueck_melden(state, system, START_FEHLGESCHLAGEN, ablehnen=True, probe=True)
                 return
             try:
                 self._compose.up(version)
@@ -1307,8 +1343,10 @@ class Updater:
         if ablehnen:
             abstand = None
         elif bisher + 1 >= MAX_RUECKFAELLE:
-            logger.error("system_grund=%s: dritter Rueckfall von %s in Folge, abgelehnt", grund, version)
-            ablehnen, abstand = True, None
+            # abgelehnt wird als Fehlstart gemeldet: `server_unerreichbar` hiesse beim Server "wird erneut versucht"
+            logger.error("system_grund=%s: dritter Rueckfall von %s in Folge (zuletzt %s), abgelehnt", START_FEHLGESCHLAGEN,
+                         version, grund)
+            grund, ablehnen, abstand = START_FEHLGESCHLAGEN, True, None
         else:
             abstand = {"version": version, "rueckfaelle": bisher + 1, "naechster_versuch": None}
         logger.error("Rueckfall auf das alte System: %s, Phase %s, system_grund=%s, abgelehnt=%s", version, phase, grund,

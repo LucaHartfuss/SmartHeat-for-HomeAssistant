@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import updater_testlauf
+from startauswahl_fake import FakeStartauswahl
 
 from smartheat_host import updater
 
@@ -14,7 +15,7 @@ def test_the_test_entry_hands_its_values_to_the_updater_as_settings(monkeypatch)
                            "--health-seconds", "180", "--compose-project", "smartheat-updtest", "--once"])
     assert seen == [(["--once"], updater.Einstellungen(
         release_roots=Path("/d/test-roots.pem"), allow_http=True, health_url="http://runtime:8081/healthz",
-        health_seconds=180.0, compose_project="smartheat-updtest"))]
+        health_seconds=180.0, compose_project="smartheat-updtest", startauswahl=FakeStartauswahl))]
 
 
 def test_the_health_address_is_the_default_of_the_device_with_the_test_host(monkeypatch):

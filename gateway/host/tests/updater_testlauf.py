@@ -8,6 +8,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from startauswahl_fake import FakeStartauswahl
+
 from smartheat_host import updater
 
 
@@ -27,7 +29,8 @@ def main(argv: list[str] | None = None) -> None:
         ["--once"] if args.once else [],
         einstellungen=updater.Einstellungen(
             release_roots=args.release_roots, allow_http=True, health_url=health_url,
-            health_seconds=args.health_seconds, compose_project=args.compose_project),
+            health_seconds=args.health_seconds, compose_project=args.compose_project,
+            startauswahl=FakeStartauswahl),  # kein A/B-System im Container: nie RaucTryboot
     )
 
 

@@ -3617,9 +3617,86 @@ def test_dritter_rueckfall_lehnt_ab(tmp_path):
         if n < 3:
             assert state.rejected == [] and state.system_abstand["rueckfaelle"] == n
     assert state.rejected == [world.abgelehnt()] and state.system_abstand is None and state.system is None
-    assert _berichte(world) == [("server_unerreichbar", "rollback")] * 3
+    # die ersten beiden ohne Ablehnung als `server_unerreichbar`; abgelehnt wird als Fehlstart gemeldet (`server_unerreichbar`
+    # hiesse beim Server "wird erneut versucht")
+    assert _berichte(world) == [("server_unerreichbar", "rollback")] * 2 + [("start_fehlgeschlagen", "rollback")]
     world.api.offline = False
     assert world.updater.run_once() == "aktuell"
+
+
+def test_geraet_fehlt_im_probestart_ist_start_fehlgeschlagen_und_abgelehnt(tmp_path, caplog):
+    """Der alte Slot sah den Stick im selben Lauf: fehlt er im neuen System, ist das ein Fehler des Systems (Treiber, udev)."""
+    stick = tmp_path / "zigbee"
+    stick.touch()
+    world = _system_world(tmp_path, compose=_devices_compose(str(stick)))
+    _bis_zum_neustart(world)
+    stick.unlink()
+    with caplog.at_level("ERROR"):
+        _im_neuen_slot(world)
+    assert "system_grund=start_fehlgeschlagen" in caplog.text
+    assert ("up", NEU) not in world.compose.calls and world.lokal_aufrufe == 0
+    assert [a[0] for a in world.sa.aufrufe][-1] == "zurueckschalten"
+    stick.touch()
+    _im_alten_slot(world)
+    assert _berichte(world) == [("start_fehlgeschlagen", "rollback")]
+    assert world.state().rejected == [world.abgelehnt()] and world.state().system_abstand is None
+
+
+def _unlesbarer_auftrag(world, roh):
+    """Offener Container-Auftrag auf NEU, daneben ein `system` aus der Feder eines neueren Updaters (`roh`)."""
+    world.installiere_angebot()
+    daten = json.loads(world.state_path.read_text())
+    daten.update(in_progress={"version": NEU, "previous": ALT, "since": 1.0, "zertifikat_ab": ZERTIFIKAT_VON.isoformat()},
+                 system=roh)
+    world.state_path.write_text(json.dumps(daten))
+
+
+@pytest.mark.parametrize("roh", [
+    {"version": NEU, "phase": "zukunft", "slot_alt": "A"},  # unbekannte Phase
+    {"version": NEU, "phase": "zurueck", "slot_alt": "A", "grund": "neuer_grund", "ablehnen": True},  # unbekannter Grund
+    {"version": "kein-format", "phase": "installiert", "slot_alt": "A"},  # Version nicht lesbar: sperrt jede Version
+    "irgendwas",
+])
+def test_unlesbarer_systemauftrag_sperrt_start_und_abschluss_und_bleibt_stehen(tmp_path, caplog, roh):
+    """Ein vorhandener, aber nicht lesbarer `system`-Auftrag (GPC24) darf nicht zum Container-Pfad fuehren: kein `up(NEU)` auf
+    dem alten System, kein `_finish` mit current=NEU. Er bleibt unveraendert in der Datei, die Warnung kommt einmal."""
+    world = _system_world(tmp_path)
+    _unlesbarer_auftrag(world, roh)
+    with caplog.at_level("WARNING"):
+        world.updater.recover()
+        assert world.updater.run_once() == "vorlaeufig"
+    assert ("up", NEU) not in world.compose.calls and world.api.results == []
+    gespeichert = json.loads(world.state_path.read_text())
+    assert gespeichert["system"] == roh and gespeichert["current"] == ALT and gespeichert["in_progress"]["version"] == NEU
+    assert updater.State.load(world.state_path).system is None
+    assert caplog.text.count("Systemauftrag in state.json nicht lesbar") == 1
+    assert world.sa.aufrufe == []
+
+
+def test_unlesbarer_systemauftrag_einer_anderen_version_sperrt_nur_diese(tmp_path):
+    world = _system_world(tmp_path)
+    _unlesbarer_auftrag(world, {"version": "0.9.9", "phase": "zukunft", "slot_alt": "A"})
+    world.updater.recover()  # der Container-Auftrag auf NEU gehoert nicht zu 0.9.9
+    assert ("up", NEU) in world.compose.calls and world.state().current == NEU
+    assert json.loads(world.state_path.read_text())["system"] == {"version": "0.9.9", "phase": "zukunft", "slot_alt": "A"}
+
+
+def test_unlesbarer_systemauftrag_sperrt_ein_neues_system_bundle_derselben_version(tmp_path):
+    world = _system_world(tmp_path)
+    daten = json.loads(world.state_path.read_text())
+    daten["system"] = {"version": NEU, "phase": "zukunft", "slot_alt": "A"}
+    world.state_path.write_text(json.dumps(daten))
+    assert world.updater.run_once() == "vorlaeufig"
+    assert world.sa.aufrufe == [] and world.archive_fetches == [] and ("pull", NEU) not in world.compose.calls
+
+
+def test_ein_neuer_systemauftrag_ersetzt_den_unlesbaren_einer_anderen_version(tmp_path):
+    world = _system_world(tmp_path)
+    daten = json.loads(world.state_path.read_text())
+    daten["system"] = {"version": "0.9.9", "phase": "zukunft", "slot_alt": "A"}
+    world.state_path.write_text(json.dumps(daten))
+    assert world.updater.run_once() == "systemwechsel"
+    assert world.state().system["version"] == NEU and json.loads(world.state_path.read_text())["system"]["phase"] == "installiert"
 
 
 @pytest.mark.parametrize(("rueckfaelle", "sekunden"), [
@@ -3934,6 +4011,15 @@ def test_main_gibt_der_lokalen_gesundheit_host_dienste_und_ein_healthz_ohne_serv
 
 class _Stopp(Exception):
     pass
+
+
+def test_main_mit_der_startauswahl_des_testlaufs_meldet_keine_warnung(tmp_path, monkeypatch, caplog):
+    """Der Docker-Test reicht `FakeStartauswahl`: der Start (recover) loggt nichts Auffaelliges; die echte `RaucTryboot`
+    meldete im Container eine unlesbare Lage."""
+    settings = _main_environment(monkeypatch, tmp_path)
+    with caplog.at_level("WARNING"):
+        updater.main(["--once"], einstellungen=settings)
+    assert [r for r in caplog.records if r.levelname in ("WARNING", "ERROR")] == []
 
 
 def test_die_standard_startauswahl_ist_rauc_tryboot():
