@@ -41,7 +41,17 @@ def test_der_updater_wartet_nicht_hinter_dem_laden_der_archive():
     wartet = _nach("smartheat-updater.service")
     assert "smartheat-firstboot.service" not in wartet
     assert {u for u in wartet if u in UNITS} == {"smartheat-ablage.service"}  # nur die schnelle, lokale Ablage
-    assert "smartheat-ablage.service" in _eintraege("smartheat-updater.service")["Requires"]
+    assert "smartheat-ablage.service" in _eintraege("smartheat-updater.service")["Wants"]
+
+
+@pytest.mark.parametrize("name", ["smartheat-updater.service", "smartheat-hoststatus.service", "smartheat-firstboot.service"])
+def test_eine_gescheiterte_ablage_haelt_updater_hoststatus_und_erststart_nicht_auf(name):
+    """Die Ablage ist nur Wants=+After=: scheitert sie (ein Eintrag des Containers unter bus/), laufen die Dienste trotzdem,
+    sonst waere der Updater-Weg fuer immer blockiert."""
+    eintraege = _eintraege(name)
+    assert "smartheat-ablage.service" in eintraege["Wants"] and "smartheat-ablage.service" in eintraege["After"]
+    for art in ("Requires", "BindsTo", "PartOf", "Requisite"):
+        assert "smartheat-ablage.service" not in eintraege.get(art, []), (name, art)
 
 
 def test_nichts_wartet_auf_den_start_der_archive():
@@ -79,7 +89,7 @@ def test_die_werk_unit_laeuft_vor_dem_netz_nach_dem_einhaengen_von_werk():
 
 def test_der_erststart_laedt_mit_docker_und_bleibt_bei_fehlern_im_wiederholen():
     start = _eintraege("smartheat-firstboot.service")
-    assert start["Requires"] == ["docker.service", "smartheat-ablage.service"]
+    assert start["Requires"] == ["docker.service"] and start["Wants"] == ["smartheat-ablage.service"]
     assert start["ExecStart"] == ["/usr/bin/python3", "-m", "smartheat_host.firstboot", "start"]
     assert start["Restart"] == ["on-failure"] and start["RestartSec"] == ["30"]
     assert "ConditionDirectoryNotEmpty" not in start  # jeder Start ruft compose.up (GPC31), nicht nur der erste

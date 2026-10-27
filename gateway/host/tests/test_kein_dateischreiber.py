@@ -31,6 +31,9 @@ AUSNAHMEN = {
     ("bundles.py", "os.replace"): (
         1, "BundleStore.install (um Zeile 266): atomarer Tausch des ganzen Bundle-Verzeichnisses, nicht ueber "
            "dateien.schreiben abbildbar"),
+    ("bundles.py", "O_CREAT"): (
+        1, "ComposeRunner.sperre: legt updater/compose.lock als leere Sperrdatei an (O_RDONLY|O_CREAT, kein Inhalt, flock); "
+           "es wird nichts geschrieben, dateien.schreiben (Tausch per .tmp) taugte als flock-Ziel nicht"),
     ("updater.py", "open schreibend"): (
         1, "_open_teil (um Zeile 514): das Archiv des Images (bis 512 MiB) wird in Bloecken nach <ziel>.part gestreamt, "
            "dateien.schreiben nimmt nur Bytes im Speicher; fsync am Ende von fetch_url_to_file"),

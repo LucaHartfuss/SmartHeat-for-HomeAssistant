@@ -166,15 +166,21 @@ grep -q '@PILOT_SSH@' /etc/smartheat/nftables.conf && fail "@PILOT_SSH@ nicht er
 nft_syntax_check "nftables-Regeln ohne Pilot ungueltig"
 bash "$SRC/install.sh" "${ARGS_NOPILOT[@]}" >/tmp/run4.log 2>&1 || fail "Wiederholung ohne Pilot-SSH"
 grep -q "Nichts zu tun" /tmp/run4.log || fail "Wiederholung ohne Pilot-SSH meldet Aenderungen"
-# Symlinks unter ROOT (dort schreibt uid 1000): Installer bricht ab und fasst das Ziel nicht an.
+# Symlinks unter ROOT: Der Installer fasst das Ziel nie an. Im Container-Bereich (dort schreibt uid 1000) meldet er den
+# Eintrag und laeuft weiter (ein untergeschobener Symlink darf Updater und Ablage nicht blockieren); in den root-eigenen
+# Ordnern (host) bricht er ab.
 SYM_TARGET=/tmp/symlink-target
 mkdir -p "$SYM_TARGET" && chmod 0755 "$SYM_TARGET" && echo keep >"$SYM_TARGET/file" && chmod 0644 "$SYM_TARGET/file"
-for plant in bus/credentials/runtime bus data host; do
+for plant in bus/credentials/runtime bus data host updater; do
   victim=/var/lib/smartheat/$plant
   mv "$victim" "$victim.orig"
   ln -s "$SYM_TARGET" "$victim"
-  if bash "$SRC/install.sh" "${ARGS_NOPILOT[@]}" >/tmp/sym.log 2>&1; then fail "Symlink $plant: Installer lief durch"; fi
-  grep -q "Symlink" /tmp/sym.log || { cat /tmp/sym.log; fail "Symlink $plant: keine klare Fehlermeldung"; }
+  bash "$SRC/install.sh" "${ARGS_NOPILOT[@]}" >/tmp/sym.log 2>&1 && sym_ok=1 || sym_ok=0
+  case "$plant" in
+    host|updater) [ "$sym_ok" = 0 ] || fail "Symlink $plant (root-eigen): Installer lief durch" ;;
+    *) [ "$sym_ok" = 1 ] || { cat /tmp/sym.log; fail "Symlink $plant (Container-Bereich): Installer abgebrochen"; } ;;
+  esac
+  grep -q "Symlink" /tmp/sym.log || { cat /tmp/sym.log; fail "Symlink $plant: keine klare Meldung"; }
   [ "$(stat -c '%a %u:%g' "$SYM_TARGET")" = "755 0:0" ] || fail "Symlink $plant: Ziel veraendert"
   if [ "$(stat -c '%a %u:%g' "$SYM_TARGET/file")" != "644 0:0" ] || [ "$(cat "$SYM_TARGET/file")" != keep ]; then
     fail "Symlink $plant: Zieldatei veraendert"

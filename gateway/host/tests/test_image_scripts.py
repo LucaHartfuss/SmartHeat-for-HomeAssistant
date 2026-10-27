@@ -333,7 +333,7 @@ def test_config_layer_and_hook_fit_together():
     assert re.search(r"^# X-Env-VarPrefix: shg$", layer, re.MULTILINE)
     assert "$IGconf_shg_stage/installer/gateway/image/customize.sh" in layer
     last = layer.index('- bash "$IGconf_shg_stage/installer/gateway/image/customize.sh"')
-    for hook in ("locale_default.sh", "wlan_off.sh", "eth_dhcp.sh", "ab_system.sh"):
+    for hook in ("locale_default.sh", "wlan_off.sh", "eth_dhcp.sh", "ab_system.sh", "hostname_default.sh"):
         assert (IMAGE / hook).stat().st_mode & stat.S_IXUSR, hook
         assert layer.index(f'- bash "$SRCROOT/{hook}" "$1"') < last, hook
     for gone in ("usbboot.sh", "initramfs_check.sh", "post-build.sh"):
@@ -710,6 +710,40 @@ def test_ab_system_hook_fails_without_the_werk_unit_or_when_systemctl_fails(tmp_
     result = subprocess.run(["bash", str(IMAGE / "ab_system.sh"), str(root)], capture_output=True, text=True,
                             check=False, env=env)
     assert result.returncode != 0
+
+
+def _hostname_hook(root: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(["bash", str(IMAGE / "hostname_default.sh"), str(root)], capture_output=True, text=True,
+                          check=False)
+
+
+@pytest.mark.parametrize("os_release", ["ID=debian\nVERSION_ID=\"13\"\n", "ID=debian\nDEFAULT_HOSTNAME=localhost\n",
+                                        "DEFAULT_HOSTNAME=\nID=debian\n"])
+def test_hostname_hook_removes_the_static_hostname_and_sets_the_images_fallback_name(tmp_path, os_release):
+    """Ein statischer Hostname verdraengt den fluechtigen aus werk.json (hostname(7)): /etc/hostname weg, Rueckfall ueber
+    DEFAULT_HOSTNAME in os-release (os-release(5), seit systemd 248)."""
+    root = tmp_path / "root"
+    (root / "etc").mkdir(parents=True)
+    (root / "usr/lib").mkdir(parents=True)
+    (root / "etc/hostname").write_text("smartheat-gateway\n")
+    (root / "usr/lib/os-release").write_text(os_release)
+    result = _hostname_hook(root)
+    assert result.returncode == 0, result.stderr
+    assert not (root / "etc/hostname").exists() and not (root / "etc/hostname").is_symlink()
+    lines = (root / "usr/lib/os-release").read_text().splitlines()
+    assert lines.count("DEFAULT_HOSTNAME=smartheat-gateway") == 1 and not [ln for ln in lines if ln == "DEFAULT_HOSTNAME=localhost"]
+    assert "ID=debian" in lines
+    assert _hostname_hook(root).returncode == 0 and (root / "usr/lib/os-release").read_text().splitlines() == lines  # idempotent
+
+
+def test_hostname_hook_needs_os_release_and_the_fallback_name_is_the_configured_hostname(tmp_path):
+    root = tmp_path / "root"
+    (root / "etc").mkdir(parents=True)
+    (root / "etc/hostname").write_text("x\n")
+    result = _hostname_hook(root)
+    assert result.returncode != 0 and "os-release" in result.stderr and (root / "etc/hostname").exists()
+    name = re.search(r"^NAME=(\S+)", (IMAGE / "hostname_default.sh").read_text(), re.MULTILINE).group(1)
+    assert name == _config_value("device", "hostname") == "smartheat-gateway"
 
 
 def _config_locale() -> dict[str, str]:

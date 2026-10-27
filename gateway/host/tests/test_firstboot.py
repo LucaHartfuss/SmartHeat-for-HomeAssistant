@@ -1,3 +1,4 @@
+import contextlib
 import inspect
 import json
 import logging
@@ -5,6 +6,7 @@ import os
 import shutil
 import stat
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -19,10 +21,20 @@ ARCHIV_A, ARCHIV_B = "a" * 64, "b" * 64  # Archive heissen nach der SHA-256 ihre
 
 class FakeCompose:
     def __init__(self, fail=False):
-        self.ups, self.fail = [], fail
+        self.ups, self.fail, self.gehalten = [], fail, False
+        self.up_unter_sperre = []
+
+    @contextlib.contextmanager
+    def sperre(self):
+        self.gehalten = True
+        try:
+            yield
+        finally:
+            self.gehalten = False
 
     def up(self, version):
         self.ups.append(version)
+        self.up_unter_sperre.append(self.gehalten)
         if self.fail:
             raise bundles.ComposeError("boom")
 
@@ -62,6 +74,12 @@ def test_loads_starts_and_keeps_the_archives(root, werkein):
     assert loaded == [f"{ARCHIV_A}.tar", f"{ARCHIV_B}.tar"] and compose.ups == ["0.3.0"]
     assert sorted(p.name for p in (werkein / "images").iterdir()) == [f"{ARCHIV_A}.tar", f"{ARCHIV_B}.tar"]
     assert _merker(root) == [ARCHIV_A, ARCHIV_B]
+
+
+def test_the_bundle_is_started_under_the_compose_lock(root, werkein):
+    compose = FakeCompose()
+    assert _lauf(root, compose, werkein) == 0
+    assert compose.ups == ["0.3.0"] and compose.up_unter_sperre == [True] and compose.gehalten is False
 
 
 def test_every_start_starts_the_bundle_but_each_archive_is_loaded_only_once(root, werkein):
@@ -465,8 +483,11 @@ def test_ordner_angleichen_ist_idempotent(tmp_path):
     assert erste == zweite and _stand(root, besitzer) == ERWARTET
 
 
-@pytest.mark.parametrize("rel", ["bus", "bus/credentials", "bus/credentials/runtime", "data", "host", "updater"])
-def test_ein_symlink_statt_eines_ordners_wird_nicht_angefasst_der_rest_wird_angeglichen(tmp_path, rel):
+CONTAINER_ORDNER = ["bus", "bus/credentials", "bus/credentials/runtime", "bus/mosquitto-daten", "data", "zigbee2mqtt"]
+ROOT_ORDNER = ["host", "host/geladen", "updater", "bundles"]
+
+
+def _symlink_statt_ordner(tmp_path, rel):
     root, besitzer = tmp_path / "daten", Besitzer()
     firstboot.ordner_angleichen(root, fchown=besitzer)
     ziel = tmp_path / "fremd"
@@ -476,17 +497,55 @@ def test_ein_symlink_statt_eines_ordners_wird_nicht_angefasst_der_rest_wird_ange
     opfer = root / rel
     shutil.rmtree(opfer)
     opfer.symlink_to(ziel)
-    (root / "bundles").chmod(0o777)  # ein anderer Ordner, der trotzdem angeglichen werden muss
+    (root / ("host" if rel == "bundles" else "bundles")).chmod(0o777)  # ein anderer, der trotzdem angeglichen werden muss
+    return root, ziel, opfer
+
+
+@pytest.mark.parametrize("rel", CONTAINER_ORDNER)
+def test_ein_untergeschobener_symlink_im_container_bereich_wird_gemeldet_aber_blockiert_nichts(tmp_path, rel, caplog):
+    """Der Container (uid 1000) schreibt diese Ordner und kann einen Symlink hinlegen. Das darf den Updater und die Ablage
+    nicht blockieren: ERROR mit dem Pfad, der Symlink wird nicht angefasst, der Rest wird angeglichen, kein Fehler."""
+    root, ziel, opfer = _symlink_statt_ordner(tmp_path, rel)
+    frisch = Besitzer()
+    with caplog.at_level(logging.ERROR):
+        firstboot.ordner_angleichen(root, fchown=frisch)  # wirft nicht
+    fehler = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(fehler) >= 1 and all("Symlink" in text for text in fehler) and any(rel in text for text in fehler)
+    assert all(str(ziel) not in text and "keep" not in text for text in fehler)  # nur der Pfad, kein Inhalt
+    assert stat.S_IMODE(ziel.stat().st_mode) == 0o755 and frisch.von(ziel) is None
+    assert (ziel / "datei").read_text() == "keep" and opfer.is_symlink()
+    assert stat.S_IMODE((root / "bundles").stat().st_mode) == 0o755
+
+
+@pytest.mark.parametrize("rel", CONTAINER_ORDNER)
+def test_eine_untergeschobene_datei_im_container_bereich_wird_gemeldet_aber_blockiert_nichts(tmp_path, rel, caplog):
+    root = tmp_path / "daten"
+    firstboot.ordner_angleichen(root, fchown=Besitzer())
+    shutil.rmtree(root / rel)
+    (root / rel).write_text("datei")
+    (root / "updater").chmod(0o777)
+    with caplog.at_level(logging.ERROR):
+        firstboot.ordner_angleichen(root, fchown=Besitzer())
+    assert any(rel in r.getMessage() and "kein Ordner" in r.getMessage() for r in caplog.records)
+    assert (root / rel).read_text() == "datei" and stat.S_IMODE((root / "updater").stat().st_mode) == 0o755
+
+
+@pytest.mark.parametrize("rel", ROOT_ORDNER)
+def test_ein_symlink_in_einem_root_ordner_ist_ein_harter_fehler_der_rest_wird_angeglichen(tmp_path, rel):
+    """updater/, bundles/ und host/ gehoeren root; ein Symlink dort kann nicht vom Container kommen und der Zustand des
+    Geraets ist nicht mehr zu trauen."""
+    root, ziel, opfer = _symlink_statt_ordner(tmp_path, rel)
     frisch = Besitzer()
     with pytest.raises(firstboot.AblageFehler, match="Symlink") as fehler:
         firstboot.ordner_angleichen(root, fchown=frisch)
     assert opfer.name in str(fehler.value)
     assert stat.S_IMODE(ziel.stat().st_mode) == 0o755 and frisch.von(ziel) is None
     assert (ziel / "datei").read_text() == "keep" and opfer.is_symlink()
-    assert stat.S_IMODE((root / "bundles").stat().st_mode) == 0o755
+    anderer = root / ("host" if rel == "bundles" else "bundles")
+    assert stat.S_IMODE(anderer.stat().st_mode) == 0o755
 
 
-def test_ein_symlink_auf_dem_weg_wird_nicht_durchschritten(tmp_path):
+def test_ein_symlink_auf_dem_weg_wird_nicht_durchschritten(tmp_path, caplog):
     """bus ist ein Symlink: bus/mosquitto darf weder durch ihn angelegt noch angeglichen werden."""
     root = tmp_path / "daten"
     root.mkdir()
@@ -494,18 +553,10 @@ def test_ein_symlink_auf_dem_weg_wird_nicht_durchschritten(tmp_path):
     ziel.mkdir()
     (root / "bus").symlink_to(ziel)
     besitzer = Besitzer()
-    with pytest.raises(firstboot.AblageFehler, match="Symlink"):
+    with caplog.at_level(logging.ERROR):
         firstboot.ordner_angleichen(root, fchown=besitzer)
     assert list(ziel.iterdir()) == [] and besitzer.von(ziel) is None
-
-
-def test_eine_datei_statt_eines_ordners_wird_gemeldet(tmp_path):
-    root = tmp_path / "daten"
-    root.mkdir()
-    (root / "data").write_text("datei")
-    with pytest.raises(firstboot.AblageFehler, match="data: .*kein Ordner"):
-        firstboot.ordner_angleichen(root, fchown=Besitzer())
-    assert (root / "data").read_text() == "datei"
+    assert sum("Symlink" in r.getMessage() for r in caplog.records) == 6  # bus und die fuenf Ordner darunter
 
 
 def test_ein_symlink_als_wurzel_wird_abgelehnt(tmp_path):
@@ -520,16 +571,111 @@ def test_ein_symlink_als_wurzel_wird_abgelehnt(tmp_path):
     assert stat.S_IMODE(echt.stat().st_mode) == 0o700 and list(echt.iterdir()) == []
 
 
-def test_mehrere_verstoesse_werden_zusammen_gemeldet(tmp_path):
+def test_mehrere_verstoesse_in_root_ordnern_werden_zusammen_gemeldet(tmp_path, caplog):
     root = tmp_path / "daten"
     root.mkdir()
-    (root / "data").symlink_to(tmp_path)
+    (root / "data").symlink_to(tmp_path)  # Container-Bereich: nur ERROR im Protokoll
     (root / "host").write_text("datei")
-    with pytest.raises(firstboot.AblageFehler) as fehler:
+    (root / "updater").symlink_to(tmp_path)
+    with caplog.at_level(logging.ERROR), pytest.raises(firstboot.AblageFehler) as fehler:
         firstboot.ordner_angleichen(root, fchown=Besitzer())
-    assert "data" in str(fehler.value) and "host" in str(fehler.value)
+    assert "host" in str(fehler.value) and "updater" in str(fehler.value) and "data" not in str(fehler.value)
     assert (root / "bundles").is_dir()  # der Rest wurde trotzdem angelegt
+    assert any("data" in r.getMessage() for r in caplog.records)
 
 
 def test_ordner_angleichen_nutzt_standardmaessig_os_fchown():
     assert inspect.signature(firstboot.ordner_angleichen).parameters["fchown"].default is os.fchown
+
+
+# --- Compose-Sperre ------------------------------------------------------------------------------------------------
+
+
+def _runner(root, aufrufe):
+    return bundles.ComposeRunner(
+        root, run=lambda cmd, **kw: aufrufe.append(cmd[cmd.index("-f") + 2:]) or subprocess.CompletedProcess(cmd, 0, "", ""))
+
+
+def test_up_wartet_auf_die_sperre_eines_anderen_prozesses(root):
+    """Updater und Erststart sind zwei Prozesse mit je einem Runner: ein `up` laeuft erst, wenn der andere die Sperre loest."""
+    aufrufe = []
+    halter, anderer = _runner(root, aufrufe), _runner(root, aufrufe)
+    fertig = threading.Event()
+    with halter.sperre():
+        faden = threading.Thread(target=lambda: (anderer.up("0.3.0"), fertig.set()), daemon=True)
+        faden.start()
+        assert not fertig.wait(0.4) and aufrufe == []  # blockiert, ruft docker nicht auf
+    assert fertig.wait(5) and aufrufe == [["up", "-d", "--remove-orphans"]]
+    faden.join(5)
+
+
+def test_up_unter_der_eigenen_sperre_wartet_nicht_auf_sich_selbst(root):
+    aufrufe = []
+    runner = _runner(root, aufrufe)
+    with runner.sperre():
+        runner.up("0.3.0")
+        with runner.sperre():
+            runner.up("0.3.0")
+    assert len(aufrufe) == 2
+    runner.up("0.3.0")  # und danach ist die Sperre wieder frei
+    assert len(aufrufe) == 3
+
+
+def test_die_sperre_ist_nach_einer_ausnahme_frei(root):
+    aufrufe = []
+    runner, anderer = _runner(root, aufrufe), _runner(root, aufrufe)
+    with pytest.raises(RuntimeError), runner.sperre():
+        raise RuntimeError("boom")
+    anderer.up("0.3.0")  # haengt nicht
+    assert len(aufrufe) == 1
+
+
+def test_die_sperrdatei_liegt_in_updater_mit_modus_0600_und_ein_symlink_wird_nicht_befolgt(root, tmp_path):
+    runner = _runner(root, [])
+    with runner.sperre():
+        pass
+    sperre = root / "updater" / "compose.lock"
+    assert stat.S_IMODE(sperre.stat().st_mode) == 0o600 and sperre.stat().st_size == 0
+    sperre.unlink()
+    fremd = tmp_path / "fremd"
+    fremd.write_text("keep")
+    sperre.symlink_to(fremd)
+    with pytest.raises(OSError), runner.sperre():
+        pass
+    assert fremd.read_text() == "keep"
+
+
+def test_der_erststart_wartet_auf_die_sperre_und_sieht_dann_einen_neuen_auftrag(root, werkein):
+    """Der Updater haelt die Sperre, schreibt seinen Auftrag und startet; der Erststart wartet, liest danach den Zustand neu
+    und startet die alte Version nicht mehr."""
+    aufrufe = []
+    updater_seite = _runner(root, aufrufe)
+    erststart = _runner(root, aufrufe)
+    ergebnis = []
+    faden = threading.Thread(target=lambda: ergebnis.append(_lauf(root, erststart, werkein)), daemon=True)
+    with updater_seite.sperre():
+        faden.start()
+        faden.join(0.4)
+        assert faden.is_alive() and aufrufe == []  # wartet vor dem Lesen des Zustands und vor `up`
+        updater.State(current="0.3.0", in_progress={"version": "0.3.1", "previous": "0.3.0", "since": 1.0}).save(
+            root / "updater" / "state.json")
+        updater_seite.up("0.3.1")
+    faden.join(5)
+    assert ergebnis == [0] and len(aufrufe) == 1 and aufrufe[0][0] == "up"  # nur das `up` des Updaters
+    assert "0.3.0" not in str(aufrufe)
+
+
+def test_das_laden_der_archive_liegt_ausserhalb_der_sperre(root, werkein):
+    """Wer die Sperre haelt, wartet hoechstens auf ein `up`, nie auf das Laden (R10: der Probestart des Updaters)."""
+    runner = _runner(root, [])
+    gehalten = []
+    probe = bundles.ComposeRunner(root, run=lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""))
+
+    def laden(archiv):
+        frei = threading.Event()
+        faden = threading.Thread(target=lambda: (probe.up("0.3.0"), frei.set()), daemon=True)
+        faden.start()
+        gehalten.append(frei.wait(2))  # der Updater kann waehrend des Ladens ein `up` machen
+        faden.join(2)
+    assert _lauf(root, runner, werkein, load=laden) == 0
+    assert gehalten == [True, True]

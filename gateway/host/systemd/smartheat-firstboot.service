@@ -1,7 +1,8 @@
 [Unit]
 Description=SmartHeat-Gateway Start: Container-Archive des Images laden (je Archiv einmal), laufendes Bundle starten (GPC31)
 After=docker.service smartheat-ablage.service
-Requires=docker.service smartheat-ablage.service
+Requires=docker.service
+Wants=smartheat-ablage.service
 RequiresMountsFor=@ROOT@
 # Bewusst kein Before= auf irgendeine Unit: das Laden der Archive dauert Minuten, der Updater (Probestart-Frist, GW 6.3)
 # darf nicht dahinter warten.

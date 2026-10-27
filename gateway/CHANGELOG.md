@@ -46,6 +46,10 @@
   Hostnamen; ungueltig oder fehlend loescht die Kopie. `smartheat-probestart-frist.timer` ist im Image aktiviert. `prepare.sh`
   nimmt das eigene Image aus `gateway-image.oci.tar` des Bundles (Groesse, SHA-256 und Index-Digest gegen `manifest.json`) und holt
   nur Mosquitto und Zigbee2MQTT per `skopeo`; die Pilotzweige der Bau-Skripte entfallen.
+  Updater und Erststart teilen eine Compose-Sperre (`updater/compose.lock`, flock): kein `docker compose up` zweier Bundles
+  zugleich. Die Ablage haelt Updater, Hoststatus und Erststart nicht auf (`Wants=`); ein untergeschobener Eintrag im
+  Container-Bereich wird gemeldet und nicht angefasst. Das Image hat keinen statischen Hostnamen (Rueckfall
+  `DEFAULT_HOSTNAME=smartheat-gateway` in os-release), damit der Name aus `werk.json` gilt.
 
 ## 0.8.0
 

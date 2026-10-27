@@ -57,4 +57,5 @@ mmdebstrap:
     - bash "$SRCROOT/wlan_off.sh" "$1"
     - bash "$SRCROOT/eth_dhcp.sh" "$1"
     - bash "$SRCROOT/ab_system.sh" "$1"
+    - bash "$SRCROOT/hostname_default.sh" "$1"
     - bash "$IGconf_shg_stage/installer/gateway/image/customize.sh" "$1" "$IGconf_shg_stage"

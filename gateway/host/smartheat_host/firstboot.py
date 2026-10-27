@@ -83,8 +83,11 @@ def ordner_angleichen(root: Path, *, fchown: Callable[[int, int, int], None] = o
     """Setzt jeden Ordner aus ORDNER unter `root` auf Modus und Besitzer (legt fehlende an); bei jedem Start, idempotent.
     Die Ordner unter `root` gehoeren zum Teil uid 1000 (Container): ein dort untergeschobener Symlink duerfte den Dienst
     (root) nie auf einen Systempfad umlenken, darum geht jeder Schritt per Dateideskriptor mit O_NOFOLLOW. Ein Ordner mit
-    Symlink oder Datei statt Ordner wird nicht angefasst; die uebrigen werden trotzdem angeglichen, danach meldet
-    AblageFehler alle Verstoesse."""
+    Symlink oder Datei statt Ordner wird nicht angefasst und die uebrigen werden trotzdem angeglichen. Liegt der
+    Verstoss in einem Ordner des Containers (uid 1000: `data`, `zigbee2mqtt`, `bus/...`, die der Container beschreiben
+    kann), bleibt es bei einer ERROR-Zeile (nur der Pfad): sonst koennte der Container Updater und Hoststatus fuer immer
+    blockieren. Ein Verstoss in einem root-eigenen Ordner (`updater`, `bundles`, `host`, die Wurzel) kann nur von root
+    selbst kommen und gilt dem Zustand des Geraets: danach meldet AblageFehler alle diese Verstoesse."""
     verstoesse = []
     wurzel_fd = _wurzel_oeffnen(root)
     try:
@@ -98,7 +101,10 @@ def ordner_angleichen(root: Path, *, fchown: Callable[[int, int, int], None] = o
                 os.fchmod(fd, modus)
                 fchown(fd, uid, gid)
             except AblageFehler as fehler:
-                verstoesse.append(f"{rel or '.'}: {fehler}")
+                if uid == 0:
+                    verstoesse.append(f"{rel or '.'}: {fehler}")
+                else:
+                    logger.error("Ablage: %s uebergangen, nicht angefasst: %s", rel, fehler)
             finally:
                 for fd in offen:
                     os.close(fd)
@@ -166,12 +172,15 @@ def run(root: Path, compose, werkseinstellung: Path = WERKSEINSTELLUNG, load: Ca
     if version is not None:
         # Der Updater (startet parallel, nicht hinter diesem Schritt) kann waehrend des Ladens einen Auftrag eroeffnet oder
         # das Bundle gewechselt haben: dann gehoert ihm der Stack, dieser Schritt startet nichts mehr.
-        latest = updater.State.load(root / "updater" / "state.json")
-        if latest.in_progress or latest.system or latest.current != version:
-            logger.info("Updater hat uebernommen (Auftrag oder Bundle-Wechsel), Start startet nichts")
-        else:
-            compose.up(version)
-            logger.info("Bundle %s gestartet", version)
+        # Unter der Compose-Sperre, die auch der Updater um "Auftrag schreiben + up" haelt: entweder sieht dieser Schritt den
+        # Auftrag oder der Updater wartet, bis `up` der alten Version fertig ist. Das Laden oben liegt ausserhalb.
+        with compose.sperre():
+            latest = updater.State.load(root / "updater" / "state.json")
+            if latest.in_progress or latest.system or latest.current != version:
+                logger.info("Updater hat uebernommen (Auftrag oder Bundle-Wechsel), Start startet nichts")
+            else:
+                compose.up(version)
+                logger.info("Bundle %s gestartet", version)
     return 0
 
 

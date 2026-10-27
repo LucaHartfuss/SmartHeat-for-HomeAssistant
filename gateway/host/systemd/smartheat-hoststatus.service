@@ -1,8 +1,7 @@
 [Unit]
 Description=SmartHeat-Gateway Hoststatus (Spec SHG G2b-1 5)
 After=network-online.target smartheat-ablage.service
-Wants=network-online.target
-Requires=smartheat-ablage.service
+Wants=network-online.target smartheat-ablage.service
 RequiresMountsFor=@ROOT@
 
 [Service]

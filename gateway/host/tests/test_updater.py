@@ -1,5 +1,6 @@
 import ast
 import base64
+import contextlib
 import dataclasses
 import errno
 import hashlib
@@ -81,6 +82,17 @@ class FakeCompose:
         self.calls, self.fail_up, self.fail_pull = [], set(fail_up), fail_pull
         self.on_up = None
         self.images, self.events = {ALTES_IMAGE}, []
+        self.gehalten = False  # die Compose-Sperre (bundles.ComposeRunner.sperre) ist gerade gehalten
+
+    @contextlib.contextmanager
+    def sperre(self):
+        self.events.append(("sperre", "an"))
+        self.gehalten = True
+        try:
+            yield
+        finally:
+            self.gehalten = False
+            self.events.append(("sperre", "aus"))
 
     def has_image(self, ref):
         self.events.append(("has_image", ref, ref in self.images))
@@ -94,7 +106,7 @@ class FakeCompose:
 
     def up(self, version):
         self.calls.append(("up", version))
-        self.events.append(("up", version))
+        self.events.append(("up", version, self.gehalten))
         if self.on_up:
             self.on_up(version)
         if version in self.fail_up:
@@ -2690,7 +2702,8 @@ def test_update_holt_laedt_und_startet_das_archiv_vor_pull_und_up(tmp_path):
     world = World(tmp_path)
     assert world.updater.run_once() == "aktualisiert"
     namen = _event_namen(world)
-    assert namen[:5] == ["has_image", "fetch_datei", "docker_load", "has_image", "pull"] and namen[5] == "up"
+    assert namen[:5] == ["has_image", "fetch_datei", "docker_load", "has_image", "pull"]
+    assert namen[5:7] == ["sperre", "up"]  # Auftrag schreiben und starten unter der Compose-Sperre
     assert world.events[0][1:] == (IMAGE, False) and world.events[3][1:] == (IMAGE, True)
     url, max_bytes, ziel, _ = world.archive_fetches[0]
     assert url == BASE + bundles.ARCHIVE_NAME  # neben dem Manifest
@@ -2699,6 +2712,20 @@ def test_update_holt_laedt_und_startet_das_archiv_vor_pull_und_up(tmp_path):
     assert list(_archiv_ordner(world).iterdir()) == []  # nach dem Laden geloescht, auch kein .part
     assert world.store.dir("0.3.0").is_dir() and not (world.store.dir("0.3.0") / bundles.ARCHIVE_NAME).exists()
     assert IMAGE in world.compose.images and ALTES_IMAGE in world.compose.images
+
+
+def test_das_umschalten_schreibt_den_auftrag_und_startet_unter_der_compose_sperre(tmp_path):
+    """Der Erststart startet unter derselben Sperre die alte Version (compose up): der Updater schreibt `in_progress` und
+    ruft `up` nur, solange er sie haelt, damit der Erststart den Auftrag sieht oder warten muss."""
+    world = World(tmp_path)
+    gesehen = []
+    world.compose.on_up = lambda version: gesehen.append(
+        (world.compose.gehalten, world.store.root.joinpath("updater/state.json").is_file()
+         and updater.State.load(world.store.root / "updater" / "state.json").in_progress is not None))
+    assert world.updater.run_once() == "aktualisiert"
+    assert gesehen == [(True, True)]  # Sperre gehalten und der Auftrag schon gespeichert
+    assert [e[1] for e in world.events if e[0] == "sperre"] == ["an", "aus"]
+    assert world.compose.gehalten is False
 
 
 def test_ist_das_image_schon_da_wird_das_archiv_nicht_geholt(tmp_path):

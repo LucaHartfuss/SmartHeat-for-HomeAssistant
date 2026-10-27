@@ -7,6 +7,8 @@ aeltere Ordner gueltig bleiben). Das eigene Container-Image kommt als OCI-Archiv
 kann zusaetzlich ein System-Bundle (RAUC) tragen (optionales Manifest-Feld `system`, Ablage
 updater/system/<version>.raucb ausserhalb von bundles/): Datei, SHA-256, Groesse und `compatible` stehen im signierten
 Manifest, das Geraet vergleicht `compatible` mit dem seiner system.conf."""
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -338,9 +340,36 @@ GATEWAY_ENV = Path("/opt/smartheat/gateway.env")
 
 
 class ComposeRunner:
+    """Compose-Aufrufe des Projekts. `up` laeuft unter einer Sperre (`sperre`, flock auf `updater/compose.lock`), die sich
+    Updater und Erststart teilen: zwei `docker compose up` desselben Projekts mit verschiedenen Bundles duerfen sich nie
+    ueberlappen (Namenskonflikte; ein daraus entstehender ComposeError lehnte eine gute Version ab)."""
+
     def __init__(self, root: Path, project: str = COMPOSE_PROJECT, run=subprocess.run,
                  env_datei: Path = GATEWAY_ENV) -> None:
         self._root, self._project, self._run, self._env_datei = root, project, run, env_datei
+        self._gehalten = False
+
+    @contextlib.contextmanager
+    def sperre(self):
+        """Haelt die Compose-Sperre (blockiert, bis sie frei ist; der Halter ist durch die Fristen der docker-Aufrufe
+        begrenzt, und flock endet mit dem Prozess). Ein `up` unter einer schon gehaltenen Sperre dieses Runners wartet nicht
+        auf sich selbst. Die Datei liegt in `updater/` (root-eigen; der Container kann sie nicht ersetzen), Ordner muss
+        bestehen (smartheat-ablage)."""
+        if self._gehalten:
+            yield
+            return
+        # nur eine Sperrdatei ohne Inhalt, kein Datei-Schreiber im Sinne von dateien.schreiben (test_kein_dateischreiber)
+        (self._root / "updater").mkdir(parents=True, exist_ok=True)
+        fd = os.open(self._root / "updater" / "compose.lock", os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            self._gehalten = True
+            try:
+                yield
+            finally:
+                self._gehalten = False
+        finally:
+            os.close(fd)
 
     def _command(self, version: str, *args: str) -> list[str]:
         compose = self._root / "bundles" / version / "docker-compose.yml"
@@ -361,7 +390,8 @@ class ComposeRunner:
         self._compose(version, "pull", timeout=PULL_TIMEOUT_SECONDS)
 
     def up(self, version: str) -> None:
-        self._compose(version, "up", "-d", "--remove-orphans", timeout=UP_TIMEOUT_SECONDS)
+        with self.sperre():
+            self._compose(version, "up", "-d", "--remove-orphans", timeout=UP_TIMEOUT_SECONDS)
 
     def health(self, version: str) -> dict[str, str]:
         try:

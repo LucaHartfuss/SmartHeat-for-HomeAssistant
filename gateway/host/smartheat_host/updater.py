@@ -942,11 +942,12 @@ class Updater:
         except bundles.ComposeError as error:
             logger.warning("docker compose pull fuer %s gescheitert (%s), naechster Durchlauf", version, error)
             return "vorlaeufig"
-        state.in_progress = {"version": version, "previous": state.current, "since": time.time(),
-                             "zertifikat_ab": zertifikat.not_valid_before_utc.isoformat()}
-        state.save(self._state_path)  # vor dem Umschalten: ein Stromausfall findet den Auftrag wieder
         try:
-            self._compose.up(version)
+            with self._compose.sperre():  # Auftrag schreiben und starten unteilbar gegen den Erststart (compose up der alten Version)
+                state.in_progress = {"version": version, "previous": state.current, "since": time.time(),
+                                     "zertifikat_ab": zertifikat.not_valid_before_utc.isoformat()}
+                state.save(self._state_path)  # vor dem Umschalten: ein Stromausfall findet den Auftrag wieder
+                self._compose.up(version)
         except bundles.ComposeError as error:
             logger.error("Start von %s gescheitert: %s", version, error)
             return "zurueckgerollt" if self._rollback(state, version, START_FEHLGESCHLAGEN) else "vorlaeufig"

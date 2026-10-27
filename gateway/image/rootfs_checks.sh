@@ -89,6 +89,16 @@ for tree in "$R/opt/smartheat"; do
   if [ -n "$bad" ]; then fail "$rel: ${bad#"$R"} ist gruppen- oder weltbeschreibbar"; fi
 done
 
+# Hostname: kein statischer Hostname im Image (systemd gibt ihm Vorrang vor dem fluechtigen Namen aus werk.json), der Name
+# des Images steht als Rueckfall in os-release (hostname_default.sh)
+SHG_IMAGE_HOSTNAME=smartheat-gateway
+if [ -e "$R/etc/hostname" ] || [ -L "$R/etc/hostname" ]; then
+  fail "etc/hostname im Image (ein statischer Hostname verdraengt den Namen aus werk.json)"
+fi
+if ! grep -qx "DEFAULT_HOSTNAME=$SHG_IMAGE_HOSTNAME" "$R/usr/lib/os-release" 2>/dev/null; then
+  fail "usr/lib/os-release ohne DEFAULT_HOSTNAME=$SHG_IMAGE_HOSTNAME (Rueckfallname des Images)"
+fi
+
 # Dienste
 for unit in smartheat-ablage smartheat-werk smartheat-firewall smartheat-hoststatus smartheat-led smartheat-firstboot \
             smartheat-updater docker; do
