@@ -2,6 +2,12 @@
 
 ## 0.9.0
 
+- Uebernahme-Code nur nach einem Knopfdruck am Geraet (SG-02, GPC21): Der Container wertet `host/knopf.json` des
+  Knopf-Dienstes; ein Druck ist eine Aenderung des Paars (`seq`, `ts`), die erste Lesung nach dem Start ist nur Grundlinie
+  (ein Neustart oeffnet kein Fenster). Jeder Druck erzeugt einen neuen Code (`Device.neuer_uebernahme_code`, derselbe Weg
+  wie der Befehl `new_claim_code`), hoechstens einer je 60 s, ein Druck davor verlaengert nur das Fenster. Die Seite zeigt
+  Geraete-ID und Code 15 min lang (nur im Speicher), sonst nach einem Druck "Keine Verbindung zum Server – kein Code"
+  bzw. "uebernommen". `agent_state.json` meldet das offene Fenster als `code_fenster` (LED `code_sichtbar`).
 - Systemteil im Updater (AP-05a, GW 6.3): Traegt das signierte Manifest das Feld `system` (`system.raucb`, SHA-256, Groesse
   bis 2 GiB, `compatible` `smartheat-gateway-pi5`), wechselt der Updater zuerst das System (A/B, RAUC, Neustart mit tryboot)
   und danach die Container. Ablauf mit gespeicherten Phasen (`system.phase` in `updater/state.json`, **vor** jeder Wirkung):

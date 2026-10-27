@@ -529,7 +529,7 @@ def test_a_persistently_failing_led_write_is_logged_once_per_error_type_and_on_r
     einen ERROR und bei der Erholung eine INFO (nur Typnamen, Regel 6)."""
     fehler: list[Exception] = [OSError("platte voll")]
 
-    def update(zustand):
+    def update(zustand, code_fenster=False):
         if fehler:
             raise fehler[0]
 

@@ -601,20 +601,31 @@ class Device:
         bootstrap.device_state_speichern(self._dir, state)
         return commands.Done({})
 
-    def _new_claim_code(self, payload: dict) -> commands.Outcome:
-        """Neuer Uebernahme-Code: erst beim Server melden (register mit neuem Code-Hash; der Server
-        uebernimmt ihn nur fuer ein nicht uebernommenes Geraet), dann speichern."""
+    def neuer_uebernahme_code(self) -> str:
+        """Neuer Uebernahme-Code: erst beim Server melden (register mit neuem Code-Hash; der Server uebernimmt ihn nur
+        fuer ein nicht uebernommenes Geraet), dann speichern. "neu" = gespeichert, "keine_verbindung" = der Server
+        hat den Hash nicht angenommen (der alte Code bleibt), "uebernommen" = das Geraet ist uebernommen. Nur im
+        Geraete-Thread (Befehl new_claim_code, Rueckruf des Hosts); blockiert fuer die Dauer der Anfrage."""
         code = identity.new_claim_code()
         kandidat = replace(self.identity, claim_code=code)
         try:
             antwort = self._client_for(kandidat).register(**self._register_args())
         except bootstrap.BootstrapError as error:
             logger.warning("Neuer Uebernahme-Code nicht gemeldet (%s)", error)
-            return commands.Failed("intern")
+            return "keine_verbindung"
         bootstrap.device_state_speichern(self._dir, antwort.device_state)
         if antwort.device_state != "nicht_uebernommen":
-            return commands.Failed("bereits_uebernommen")
+            return "uebernommen"
         self.identity = identity.save_claim_code(self._dir, self.identity, code)
+        return "neu"
+
+    def _new_claim_code(self, payload: dict) -> commands.Outcome:
+        """Befehl new_claim_code (HA und Server): dieselbe Methode wie der Knopfdruck des Gateways."""
+        ergebnis = self.neuer_uebernahme_code()
+        if ergebnis == "keine_verbindung":
+            return commands.Failed("intern")
+        if ergebnis == "uebernommen":
+            return commands.Failed("bereits_uebernommen")
         return commands.Done({})
 
     def _wunsch(self, begrenzt: float, roh: float | None, herkunft: str | None, durch: str | None) -> None:

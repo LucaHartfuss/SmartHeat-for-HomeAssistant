@@ -1,7 +1,9 @@
 """Diagnoseseite: nur lesend, ohne Login, ohne Geheimnisse, statisches HTML ohne
 JavaScript, Selbstaktualisierung alle 10 s. Zeigt den Zustand des Geraetekerns (wie die LED), Hinweise des Dienstes
 (Befehl hinweis), eigene Meldungen (Wunsch begrenzt, Soll-Quelle aus), eine abgelehnte Konfiguration und, solange das
-Gateway nicht uebernommen ist (Anzeige.code_zeigen), QR-Code (segno, SVG) und Uebernahme-Code - nur lokal.
+Gateway nicht uebernommen ist (Anzeige.code_zeigen) und nach einem Knopfdruck das Code-Fenster (15 min) offen ist,
+Geraete-ID, QR-Code (segno, SVG) und Uebernahme-Code - nur lokal; sonst nach einem Druck den Hinweis "keine Verbindung"
+bzw. "uebernommen".
 Den Uebernahmestand meldet der Server (claim_state, new_claim_code); bis dahin gilt der Stand des Bootstraps. /healthz
 fuer den Updater.
 
@@ -41,12 +43,18 @@ ZUSTAND_TEXTE = {
 }
 
 
+CODE_HINWEIS_TEXTE = {"keine_verbindung": "Keine Verbindung zum Server – kein Code", "uebernommen": "übernommen"}
+
+
 def seite(geraet, device) -> dict:
-    """Auszug fuer die lokale Seite: geraet_host.snapshot() plus Uebernahme-Code (nur hier, nur im LAN)."""
+    """Auszug fuer die lokale Seite: geraet_host.snapshot() plus Geraete-ID und Uebernahme-Code (nur hier, nur im LAN,
+    nur solange das Geraet nicht uebernommen ist und das Code-Fenster nach einem Knopfdruck offen ist, S-2) und der
+    Hinweis des letzten Drucks ohne Code (code_hinweis: keine_verbindung, uebernommen)."""
     data = geraet.snapshot()
-    anzeige = geraet.letzte_anzeige
-    zeigen = anzeige is not None and anzeige.code_zeigen  # Wie die HA-Discovery
-    data["code"] = device.identity.claim_code if device is not None and zeigen else None
+    sichtbar = geraet.code_sichtbar()
+    data["code"] = device.identity.claim_code if device is not None and sichtbar else None
+    data["geraet"] = device.identity.device_id if device is not None and sichtbar else None
+    data["code_hinweis"] = geraet.code_hinweis()
     return data
 
 
@@ -112,7 +120,7 @@ def render_html(data: dict, qr_url: str | None) -> str:
     host = data.get("host", {})
     zustand = data.get("zustand", "startet")
     rows = "".join([
-        _row("Gerät", data["geraet"]), _row("Zustand", ZUSTAND_TEXTE.get(zustand, zustand)),
+        _row("Zustand", ZUSTAND_TEXTE.get(zustand, zustand)),
         _row("Eingerichtet", data["eingerichtet"]), _row("Version", data["versionen"].get("gateway")),
         _row("Server erreichbar", data["server_ok"]), _row("Netz", host.get("netz")), _row("DNS", host.get("dns")),
         _row("Uhrzeit synchron", host.get("zeit_synchron")), _row("Zigbee-Stick erkannt", data["zigbee_stick"]),
@@ -126,7 +134,10 @@ def render_html(data: dict, qr_url: str | None) -> str:
     if data.get("code"):
         code = html.escape(data["code"])
         qr = segno.make(qr_url, error="m").svg_inline(scale=4) if qr_url else ""
-        claim = f"<h2>Gerät übernehmen</h2>{qr}<p>Übernahme-Code: <strong>{code}</strong></p>"
+        claim = (f"<h2>Gerät übernehmen</h2>{qr}<p>Gerät: <strong>{html.escape(str(data.get('geraet')))}</strong></p>"
+                 f"<p>Übernahme-Code: <strong>{code}</strong></p>")
+    elif data.get("code_hinweis") in CODE_HINWEIS_TEXTE:
+        claim = f"<h2>Gerät übernehmen</h2><p>{html.escape(CODE_HINWEIS_TEXTE[data['code_hinweis']])}</p>"
     return (
         '<!doctype html><html lang="de"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'

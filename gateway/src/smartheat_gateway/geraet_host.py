@@ -11,7 +11,15 @@ an den Worker; kommt beides, bevor main() den Worker bindet (der Geraete-Thread 
 worker_binden den Neustart bzw. die letzte Bedienung nach. Der Wechsel von eingerichtet auf leer markiert das
 Aufraeumen, das der naechste Start ausfuehrt (vergessen). Die Software-Bruecke sendet die Meldungen des
 Updaters (software_meldungen.json, fortlaufende seq) als up/result mit dokument software und quittiert die zuletzt
-gesendete seq in software_quittung.json."""
+gesendete seq in software_quittung.json.
+
+Der Uebernahme-Code entsteht nur nach einem Knopfdruck am Geraet (SG-02, GPC21, S-2): der Knopf-Dienst des Hosts schreibt
+host/knopf.json {seq, ts}; ein Druck ist eine Aenderung dieses Paars gegenueber dem zuletzt gesehenen (nicht "seq
+groesser": der Host setzt eine zerstoerte Datei auf seq 1 zurueck). Die erste nach dem Start gelesene Datei (oder ihr
+Fehlen) ist nur Grundlinie, ein Neustart oeffnet kein Fenster. Ein Druck ruft Device.neuer_uebernahme_code; "neu" oeffnet
+das Code-Fenster fuer 15 min, ein Druck binnen 60 s nach dem letzten neuen Code verlaengert es nur. Fenster und Drossel
+stehen nur im Speicher (monotone Uhr); die LED-Datei meldet das offene Fenster als code_fenster."""
+import json
 import logging
 import shutil
 import time
@@ -38,6 +46,10 @@ logger = logging.getLogger(__name__)
 UHR_MAX_ALTER_SECONDS = 300
 SOFTWARE_SECONDS = 10
 HOST_FIELDS = ("netz", "dns", "zeit_synchron")
+CODE_FENSTER_SEKUNDEN = 900.0  # der Code ist 15 min sichtbar (GPC21)
+CODE_ABSTAND_SEKUNDEN = 60.0  # hoechstens ein neuer Code je 60 s (GPC21)
+KNOPF_DATEI = "knopf.json"  # im Host-Ordner, geschrieben vom Knopf-Dienst (smartheat_host.knopf)
+_UNBEKANNT = object()  # noch keine Datei gelesen
 
 
 def _iso(wall: float) -> str:
@@ -67,24 +79,27 @@ class StatusSink:
 
 
 class ZustandsDatei:
-    """LED-Datei: {zustand, seit, ts}; bei einem Wechsel sofort, sonst mindestens alle `every` s (der
-    LED-Dienst zeigt eine Datei aelter als 5 min als stoerung). Wird nie gelesen, nur ueberschrieben."""
+    """LED-Datei: {zustand, seit, ts, code_fenster}; bei einem Wechsel von Zustand oder Code-Fenster sofort, sonst
+    mindestens alle `every` s (der LED-Dienst zeigt eine Datei aelter als 5 min als stoerung). Der LED-Dienst liest
+    `code_fenster` (nur ein echtes true zaehlt, smartheat_host.led.state_from_file). Wird hier nie gelesen, nur
+    ueberschrieben."""
 
     def __init__(self, path: Path, now_iso: Callable[[], str], clock: Callable[[], float],
                  every: float = 60.0) -> None:
         self._path, self._now_iso, self._clock, self._every = path, now_iso, clock, every
-        self._last: tuple[str, float] | None = None
+        self._last: tuple[str, bool, float] | None = None
         self._since: str | None = None
 
-    def update(self, zustand: str) -> None:
+    def update(self, zustand: str, code_fenster: bool = False) -> None:
         now = self._clock()
-        if self._last is not None and self._last[0] == zustand and now - self._last[1] < self._every:
+        if (self._last is not None and self._last[:2] == (zustand, code_fenster)
+                and now - self._last[2] < self._every):
             return
         if self._last is None or self._last[0] != zustand:
             self._since = self._now_iso()
-        dateien.schreiben_json(self._path, {"zustand": zustand, "seit": self._since, "ts": self._now_iso()},
-                               modus=dateien.LESBAR)
-        self._last = (zustand, now)
+        dateien.schreiben_json(self._path, {"zustand": zustand, "seit": self._since, "ts": self._now_iso(),
+                                            "code_fenster": code_fenster}, modus=dateien.LESBAR)
+        self._last = (zustand, code_fenster, now)
 
 
 def vergessen(paths: Paths) -> bool:
@@ -162,6 +177,12 @@ class GatewayDeviceHost(GeraetHostBasis):
         self._datei = ZustandsDatei(paths.agent_state, lambda: _iso(self._wall()), clock)
         self._software_at: float | None = None
         self._led_fehler: str | None = None  # Fehlerart des letzten gescheiterten Schreibens der LED-Datei
+        #: Ende des Code-Fensters und Zeitpunkt des letzten neuen Codes (monotone Uhr, nur im Speicher)
+        self.code_fenster_bis: float | None = None
+        self.letzter_code: float | None = None
+        self._code_hinweis: tuple[str, float] | None = None  # (keine_verbindung|uebernommen, bis) des letzten Drucks
+        self._knopf_stand: object = _UNBEKANNT  # zuletzt gesehenes Paar (seq, ts), None = keine Datei
+        self._knopf_fehler = False  # knopf.json unlesbar und schon gemeldet
 
     def aufraeumen_pfad(self) -> Path:
         return self.paths.aufraeumen
@@ -248,8 +269,9 @@ class GatewayDeviceHost(GeraetHostBasis):
 
     def anzeigen(self, anzeige: Anzeige) -> None:
         self.letzte_anzeige = anzeige
+        self._knopf_pruefen()
         try:
-            self._datei.update(anzeige.zustand)
+            self._datei.update(anzeige.zustand, self.code_sichtbar())
         except Exception as error:  # die Software-Bruecke haengt nicht an der LED-Datei
             # Die Anzeige kommt jeden Takt: nur beim Wechsel der Fehlerart loggen, nicht jeden Takt.
             art = type(error).__name__
@@ -261,6 +283,73 @@ class GatewayDeviceHost(GeraetHostBasis):
                 logger.info("LED-Datei wieder geschrieben")
                 self._led_fehler = None
         self._software_ergebnisse()
+
+    # --- Uebernahme-Code (Knopf) ---
+
+    def code_sichtbar(self) -> bool:
+        """Code-Fenster offen und das Geraet fuer die Anzeige des Codes frei (Anzeige.code_zeigen)."""
+        anzeige = self.letzte_anzeige
+        return (anzeige is not None and anzeige.code_zeigen and self.code_fenster_bis is not None
+                and self._clock() < self.code_fenster_bis)
+
+    def code_hinweis(self) -> str | None:
+        """Ergebnis des letzten Drucks ohne neuen Code (keine_verbindung, uebernommen), 15 min lang; sonst None."""
+        hinweis = self._code_hinweis
+        return hinweis[0] if hinweis is not None and self._clock() < hinweis[1] else None
+
+    def _knopf_paar(self) -> tuple[bool, tuple[int, str] | None]:
+        """(lesbar, Paar (seq, ts) oder None ohne Datei). Unlesbar (kaputt, falscher Aufbau): ein Druck ist das nicht;
+        gemeldet wird einmal je Stoerung, der Takt kommt jede Sekunde."""
+        try:
+            roh = json.loads((self._host_dir / KNOPF_DATEI).read_text())
+        except FileNotFoundError:
+            self._knopf_fehler = False
+            return True, None
+        except (OSError, ValueError) as error:
+            self._knopf_melden(type(error).__name__)
+            return False, None
+        seq, ts = (roh.get("seq"), roh.get("ts")) if isinstance(roh, dict) else (None, None)
+        if not (isinstance(seq, int) and not isinstance(seq, bool) and isinstance(ts, str)):
+            self._knopf_melden("Aufbau")
+            return False, None
+        self._knopf_fehler = False
+        return True, (seq, ts)
+
+    def _knopf_melden(self, art: str) -> None:
+        if not self._knopf_fehler:
+            self._knopf_fehler = True
+            logger.warning("%s nicht lesbar (%s), kein Druck gewertet", KNOPF_DATEI, art)
+
+    def _knopf_pruefen(self) -> None:
+        """Wertet host/knopf.json: eine Aenderung des Paars (seq, ts) gegenueber dem zuletzt gesehenen ist ein Druck.
+        Die Grundlinie (erste Lesung nach dem Start, auch unlesbar oder ohne Datei) loest nie etwas aus."""
+        lesbar, paar = self._knopf_paar()
+        if not lesbar:
+            if self._knopf_stand is _UNBEKANNT:
+                self._knopf_stand = None
+            return
+        stand, self._knopf_stand = self._knopf_stand, paar
+        if stand is not _UNBEKANNT and paar is not None and paar != stand:
+            self._druck()
+
+    def _druck(self) -> None:
+        """Ein Knopfdruck: neuer Code, binnen 60 s nach dem letzten neuen Code nur das Fenster verlaengern."""
+        now = self._clock()
+        if self.letzter_code is not None and now - self.letzter_code < CODE_ABSTAND_SEKUNDEN:
+            self.code_fenster_bis = now + CODE_FENSTER_SEKUNDEN
+            return
+        if self.device is None:
+            return
+        try:
+            ergebnis = self.device.neuer_uebernahme_code()
+        except Exception as error:  # die Anzeige haengt nicht an einem gescheiterten Druck; Regel 6: nur die Art
+            logger.error("Uebernahme-Code nicht erzeugt (%s)", type(error).__name__)
+            self.code_fenster_bis = None
+            return
+        if ergebnis == "neu":
+            self.letzter_code, self.code_fenster_bis, self._code_hinweis = now, now + CODE_FENSTER_SEKUNDEN, None
+        else:
+            self.code_fenster_bis, self._code_hinweis = None, (ergebnis, now + CODE_FENSTER_SEKUNDEN)
 
     # --- Software-Bruecke ---
 

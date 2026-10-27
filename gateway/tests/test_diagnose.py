@@ -103,7 +103,10 @@ def test_healthz_and_page_over_http():
 
 
 def test_the_code_is_on_the_page_only_while_not_claimed(geraet):
+    """Auch bei offenem Code-Fenster (nach einem Knopfdruck) zeigt die Seite den Code nur an einem nicht uebernommenen
+    Geraet; ohne Fenster nie (test_geraet_host_code.py)."""
     sicht = geraet.device
+    geraet.code_fenster_bis = geraet._clock() + 100.0
     for anzeige, code in (
         (None, False),  # startet: noch keine Anzeige
         (_anzeige("nicht_uebernommen", device_state="nicht_uebernommen", eingerichtet=False), True),
@@ -120,6 +123,17 @@ def test_the_code_is_on_the_page_only_while_not_claimed(geraet):
         assert (data["code"] == sicht.identity.claim_code) is code, anzeige
         if not code:
             assert sicht.identity.claim_code not in render_html(data, "https://portal.example.test/#/claim")
+
+
+def test_without_an_open_window_the_page_shows_neither_code_nor_device_id(geraet):
+    geraet.letzte_anzeige = _anzeige("nicht_uebernommen", device_state="nicht_uebernommen", eingerichtet=False)
+    geraet.code_fenster_bis = None
+    data = seite(geraet, geraet.device)
+    assert data["code"] is None and data["geraet"] is None
+    page = render_html(data, "https://portal.example.test/#/claim")
+    assert geraet.device.identity.claim_code not in page and geraet.device.identity.device_id not in page
+    geraet.code_fenster_bis = geraet._clock() - 0.001  # abgelaufen
+    assert seite(geraet, geraet.device)["code"] is None
 
 
 def test_the_page_extract_takes_only_known_host_fields(geraet):
