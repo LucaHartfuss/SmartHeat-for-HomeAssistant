@@ -24,7 +24,10 @@ Der Werksreset (GP8, GPC9) kommt vom Knopf-Dienst des Hosts, nie von hier: eine 
 host/werksreset.json mit Phase angefordert setzt die Ursprungswerte zurueck wie sign_off (Abmelde-Markierung, Neustart der
 Laufzeit) und antwortet mit data/werksreset_bereit.json {seq, ts, ursprungswerte}, sobald die Laufzeit abgemeldet ohne Grund
 zeigt; ein nicht eingerichtetes Geraet antwortet sofort mit false. Die Anfrage beim Start gilt nur dann als neu, wenn die
-Datei sie noch nicht beantwortet (gleiche seq, ts nicht frueher); die Loeschung selbst macht der Host."""
+Datei sie noch nicht beantwortet (gleiche seq, ts nicht frueher); die Loeschung selbst macht der Host.
+Ein verworfener Reset (Anfrage verschwindet, ohne dass der Host die Phase loeschen erreichte) hebt die Abmeldung wieder auf,
+aber nur eine, die diese Anfragen gesetzt haben (Vermerk data/werksreset_abmeldung.json {seq, ts, anlage}, nach einem Neustart
+des Containers weiter gueltig); eine Abmeldung durch sign_off bleibt (Vermerk dann weg). Danach startet die Laufzeit neu."""
 import json
 import logging
 import shutil
@@ -368,16 +371,25 @@ class GatewayDeviceHost(GeraetHostBasis):
 
     # --- Werksreset (Anfrage des Hosts) ---
 
-    def _reset_anfrage(self) -> tuple[int, str] | None:
-        """(seq, ts) der Anfrage in der Phase angefordert; sonst None (keine Datei, unlesbar, anderer Aufbau, Phase loeschen)."""
+    def _reset_datei(self) -> tuple[str, tuple[int, str] | None]:
+        """(Zustand, (seq, ts)) von host/werksreset.json: `fehlt` (sicher nicht vorhanden), `unlesbar`, `ungueltig`, `loeschen`
+        oder `angefordert` (nur dann mit Paar). Nur `fehlt` belegt, dass kein Reset mehr laeuft."""
         try:
             roh = json.loads((self._host_dir / WERKSRESET_DATEI).read_text())
-        except (OSError, ValueError):
-            return None
-        if not isinstance(roh, dict) or roh.get("phase") != "angefordert":
-            return None
+        except FileNotFoundError:
+            return "fehlt", None
+        except OSError:
+            return "unlesbar", None
+        except ValueError:
+            return "ungueltig", None
+        if not isinstance(roh, dict) or roh.get("phase") not in ("angefordert", "loeschen"):
+            return "ungueltig", None
         seq, ts = roh.get("seq"), roh.get("ts")
-        return (seq, ts) if isinstance(seq, int) and not isinstance(seq, bool) and isinstance(ts, str) else None
+        if roh["phase"] == "loeschen":
+            return "loeschen", None
+        if isinstance(seq, int) and not isinstance(seq, bool) and isinstance(ts, str):
+            return "angefordert", (seq, ts)
+        return "ungueltig", None
 
     def _reset_beantwortet(self, anfrage: tuple[int, str]) -> bool:
         """Steht die Antwort auf genau diese Anfrage schon in data/werksreset_bereit.json (gleiche seq, ts nicht frueher)?"""
@@ -399,7 +411,9 @@ class GatewayDeviceHost(GeraetHostBasis):
         """Beantwortet eine neue Anfrage des Hosts. Wirft nie: die Anzeige haengt nicht am Reset; ohne Antwort loescht der Host
         nach seiner Frist trotzdem (GPC9). Gemeldet wird einmal je Fehlerart."""
         try:
-            anfrage = self._reset_anfrage()
+            zustand, anfrage = self._reset_datei()
+            if zustand == "fehlt":
+                self._reset_aufheben()
             if anfrage is None:
                 self._reset_offen = None
             else:
@@ -424,9 +438,38 @@ class GatewayDeviceHost(GeraetHostBasis):
             return
         assert konfiguration is not None
         anlage = konfiguration["anlage"]
-        if gateway_config.abmelden(self.paths, anlage):
+        neu = gateway_config.abmelden(self.paths, anlage)
+        vermerk = dateien.lesen_json(self.paths.werksreset_abmeldung)
+        if neu or (isinstance(vermerk, dict) and vermerk.get("anlage") == anlage):
+            # Nur eine Abmeldung, die von diesem Reset stammt (neu gesetzt, oder die eines frueheren, verworfenen und
+            # noch nicht aufgehobenen Resets), darf ein verworfener Reset wieder aufheben; eine Abmeldung des Servers nie.
+            dateien.schreiben_json(self.paths.werksreset_abmeldung,
+                                   {"seq": anfrage[0], "ts": anfrage[1], "anlage": anlage}, modus=dateien.PRIVAT)
+        if neu:
             self._neustart_weg()
         self._reset_offen = (anfrage[0], anfrage[1], anlage)
+
+    def _reset_aufheben(self) -> None:
+        """Die Anfrage ist verschwunden, ohne dass der Host die Phase `loeschen` erreichte (dann waeren Vermerk und Daten
+        weg): der Reset findet nicht statt. Hat er diese Abmeldung gesetzt (Vermerk), hebt der Container sie auf und startet
+        die Laufzeit mit der alten Konfiguration neu. Gilt auch nach einem Neustart des Containers (der Vermerk liegt in data/).
+        Eine Abmeldung des Servers (kein Vermerk, oder sign_off danach: `abmeldung_vom_server`) bleibt."""
+        pfad = self.paths.werksreset_abmeldung
+        if not pfad.exists():
+            return
+        vermerk = dateien.lesen_json(pfad)
+        anlage = vermerk.get("anlage") if isinstance(vermerk, dict) else None
+        aufgehoben = isinstance(anlage, str) and dokument_config.abmeldung_aufheben(self.paths.abgemeldet, anlage)
+        if aufgehoben:
+            self._neustart_weg()
+            logger.warning("Werksreset verworfen: Abmeldung der Anfrage aufgehoben, Laufzeit startet neu (seq=%s)",
+                           vermerk.get("seq") if isinstance(vermerk, dict) else None)
+        elif isinstance(anlage, str):
+            marker = dateien.lesen_json(self.paths.abgemeldet)
+            if isinstance(marker, dict) and marker.get("anlage") == anlage:
+                return  # die Markierung liess sich nicht entfernen: der Vermerk bleibt, der naechste Takt versucht es erneut
+        pfad.unlink(missing_ok=True)
+        self._reset_offen = None
 
     def _reset_weiter(self) -> None:
         """Antwort `true`, sobald die Laufzeit fuer diese Anlage abgemeldet ohne Grund zeigt (Ursprungswerte zurueck)."""

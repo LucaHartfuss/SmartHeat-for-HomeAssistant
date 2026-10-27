@@ -546,8 +546,10 @@ def test_reset_nur_ueber_knopf():
     for pfad, text in _quellen("src"):
         if pfad.name == "diagnose.py":
             assert "reset" not in text.lower()
-        if pfad.name not in ("geraet_host.py", "paths.py"):
-            assert "werksreset" not in text.lower(), pfad.name  # der Container kennt nur Anfrage und Antwort im Geraete-Host
+        if pfad.name not in ("geraet_host.py", "paths.py", "config.py"):
+            # der Container kennt nur Anfrage, Antwort und Vermerk im Geraete-Host (config.py: Abmeldung des Servers uebernimmt
+            # den Vermerk)
+            assert "werksreset" not in text.lower(), pfad.name
 
 
 def test_die_uebrigen_host_module_schreiben_keine_anfrage():

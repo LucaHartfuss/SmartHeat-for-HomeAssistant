@@ -17,6 +17,9 @@
   verwirft die Anfrage, im Loeschen fuehrt der Erststart den Reset zu Ende (Phase `loeschen`). Waehrend eines Systemwechsels
   (installiere, installiert, probestart) wird der Reset abgewiesen (LED Stoerung 5 s). Die Knopf-Unit schreibt dafuer
   `data`, `bus`, `zigbee2mqtt` und `updater`, nutzt den Docker-Socket und das Journal und stoppt mit `KillMode=mixed`.
+  Ein verworfener Reset (Strom weg oder Stopp beim Warten, Systemwechsel waehrend der Wartezeit, liegengebliebene Anfrage) hebt
+  die Abmeldung wieder auf, die der Container bei der Anfrage gesetzt hat (Vermerk `data/werksreset_abmeldung.json`, auch nach
+  einem Neustart des Containers); eine Abmeldung des Servers bleibt. Eine vorerst unlesbare Anfragedatei wird nie geloescht.
 - Systemteil im Updater (AP-05a, GW 6.3): Traegt das signierte Manifest das Feld `system` (`system.raucb`, SHA-256, Groesse
   bis 2 GiB, `compatible` `smartheat-gateway-pi5`), wechselt der Updater zuerst das System (A/B, RAUC, Neustart mit tryboot)
   und danach die Container. Ablauf mit gespeicherten Phasen (`system.phase` in `updater/state.json`, **vor** jeder Wirkung):

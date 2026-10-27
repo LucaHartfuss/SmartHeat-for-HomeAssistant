@@ -21,6 +21,7 @@ getan sind. Scheitert das Anhalten oder Loeschen im laufenden Betrieb, bleibt di
 Geloescht wird nie einem Symlink nach (Ordner und Eintraege werden per Dateideskriptor mit O_NOFOLLOW behandelt)."""
 import contextlib
 import errno
+import json
 import logging
 import os
 import shutil
@@ -52,6 +53,11 @@ LOESCH_DATEIEN = ("host/knopf.json",)
 
 class Abgewiesen(Exception):
     """Der Reset beginnt nicht: das System wechselt gerade."""
+
+
+class AnfrageUnlesbar(OSError):
+    """`host/werksreset.json` liegt, ist aber vorerst nicht lesbar (EIO, EACCES): ob ein Reset halb getan ist, weiss der
+    Host dann nicht. Er loescht die Datei nicht und startet nichts; der Erststart versucht es nach seinem Retry erneut."""
 
 
 class LoeschFehler(Exception):
@@ -88,13 +94,26 @@ def _int(wert: object) -> bool:
 
 # --- Anfrage und Protokoll ---
 
-def _anfrage_lesen(root: Path) -> dict | None:
-    """Die Anfrage, wenn sie vollstaendig ist (seq, ts, Phase angefordert oder loeschen); sonst None."""
-    roh = lesen.read_json(_anfrage_pfad(root))
+def _anfrage_zustand(root: Path) -> tuple[str, dict | None]:
+    """(Zustand, Anfrage): `fehlt` (sicher nicht vorhanden), `unlesbar` (OSError ausser fehlend: vorerst unbekannt),
+    `ungueltig` (lesbar, aber kein vollstaendiger Inhalt oder unbekannte Phase), sonst die Phase (`angefordert` oder
+    `loeschen`) mit der Anfrage. Nur `fehlt` und `ungueltig` sind sichere Aussagen; `unlesbar` loescht und startet nichts."""
+    try:
+        roh = json.loads(lesen.read_bytes(_anfrage_pfad(root)))
+    except FileNotFoundError:
+        return "fehlt", None
+    except lesen.UnsichereDatei:
+        return "ungueltig", None  # kein Reset schreibt eine Datei dieser Art (Symlink-frei, hoechstens 64 KiB)
+    except OSError as fehler:
+        logger.error("Werksreset: host/werksreset.json nicht lesbar (%s), nichts wird geloescht oder gestartet",
+                     type(fehler).__name__)
+        return "unlesbar", None
+    except ValueError:
+        return "ungueltig", None
     if (isinstance(roh, dict) and _int(roh.get("seq")) and _zeit(roh.get("ts")) is not None
             and roh.get("phase") in (ANGEFORDERT, LOESCHEN)):
-        return roh
-    return None
+        return roh["phase"], roh
+    return "ungueltig", None
 
 
 def _anfrage_loeschen(root: Path) -> None:
@@ -127,19 +146,20 @@ def _naechste_seq(root: Path) -> int:
     return max(folgen, default=0) + 1
 
 
-def verwerfen_angefordert(root: Path, jetzt: Callable[[], float]) -> bool:
-    """Loescht eine Anfrage in der Phase `angefordert` (der Reset hat noch nichts geloescht) und protokolliert das; True,
-    wenn eine verworfen wurde. Eine Anfrage in der Phase `loeschen` bleibt. Eine unbrauchbare Anfragedatei (kein
-    vollstaendiger Inhalt, unbekannte Phase) wird ebenfalls entfernt: sie kann keinen Reset tragen."""
-    pfad = _anfrage_pfad(root)
-    if not os.path.lexists(pfad):
-        return False
-    anfrage = _anfrage_lesen(root)
-    if anfrage is not None and anfrage["phase"] != ANGEFORDERT:
+def verwerfen_angefordert(root: Path, jetzt: Callable[[], float], grund: str | None = None) -> bool:
+    """Loescht eine Anfrage in der Phase `angefordert` (der Reset hat noch nichts geloescht) und protokolliert das (mit
+    `grund`, wenn genannt); True, wenn eine verworfen wurde. Eine Anfrage in der Phase `loeschen` bleibt, ebenso eine
+    vorerst unlesbare (ERROR, kein Loeschen). Eine sicher unbrauchbare Anfragedatei (kein vollstaendiger Inhalt, unbekannte
+    Phase) wird entfernt: sie kann keinen Reset tragen. Das Verschwinden der Datei ist fuer den Container der Beleg, dass
+    der Reset nicht stattfindet: er hebt dann seine Abmeldung fuer diesen Reset auf (`GatewayDeviceHost`)."""
+    zustand, anfrage = _anfrage_zustand(root)
+    if zustand in ("fehlt", "unlesbar", LOESCHEN):
         return False
     with contextlib.suppress(FileNotFoundError):
-        pfad.unlink()
+        _anfrage_pfad(root).unlink()
     eintrag: dict = {"ts": _iso(jetzt()), "ergebnis": "verworfen"}
+    if grund is not None:
+        eintrag["grund"] = grund
     if anfrage is not None:
         eintrag["seq"] = anfrage["seq"]
         eintrag["ts_anfrage"] = anfrage["ts"]
@@ -316,6 +336,14 @@ def ausfuehren(root: Path, compose, *, warte: Callable[[Callable[[], bool], floa
     ursprungswerte = beantwortet and _antwort(root, seq, ts) is True
     if not beantwortet:
         logger.warning("Werksreset: keine Antwort des Containers, es wird trotzdem geloescht")
+    # Der Updater beachtet die Anfrage nicht: ein Systemwechsel kann waehrend der Wartezeit begonnen haben. Dann nicht mehr
+    # loeschen und neu starten (das alte System wertete den Neustart als Fehlstart).
+    state = updater.State.load(root / "updater" / "state.json")
+    if waechter.systemwechsel(state):
+        phase = state.system["phase"] if state.system else ""
+        verwerfen_angefordert(root, jetzt, grund="systemwechsel")
+        logger.warning("Werksreset verworfen: Systemwechsel hat waehrend des Wartens begonnen (Phase %s)", phase)
+        raise Abgewiesen(f"Systemwechsel hat begonnen (Phase {phase})")
     with _sigterm_aufschieben():
         anfrage = {"seq": seq, "ts": ts, "phase": LOESCHEN, "ursprungswerte": ursprungswerte}
         dateien.schreiben_json(_anfrage_pfad(root), anfrage, modus=dateien.LESBAR)
@@ -334,9 +362,13 @@ def ausfuehren(root: Path, compose, *, warte: Callable[[Callable[[], bool], floa
 def beim_start(root: Path, compose, *, jetzt: Callable[[], float], journal_leeren: Callable[[], None]) -> bool:
     """Vor `compose up` im Erststart (`smartheat-firstboot`): eine Anfrage in `angefordert` wird verworfen, in `loeschen`
     wird der Reset zu Ende gefuehrt. True, wenn ein Reset abgeschlossen wurde (der Aufrufer gleicht dann die Ordner an).
-    Scheitert das Anhalten oder Loeschen, geht der Fehler an den Aufrufer: nichts startet auf halb geloeschten Daten."""
-    anfrage = _anfrage_lesen(root)
-    if anfrage is None or anfrage["phase"] == ANGEFORDERT:
+    Scheitert das Anhalten oder Loeschen, oder ist die Anfragedatei vorerst unlesbar (`AnfrageUnlesbar`, nie als „keine
+    Anfrage“ gewertet), geht der Fehler an den Aufrufer: nichts startet auf halb geloeschten Daten, der Erststart versucht es
+    nach seinem Retry erneut."""
+    zustand, anfrage = _anfrage_zustand(root)
+    if zustand == "unlesbar":
+        raise AnfrageUnlesbar(errno.EIO, "host/werksreset.json nicht lesbar")
+    if anfrage is None or zustand == ANGEFORDERT:
         verwerfen_angefordert(root, jetzt)
         return False
     logger.warning("Werksreset: unterbrochener Reset wird zu Ende gefuehrt")

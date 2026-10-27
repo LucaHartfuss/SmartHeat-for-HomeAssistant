@@ -223,3 +223,135 @@ def test_ohne_eigenen_weg_stoesst_der_reset_den_neustart_der_laufzeit_an(welt):
     _anfrage(welt)
     _takt(welt.host)
     assert "geraet_reload" in welt.kinds()  # EV_RELOAD an den Worker (neustart_anfordern)
+
+
+# --- Verworfener Reset hebt die eigene Abmeldung auf (Ruling R32) ---
+
+def _vermerk(welt):
+    return json.loads(welt.paths.werksreset_abmeldung.read_text()) if welt.paths.werksreset_abmeldung.exists() else None
+
+
+def _verworfen(welt):
+    (welt.host_dir / "werksreset.json").unlink()
+
+
+def _neuer_host(welt, clock, aufrufe):
+    neu = gh.GatewayDeviceHost(welt.paths, welt.mirror, host_dir=welt.host_dir, clock=clock, wall=lambda: welt.wall["t"],
+                               neustart=lambda: aufrufe.append(1))
+    neu.verbinden(welt.device)
+    return neu
+
+
+def test_eine_verworfene_anfrage_hebt_die_abmeldung_wieder_auf(welt, neustarts, caplog):
+    _anfrage(welt, seq=4)
+    _takt(welt.host)
+    assert welt.paths.abgemeldet.exists() and neustarts == [1]
+    assert _vermerk(welt) == {"seq": 4, "ts": TS, "anlage": ANLAGE}
+    assert (welt.paths.werksreset_abmeldung.stat().st_mode & 0o777) == 0o600
+    _verworfen(welt)
+    with caplog.at_level(logging.WARNING):
+        _takt(welt.host)
+    assert not welt.paths.abgemeldet.exists() and _vermerk(welt) is None
+    assert neustarts == [1, 1]  # die Laufzeit startet mit der alten Konfiguration neu
+    assert "Abmeldung der Anfrage aufgehoben" in caplog.text and "seq=4" in caplog.text
+    for _ in range(3):
+        _takt(welt.host)
+    assert neustarts == [1, 1]  # nur einmal
+
+
+def test_die_aufhebung_gilt_auch_nach_einem_neustart_des_containers(welt, clock):
+    erste: list[int] = []
+    alt = _neuer_host(welt, clock, erste)
+    _anfrage(welt)
+    _takt(alt)
+    _verworfen(welt)  # der Container stuerzt ab, bevor er es sieht
+    zweite: list[int] = []
+    neu = _neuer_host(welt, clock, zweite)
+    _takt(neu)
+    assert not welt.paths.abgemeldet.exists() and _vermerk(welt) is None and zweite == [1]
+
+
+def test_startet_der_container_vor_dem_verwerfen_wartet_er_und_hebt_danach_auf(welt, clock):
+    _anfrage(welt)
+    _takt(_neuer_host(welt, clock, []))  # Abmeldung gesetzt
+    aufrufe: list[int] = []
+    neu = _neuer_host(welt, clock, aufrufe)  # Neustart des Containers, die Anfrage liegt noch
+    for _ in range(3):
+        _takt(neu)
+    assert welt.paths.abgemeldet.exists() and _vermerk(welt) is not None and aufrufe == []  # nichts aufgehoben
+    _verworfen(welt)
+    _takt(neu)
+    assert not welt.paths.abgemeldet.exists() and aufrufe == [1]
+
+
+def test_eine_abmeldung_des_servers_bleibt_auch_wenn_der_reset_verworfen_wird(welt, neustarts):
+    dokument_config.abmelden(welt.paths.abgemeldet, ANLAGE)  # sign_off des Servers, vor dem Reset
+    _anfrage(welt)
+    _takt(welt.host)
+    assert _vermerk(welt) is None  # nicht von diesem Reset
+    _verworfen(welt)
+    _takt(welt.host)
+    assert welt.paths.abgemeldet.exists() and neustarts == []
+
+
+def test_eine_abmeldung_des_servers_nach_der_anfrage_bleibt_ebenfalls(welt, neustarts):
+    from smartheat_gateway import config as gateway_config
+
+    _anfrage(welt)
+    _takt(welt.host)
+    gateway_config.abmeldung_vom_server(welt.paths)  # sign_off kommt, bevor der Reset verworfen wird
+    _verworfen(welt)
+    _takt(welt.host)
+    assert welt.paths.abgemeldet.exists() and neustarts == [1]
+
+
+def test_ein_zweiter_reset_nach_einem_verworfenen_behaelt_den_vermerk(welt, neustarts):
+    _anfrage(welt, seq=1)
+    _takt(welt.host)
+    welt.host._reset_gesehen = None  # der Dienst haette die Datei zwischendurch nicht gesehen
+    _anfrage(welt, seq=2, ts="2027-01-15T07:59:30+00:00")  # Abmeldung steht noch, neue Anfrage ersetzt die alte
+    _takt(welt.host)
+    assert _vermerk(welt)["seq"] == 2 and neustarts == [1]
+    _verworfen(welt)
+    _takt(welt.host)
+    assert not welt.paths.abgemeldet.exists()
+
+
+@pytest.mark.parametrize("zustand", ["loeschen", "kaputt", "ohne-phase", "unlesbar"])
+def test_nur_eine_sicher_fehlende_anfrage_hebt_auf(welt, neustarts, zustand):
+    _anfrage(welt)
+    _takt(welt.host)
+    datei = welt.host_dir / "werksreset.json"
+    datei.unlink()
+    if zustand == "loeschen":
+        _anfrage(welt, phase="loeschen")  # der Host loescht gerade: kein Verwerfen
+    elif zustand == "kaputt":
+        datei.write_text("kaputt{")
+    elif zustand == "ohne-phase":
+        datei.write_text(json.dumps({"seq": 1, "ts": TS}))
+    else:
+        datei.mkdir()  # lesen scheitert mit einem OSError ausser "fehlt"
+    for _ in range(3):
+        _takt(welt.host)
+    assert welt.paths.abgemeldet.exists() and _vermerk(welt) is not None and neustarts == [1]
+
+
+def test_laesst_sich_die_markierung_nicht_entfernen_bleibt_der_vermerk_und_der_naechste_takt_versucht_es_erneut(
+        welt, neustarts, monkeypatch):
+    _anfrage(welt)
+    _takt(welt.host)
+    _verworfen(welt)
+    monkeypatch.setattr(dokument_config, "abmeldung_aufheben", lambda pfad, anlage: False)
+    _takt(welt.host)
+    assert welt.paths.abgemeldet.exists() and _vermerk(welt) is not None and neustarts == [1]
+    monkeypatch.undo()
+    _takt(welt.host)
+    assert not welt.paths.abgemeldet.exists() and neustarts == [1, 1]
+
+
+def test_ein_unbrauchbarer_vermerk_hebt_nichts_auf_und_wird_entfernt(welt, neustarts):
+    welt.paths.data.mkdir(parents=True, exist_ok=True)
+    dokument_config.abmelden(welt.paths.abgemeldet, ANLAGE)
+    welt.paths.werksreset_abmeldung.write_text("[]")
+    _takt(welt.host)
+    assert welt.paths.abgemeldet.exists() and _vermerk(welt) is None and neustarts == []

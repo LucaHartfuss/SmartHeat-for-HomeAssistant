@@ -441,6 +441,13 @@ def test_sign_off_marks_restarts_and_finishes_when_the_runtime_is_signed_off(ctx
     assert outcome.check() == Done({"zurueckgesetzt": True, "werte": {"curve": 1.1, "room_setpoint": 21.0}})
 
 
+def test_sign_off_takes_over_an_abmeldung_that_a_werksreset_request_made(ctx):
+    """Der Server meldet ab, nachdem ein Werksreset die Anlage abgemeldet hat: ein verworfener Reset hebt sie nie auf."""
+    dateien.schreiben_json(ctx.paths.werksreset_abmeldung, {"seq": 1, "ts": "x", "anlage": "test-tenant"}, modus=dateien.PRIVAT)
+    befehle.sign_off(ctx, {})
+    assert not ctx.paths.werksreset_abmeldung.exists() and ctx.paths.abgemeldet.exists()
+
+
 def test_sign_off_after_the_restart_does_not_restart_again(ctx):
     befehle.sign_off(ctx, {})
     befehle.sign_off(ctx, {})  # erneute Zustellung nach dem Neustart
