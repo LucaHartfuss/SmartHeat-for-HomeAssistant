@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -68,7 +69,9 @@ def _extern(bundle: Path) -> list[str]:
 
 
 def _env(tmp_path: Path) -> dict[str, str]:
-    """PATH mit Docker-Attrappe und python3 = dieses Python (prepare.sh ruft python3 fuer compose_images)."""
+    """PATH mit Docker-Attrappe und python3 = dieses Python (prepare.sh ruft python3 fuer compose_images). python3 ist
+    ein Wrapper auf sys.executable, kein Symlink auf dessen Ziel: aus einer venv fiele sonst der System-Interpreter ohne
+    die Pakete der venv (PyYAML) heraus."""
     fake = tmp_path / "fakebin"
     fake.mkdir(exist_ok=True)
     docker = fake / "docker"
@@ -76,7 +79,8 @@ def _env(tmp_path: Path) -> dict[str, str]:
     docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
     python = fake / "python3"
     if not python.exists():
-        python.symlink_to(os.path.realpath(sys.executable))
+        python.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} \"$@\"\n")
+        python.chmod(python.stat().st_mode | stat.S_IXUSR)
     return {**os.environ, "PATH": f"{fake}:{os.environ['PATH']}", "SHG_FAKE_LOG": str(tmp_path / "docker.log"),
             "TMPDIR": str(tmp_path)}
 
