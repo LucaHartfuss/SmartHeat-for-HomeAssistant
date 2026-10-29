@@ -148,6 +148,13 @@ def test_a_marker_whose_existence_cannot_be_determined_is_kept(tmp_path, monkeyp
     assert "aufraeumen.json" in caplog.text and "OSError" in caplog.text and "geheim" not in caplog.text
 
 
+def test_a_marker_below_a_file_counts_as_missing(tmp_path):
+    """Liegt an Stelle des Ordners eine Datei (NotADirectoryError im stat), gibt es keine Markierung: KEINE, wie
+    bisher bei Path.exists."""
+    (tmp_path / "data").write_text("x", encoding="utf-8")
+    assert aufraeumen.entscheiden(tmp_path / "data" / "aufraeumen.json", LEER) == (aufraeumen.KEINE, None)
+
+
 def test_a_marker_that_vanishes_between_exists_and_reading_counts_as_missing(tmp_path, monkeypatch):
     """Rennen: exists() sah die Markierung, das Lesen nicht mehr (FileNotFoundError). Das ist kein Lesefehler (nicht
     BEHALTEN) und auch keine kaputte Markierung (nicht LOESCHEN), sondern keine: KEINE."""
