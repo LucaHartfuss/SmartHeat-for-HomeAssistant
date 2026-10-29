@@ -175,6 +175,11 @@ jobs:
           "$SIBLINGS_REF"
           HeizungssteuerungServer SmartHeat-Integration
       - run: pip install --require-hashes -r "$DEV_ROOT/tools/requirements-dev.txt"
+      # Check 31 (Telemetrie-Round-Trip zum Server) braucht seit der Datenbankschicht eine Test-PostgreSQL
+      - name: Test-PostgreSQL
+        run: |
+          bash "$DEV_ROOT/HeizungssteuerungServer/scripts/test_pg.sh" start
+          echo "SMARTHEAT_TEST_PG_DSN=$(bash "$DEV_ROOT/HeizungssteuerungServer/scripts/test_pg.sh" dsn)" >> "$GITHUB_ENV"
       - run: PYTHON=python bash scripts/check.sh --only contract
   # Scan der Lock-Dateien aller Repos auf bekannte Schwachstellen: nur im geplanten Lauf, hier im
   # oeffentlichen Repo (keine Minuten). Der Server-Lock kommt ueber den Dev-Root; Ausnahmen mit Grund in
