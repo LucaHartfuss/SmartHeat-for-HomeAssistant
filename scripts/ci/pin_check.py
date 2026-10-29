@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Pin-Check (docs/archiv/superpowers/specs/2026-09-30-tp12e-vertraege-tests-lieferkette-design.md Abschnitt 3):
 Jede Basis-Image-Angabe hat einen Digest, jede GitHub-Action eine 40-stellige SHA, jede Lock-Datei
-Hashes und passt zu ihrer pyproject.toml; requirements-hypothesis.lock ist exakt gepinnt und gehasht,
-ohne Abgleich mit pyproject.toml. In Workflows und Dockerfiles laeuft jedes pip install mit --require-hashes
-oder traegt die Markierung `# pin-check: ungehasht (<Grund>)`. Jedes `image:` und
-`container:` (Workflows, Compose-Dateien) hat einen Digest. Nur Standardbibliothek; kanonisch in
+Hashes und passt zu ihrer pyproject.toml; die Hash-Locks (HASH_LOCK_NAMES: hypothesis, Bauwerkzeug,
+Dev-Werkzeuge) sind exakt gepinnt und gehasht, ohne Abgleich mit pyproject.toml. In Workflows und Dockerfiles laeuft
+jedes pip install mit --require-hashes oder traegt die Markierung `# pin-check: ungehasht (<Grund>)`. Jedes `image:`
+und `container:` (Workflows, Compose-Dateien) hat einen Digest. Nur Standardbibliothek; kanonisch in
 HomeAssistant_Dev_Root/tools/pin_check.py, identische Kopien in den Unter-Repos unter
 scripts/ci/pin_check.py (Root-check.sh Schritt "copies" prueft das).
 
@@ -23,9 +23,12 @@ DIGEST = re.compile(r"@sha256:[0-9a-f]{64}\b")
 ACTION_SHA = re.compile(r"@[0-9a-f]{40}$")
 HASH_OPTION = re.compile(r"--hash=sha256:[0-9a-f]{64}\b")
 LOCK_NAMES = ("requirements.txt", "requirements.lock")
-# Eigene Locks fuer einzelne Dev-Werkzeuge (hypothesis, Installation mit --require-hashes --no-deps):
-# jeder Eintrag exakt gepinnt und gehasht, aber kein Abgleich mit pyproject.toml (dessen dependencies sind Laufzeit).
-HASH_LOCK_NAMES = ("requirements-hypothesis.lock",)
+# Eigene Hash-Locks neben den Laufzeit-Locks: hypothesis (Installation mit --require-hashes --no-deps), das Bauwerkzeug
+# (build-requirements.lock) und die Dev-Werkzeuge des Servers samt Laufzeit (requirements-dev.lock) sowie die
+# Werkzeug-Locks des Dev-Roots (requirements-dev.txt, requirements-audit.txt): jeder Eintrag exakt gepinnt und gehasht,
+# aber kein Abgleich mit pyproject.toml (dessen dependencies sind Laufzeit).
+HASH_LOCK_NAMES = ("requirements-hypothesis.lock", "build-requirements.lock", "requirements-dev.lock",
+                   "requirements-dev.txt", "requirements-audit.txt")
 # .devtools, backups und .remember sind Root-spezifische, per .gitignore ausgeschlossene Ordner. docs/archiv/ des
 # Repos ist abgeschlossen (das archivierte probe_5c-Dockerfile ohne Hashes wird nie gebaut) und wird uebersprungen.
 _SKIP_DIRS = {".git", ".venv", ".worktrees", "node_modules", "__pycache__", ".devtools", "backups", ".remember"}
