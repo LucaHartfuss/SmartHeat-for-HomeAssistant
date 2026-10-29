@@ -13,6 +13,7 @@ Markierung, gilt sie als fehlend (loeschen), und die Laufzeit prueft sie vor dem
 die Rastung (sign_off_parts)."""
 import json
 import logging
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,18 +75,18 @@ def entscheiden(pfad: Path, gespeichert) -> tuple[str, Markierung | None]:
     Markierung (mit Konfiguration, nicht zurueckgesetzt) mit zurueck: der Host reicht sie an die Laufzeit weiter
     (GeraetHostBasis.start_markierung), statt die Datei ein zweites Mal zu lesen; sonst None."""
     try:
-        da = pfad.exists()  # wirft bei EIO/EACCES im stat (nur fehlende Datei ergibt False)
+        os.stat(pfad)  # nicht Path.exists: ab Python 3.14 ergibt ein EIO/EACCES im stat dort False statt Fehler
+    except (FileNotFoundError, NotADirectoryError):
+        return KEINE, None
     except OSError as error:
         logger.warning("%s nicht pruefbar (%s): Markierung bleibt, nichts wird geloescht", pfad.name,
                        type(error).__name__)
         return BEHALTEN, None
-    if not da:
-        return KEINE, None
     if eingerichtet(gespeichert):
         return VERWERFEN, None
     try:
         inhalt = pfad.read_bytes()
-    except FileNotFoundError:  # zwischen exists und dem Lesen verschwunden
+    except FileNotFoundError:  # zwischen stat und dem Lesen verschwunden
         return KEINE, None
     except OSError as error:
         logger.warning("%s nicht lesbar (%s): Markierung bleibt, nichts wird geloescht", pfad.name,
