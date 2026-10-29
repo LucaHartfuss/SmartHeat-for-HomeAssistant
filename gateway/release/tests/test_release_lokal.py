@@ -402,7 +402,9 @@ def test_pkcs11_uri_wird_ohne_dateipruefung_durchgereicht(werk):
                      "--zertifikat", str(werk.kette / "release.crt"), "--roots", str(werk.kette / "root.crt"),
                      "--aus", str(werk.aus), umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
     assert ergebnis.returncode == 1
-    assert "GEHEIME-PIN" not in ergebnis.stdout + ergebnis.stderr and "pkcs11:" not in ergebnis.stdout + ergebnis.stderr
+    # die URI selbst darf nicht erscheinen; ein installiertes pkcs11-Modul meldet eigene Fehler mit "…:pkcs11:p11prov…"
+    assert "GEHEIME-PIN" not in ergebnis.stdout + ergebnis.stderr
+    assert "pkcs11:token=" not in ergebnis.stdout + ergebnis.stderr
     assert [aufruf[0] for aufruf in _log(werk, "docker.log")] == ["buildx", "run"]  # gebaut wurde, signiert nicht
     assert not (werk.aus / VERSION / "manifest.json.sig").exists() and _log(werk, "scp.log") == []
 
