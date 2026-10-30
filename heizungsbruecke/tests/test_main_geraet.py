@@ -376,10 +376,10 @@ def test_stdin_anhaengen_reicht_die_eigene_id_und_lokal_abmelden_an(geraet_env):
     device = FakeDevice()
     geraet, _ = _verdrahtet(geraet_env, device)
     quelle = io.BytesIO(f"entfernen {DEVICE_ID}\nentfernen shg-bbbbbbbbbbbbbbbb\n".encode())
-    main_module.stdin_anhaengen(geraet, device, quelle).join(timeout=2)
+    main_module.stdin_anhaengen(geraet, device, quelle, geraet_env.ha).join(timeout=2)
     assert device.aufgaben == [geraet.lokal_abmelden]  # nur die eigene ID, die fremde Zeile nichts
     quelle = io.BytesIO(b"entfernen shg-bbbbbbbbbbbbbbbb\n")
-    main_module.stdin_anhaengen(geraet, device, quelle).join(timeout=2)
+    main_module.stdin_anhaengen(geraet, device, quelle, geraet_env.ha).join(timeout=2)
     assert device.aufgaben == [geraet.lokal_abmelden]
 
 
@@ -390,12 +390,12 @@ def test_main_haengt_stdin_vor_laufen_an(geraet_env, monkeypatch):
     angehaengt = []
     monkeypatch.setattr(main_module, "stdin_quelle", lambda: quelle)
     monkeypatch.setattr(main_module, "stdin_anhaengen",
-                        lambda geraet, device, q: order.append("stdin") or angehaengt.append((geraet, device, q)))
+                        lambda geraet, device, q, ha: order.append("stdin") or angehaengt.append((geraet, device, q, ha)))
     monkeypatch.setattr(main_module, "laufen", lambda *args: order.append("laufen"))
     main_module.main()
     assert order == ["signal", "stdin", "laufen"]
-    geraet, device, q = angehaengt[0]
-    assert q is quelle and isinstance(geraet, main_module.HaDeviceHost) and geraet.device is device
+    geraet, device, q, ha = angehaengt[0]
+    assert ha is geraet_env.ha and q is quelle and isinstance(geraet, main_module.HaDeviceHost) and geraet.device is device
 
 
 def test_main_laeuft_ohne_stdin_weiter_wenn_fd_0_fehlt(geraet_env, monkeypatch):

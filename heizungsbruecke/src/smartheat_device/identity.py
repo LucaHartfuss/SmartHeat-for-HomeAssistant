@@ -103,6 +103,14 @@ def sign(key: ec.EllipticCurvePrivateKey, method: str, path: str, timestamp: int
     return _KODIERUNGEN[wire.SIGNATURE_ENCODING](der)
 
 
+def nachweis(ident: Identity, jetzt: int) -> dict:
+    """Besitznachweis fuer den Geraetecode der Einrichtung: Geraete-ID, Zeit (Unix-Sekunden) und die Signatur ueber
+    Methode, Pfad und Koerper aus wire (NACHWEIS_*). Beides steht hier nicht zur Wahl: ein anderer Pfad oder Koerper
+    wird nie signiert. Der Schluessel verlaesst die Funktion nicht, nur die Signatur."""
+    signatur = sign(ident.signing_key, wire.NACHWEIS_METHOD, wire.NACHWEIS_PATH, jetzt, wire.NACHWEIS_BODY)
+    return {"geraet_id": ident.device_id, "zeitstempel": jetzt, "signatur": signatur}
+
+
 def csr_pem(ident: Identity) -> str:
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, ident.device_id)])
     csr = x509.CertificateSigningRequestBuilder().subject_name(name).sign(ident.tls_key, hashes.SHA256())
