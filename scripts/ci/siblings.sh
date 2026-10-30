@@ -2,7 +2,8 @@
 # Baut in CI das Dev-Root-Layout auf: Root-Repo (tools/) + Nachbar-Repos, damit
 # tools/contract_check.py und tools/release_gate.py wie lokal laufen.
 # Kanonisch in HomeAssistant_Dev_Root/tools/ci/siblings.sh; identische Kopien liegen in den
-# Unter-Repos unter scripts/ci/siblings.sh (Root-check.sh Schritt "copies" prueft das).
+# drei Unter-Repos (Add-on, Integration, HomeAssistantPapa) unter scripts/ci/siblings.sh (Root-check.sh Schritt
+# "copies" prueft das). Der Server ist Ordner des Root-Repos und braucht keine Kopie.
 #
 # Aufruf: siblings.sh <dev-ziel> <eigener-repo> <eigener-checkout-pfad> <branch> [nachbar-repo...]
 # Je Nachbar-Repo wird der gleichnamige Branch genommen, sonst develop. Braucht CROSS_REPO_TOKEN.

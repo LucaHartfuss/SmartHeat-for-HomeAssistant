@@ -173,7 +173,7 @@ jobs:
         run: >-
           bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" SmartHeat-for-HomeAssistant "$GITHUB_WORKSPACE"
           "$SIBLINGS_REF"
-          HeizungssteuerungServer SmartHeat-Integration
+          SmartHeat-Integration
       - run: pip install --require-hashes -r "$DEV_ROOT/tools/requirements-dev.txt"
       # Check 31 (Telemetrie-Round-Trip zum Server) braucht seit der Datenbankschicht eine Test-PostgreSQL
       - name: Test-PostgreSQL
@@ -182,7 +182,7 @@ jobs:
           echo "SMARTHEAT_TEST_PG_DSN=$(bash "$DEV_ROOT/HeizungssteuerungServer/scripts/test_pg.sh" dsn)" >> "$GITHUB_ENV"
       - run: PYTHON=python bash scripts/check.sh --only contract
   # Scan der Lock-Dateien aller Repos auf bekannte Schwachstellen: nur im geplanten Lauf, hier im
-  # oeffentlichen Repo (keine Minuten). Der Server-Lock kommt ueber den Dev-Root; Ausnahmen mit Grund in
+  # oeffentlichen Repo (keine Minuten). Der Server-Lock kommt ueber den Dev-Root (der Server ist Ordner des Root-Repos); Ausnahmen mit Grund in
   # tools/pip_audit_ausnahmen.txt des Root-Repos.
   audit:
     if: github.event_name == 'schedule'
@@ -200,6 +200,6 @@ jobs:
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
         run: >-
           bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" SmartHeat-for-HomeAssistant "$GITHUB_WORKSPACE"
-          develop HeizungssteuerungServer
+          develop
       - run: pip install --require-hashes -r "$DEV_ROOT/tools/requirements-audit.txt"
       - run: bash "$DEV_ROOT/tools/pip_audit.sh" "$DEV_ROOT"
