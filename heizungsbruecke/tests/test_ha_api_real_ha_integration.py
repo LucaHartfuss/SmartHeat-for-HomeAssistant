@@ -37,8 +37,7 @@ pytestmark = pytest.mark.skipif(
 HA_IMAGE = os.environ.get("HA_IMAGE", "ghcr.io/home-assistant/home-assistant:stable")
 HA_PORT = 18213
 
-# Docker-Aufruf, z.B. REAL_HA_DOCKER="flatpak-spawn --host docker" aus der VS-Code-Flatpak-Sandbox.
-DOCKER = os.environ.get("REAL_HA_DOCKER", "docker").split()
+DOCKER = ["docker"]
 
 
 @pytest.fixture(scope="module")

@@ -1,6 +1,5 @@
 import hashlib
 import json
-import os
 import subprocess
 import sys
 import tarfile
@@ -283,9 +282,8 @@ def test_cli_writes_the_bundle(tmp_path, archive, capsys):
     assert (tmp_path / "out" / bundles.ARCHIVE_NAME).is_file()
 
 
-# Ohne PYTHONPATH, aber mit PYTHONUSERBASE, falls gesetzt: dort liegen in der VS-Code-Sandbox (flatpak) die
-# Pakete der Entwicklungsumgebung (PyYAML); CI und Host setzen es nicht.
-_ENV_OHNE_PYTHONPATH = {"PATH": "", **{k: v for k, v in os.environ.items() if k == "PYTHONUSERBASE"}}
+# Ohne PYTHONPATH und ohne PATH: die Pakete (PyYAML) kommen aus dem Interpreter (venv) selbst.
+_ENV_OHNE_PYTHONPATH = {"PATH": ""}
 
 def test_script_runs_without_pythonpath(tmp_path, archive):
     script = Path(__file__).resolve().parents[1] / "build_bundle.py"
