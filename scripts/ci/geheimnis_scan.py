@@ -7,9 +7,10 @@ GitHub-Token. Ignorierte Dateien (.gitignore) liest der Scan nie. Ein Fund nennt
 Ausnahmen (Test-Fixtures mit erfundenen Schluesseln) stehen je Zeile als `<pfad>  # <Grund>` in
 `geheimnis_ausnahmen.txt` neben diesem Skript (oder per --ausnahmen); eine Ausnahme gilt fuer die ganze Datei, ohne
 Grund ist sie ein Fehler, und eine Ausnahme, die nichts mehr deckt, ist veraltet und ebenfalls ein Fehler. Nur
-Standardbibliothek; kanonisch in HomeAssistant_Dev_Root/tools/geheimnis_scan.py, identische Kopien in allen vier
-Unter-Repos (Server, Add-on, Integration, HomeAssistantPapa) unter scripts/ci/geheimnis_scan.py (Root-check.sh Schritt
-"copies" prueft das).
+Standardbibliothek; kanonisch in HomeAssistant_Dev_Root/tools/geheimnis_scan.py, identische Kopien in den drei anderen
+Repos (Add-on, Integration, HomeAssistantPapa) unter scripts/ci/geheimnis_scan.py (Root-check.sh Schritt "copies"
+prueft das). Der Lauf ueber die Wurzel des Kern-Repos liest auch den Ordner HeizungssteuerungServer; dessen Ausnahmen
+stehen mit dem Pfad ab der Wurzel (HeizungssteuerungServer/tests/...) in tools/geheimnis_ausnahmen.txt.
 
 Aufruf: python3 tools/geheimnis_scan.py [--repo PFAD] [--ausnahmen DATEI]. Exit 0 = keine Funde, 1 = Funde (je Zeile
 `FAIL <pfad>:<zeile>: <art>`) oder ein Fehler."""

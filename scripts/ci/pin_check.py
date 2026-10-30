@@ -5,8 +5,9 @@ Hashes und passt zu ihrer pyproject.toml; die Hash-Locks (HASH_LOCK_NAMES: hypot
 Dev-Werkzeuge) sind exakt gepinnt und gehasht, ohne Abgleich mit pyproject.toml. In Workflows und Dockerfiles laeuft
 jedes pip install mit --require-hashes oder traegt die Markierung `# pin-check: ungehasht (<Grund>)`. Jedes `image:`
 und `container:` (Workflows, Compose-Dateien) hat einen Digest. Nur Standardbibliothek; kanonisch in
-HomeAssistant_Dev_Root/tools/pin_check.py, identische Kopien in den Unter-Repos unter
-scripts/ci/pin_check.py (Root-check.sh Schritt "copies" prueft das).
+HomeAssistant_Dev_Root/tools/pin_check.py, identische Kopien in den drei anderen Repos (Add-on, Integration,
+HomeAssistantPapa) unter scripts/ci/pin_check.py (Root-check.sh Schritt "copies" prueft das). Der Lauf ueber die Wurzel
+des Kern-Repos erfasst auch den Ordner HeizungssteuerungServer.
 
 Aufruf: python3 tools/pin_check.py --repo PFAD. Exit 0 = gueltig, 1 = Verstoesse
 (je Zeile `FAIL <datei>: <text>`)."""
@@ -29,8 +30,9 @@ LOCK_NAMES = ("requirements.txt", "requirements.lock")
 # aber kein Abgleich mit pyproject.toml (dessen dependencies sind Laufzeit).
 HASH_LOCK_NAMES = ("requirements-hypothesis.lock", "build-requirements.lock", "requirements-dev.lock",
                    "requirements-dev.txt", "requirements-audit.txt")
-# .devtools, backups und .remember sind Root-spezifische, per .gitignore ausgeschlossene Ordner. docs/archiv/ des
-# Repos ist abgeschlossen (das archivierte probe_5c-Dockerfile ohne Hashes wird nie gebaut) und wird uebersprungen.
+# .devtools, backups und .remember sind Root-spezifische, per .gitignore ausgeschlossene Ordner. Jedes docs/archiv/ (des
+# Repos und eines Ordners darin, etwa HeizungssteuerungServer/docs/archiv/) ist abgeschlossen (das archivierte
+# probe_5c-Dockerfile ohne Hashes wird nie gebaut) und wird uebersprungen.
 _SKIP_DIRS = {".git", ".venv", ".worktrees", "node_modules", "__pycache__", ".devtools", "backups", ".remember"}
 _ARCHIVE = ("docs", "archiv")
 DOCKERFILE_NAMES = ("Dockerfile*", "*.Dockerfile", "Containerfile*")
@@ -63,13 +65,13 @@ _PLAIN_VERSION = re.compile(r"^\d+(?:\.\d+)*$")
 
 def _walk(repo: Path) -> Iterator[Path]:
     """Alle Dateien unterhalb von `repo` in stabiler Reihenfolge. Uebersprungen werden Werkzeug-Ordner
-    und eigene Git-Repos/Worktrees (im Dev-Root sind die vier Unter-Repos so eingebettet) - deren Dateien
+    und eigene Git-Repos/Worktrees (im Dev-Root sind die drei Unter-Repos so eingebettet) - deren Dateien
     prueft der Pin-Check des jeweiligen Repos."""
     for directory, subdirs, names in os.walk(repo):
         here = Path(directory)
         subdirs[:] = sorted(
             sub for sub in subdirs if sub not in _SKIP_DIRS and not (here / sub / ".git").exists()
-            and (here / sub).relative_to(repo).parts != _ARCHIVE
+            and (here / sub).relative_to(repo).parts[-2:] != _ARCHIVE
         )
         for name in sorted(names):
             yield here / name
