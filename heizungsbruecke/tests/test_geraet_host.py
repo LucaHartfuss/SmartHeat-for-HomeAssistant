@@ -454,7 +454,7 @@ def test_die_stdin_zeile_meldet_ab_und_startet_einmal_neu(tmp_path, monkeypatch)
     worker.register(EV_RELOAD, lambda event: reloads.append(event.kind))
     host.worker_binden(worker)
     zeile = f"entfernen {EIGEN}\n".encode()
-    stdin_befehl.lesen(io.BytesIO(zeile + zeile), EIGEN, host.lokal_abmelden)
+    stdin_befehl.lesen(io.BytesIO(zeile + zeile), EIGEN, host.lokal_abmelden, lambda: None)
     assert json.loads(config.ABGEMELDET_PATH.read_text()) == {"anlage": konf["anlage"]}
     assert stat.S_IMODE(config.ABGEMELDET_PATH.stat().st_mode) == 0o600
     worker.run_pending()

@@ -2,7 +2,8 @@
 heizungsserver/geraete/device_protocol.py (alles ab `SCHEMA = 1` bis einschliesslich `command_errors`; die Importe stehen je
 Seite selbst); tools/contract_check.py im Dev-Root vergleicht beide mit tools/contracts/geraet_v1.json.
 Aenderungen nur an allen drei Stellen zugleich. Die Server-Regeln unter dem Vertragsteil (Aushandeln, Ablauf,
-Mindestversion je Host) gibt es nur auf dem Server.
+Mindestversion je Host) gibt es nur auf dem Server; unter der Marke stehen hier statt dessen die Konstanten, die nur
+das Geraet braucht (Nachweis der Einrichtung).
 
 Versionsregeln: V1 wird auf beiden Seiten strikt geprueft; ein fehlendes oder
 fremdes Feld und ein falscher Typ werden abgelehnt. Ein neues Feld Server -> Geraet gibt es deshalb erst nach einem
@@ -234,3 +235,12 @@ def parse_topic(value: str) -> tuple[str, str] | None:
 
 def command_errors(kind: str) -> tuple[str, ...]:
     return COMMANDS[kind].errors + COMMON_ERRORS
+
+
+# --- Server-Regeln (nicht im Vertrag) ---
+# Nur im Geraet (der Server hat die Gegenstuecke in einrichtung/geraetecode.py): der Nachweis fuer den Geraetecode der
+# Einrichtung. Das Geraet signiert mit canonical_string nur diese festen Werte; ein anderer Pfad oder Koerper steht
+# nirgends zur Wahl.
+NACHWEIS_METHOD = "POST"
+NACHWEIS_PATH = "/einrichtung/v1/geraetecode"
+NACHWEIS_BODY = b"{}"

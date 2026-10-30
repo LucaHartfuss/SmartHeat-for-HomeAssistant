@@ -19,12 +19,20 @@ LOGGER = "heizungsbruecke.stdin_befehl"
 SRC = Path(__file__).resolve().parents[1] / "src"
 
 
-def _lesen(caplog, daten: bytes) -> tuple[int, list[logging.LogRecord]]:
-    """Ruft lesen auf daten; liefert Zahl der Rueckrufe und die WARNING-Records (INFO und darunter ausgeschlossen)."""
+def _befehle(caplog, daten: bytes) -> tuple[list[str], list[logging.LogRecord]]:
+    """Ruft lesen auf daten; liefert die gerufenen Rueckrufe in der Reihenfolge ("entfernen", "nachweis") und die
+    WARNING-Records (INFO und darunter ausgeschlossen)."""
     gerufen = []
     with caplog.at_level(logging.WARNING, logger=LOGGER):
-        stdin_befehl.lesen(io.BytesIO(daten), EIGEN, lambda: gerufen.append(1))
-    return len(gerufen), [r for r in caplog.records if r.name == LOGGER and r.levelno >= logging.WARNING]
+        stdin_befehl.lesen(io.BytesIO(daten), EIGEN, lambda: gerufen.append("entfernen"),
+                           lambda: gerufen.append("nachweis"))
+    return gerufen, [r for r in caplog.records if r.name == LOGGER and r.levelno >= logging.WARNING]
+
+
+def _lesen(caplog, daten: bytes) -> tuple[int, list[logging.LogRecord]]:
+    """Wie _befehle, aber die Zahl aller Rueckrufe statt ihrer Namen."""
+    gerufen, warnungen = _befehle(caplog, daten)
+    return len(gerufen), warnungen
 
 
 def test_die_eigene_zeile_ruft_entfernen_genau_einmal(caplog):
@@ -51,6 +59,12 @@ def test_die_eigene_zeile_ohne_zeilenende_vor_eof_gilt(caplog):
     (b"\xff\xfeentfernen shg-aaaaaaaaaaaaaaaa\n", "kein_utf8"),
     (b"x" * 201 + b"\n", "zu_lang"),
     (b"x" * 200 + b"\n", "unbekannt"),  # Grenze: 200 Bytes sind noch eine Zeile
+    (b"nachweis shg-bbbbbbbbbbbbbbbb\n", "andere_geraete_id"),
+    (b"NACHWEIS shg-aaaaaaaaaaaaaaaa\n", "unbekannt"),
+    (b"nachweis\n", "unbekannt"),
+    (b"nachweis  shg-aaaaaaaaaaaaaaaa\n", "unbekannt"),
+    (b"nachweis shg-aaaaaaaaaaaaaaaa x\n", "unbekannt"),
+    (b"nachweis shg-aaaaaaaaaaaaaaaa\r\n", "andere_geraete_id"),
 ])
 def test_jede_andere_zeile_verwirft_mit_einer_warnung_ohne_inhalt(caplog, zeile, grund):
     gerufen, warnungen = _lesen(caplog, zeile)
@@ -107,7 +121,7 @@ def test_eine_zu_lange_zeile_bis_eof_verwirft_den_rest_mit_einer_warnung(caplog)
 def test_eof_beendet_den_thread_still(caplog):
     gerufen = []
     with caplog.at_level(logging.DEBUG, logger=LOGGER):
-        thread = stdin_befehl.starten(io.BytesIO(b""), EIGEN, lambda: gerufen.append(1))
+        thread = stdin_befehl.starten(io.BytesIO(b""), EIGEN, lambda: gerufen.append(1), lambda: gerufen.append(2))
         thread.join(timeout=2)
     assert not thread.is_alive()
     assert thread.daemon and thread.name == "stdin"
@@ -117,7 +131,7 @@ def test_eof_beendet_den_thread_still(caplog):
 
 def test_der_thread_ruft_den_rueckruf_fuer_die_eigene_zeile():
     gerufen = threading.Event()
-    thread = stdin_befehl.starten(io.BytesIO(b"entfernen shg-aaaaaaaaaaaaaaaa\n"), EIGEN, gerufen.set)
+    thread = stdin_befehl.starten(io.BytesIO(b"entfernen shg-aaaaaaaaaaaaaaaa\n"), EIGEN, gerufen.set, lambda: None)
     thread.join(timeout=2)
     assert gerufen.is_set()
 
@@ -134,7 +148,7 @@ class _Kaputt:
 def test_ein_lesefehler_beendet_den_thread_mit_einer_warnung(caplog, fehler):
     gerufen = []
     with caplog.at_level(logging.WARNING, logger=LOGGER):
-        thread = stdin_befehl.starten(_Kaputt(fehler), EIGEN, lambda: gerufen.append(1))
+        thread = stdin_befehl.starten(_Kaputt(fehler), EIGEN, lambda: gerufen.append(1), lambda: gerufen.append(2))
         thread.join(timeout=2)
     assert not thread.is_alive()
     assert gerufen == []
@@ -151,7 +165,7 @@ def test_ein_blockierter_stdin_thread_verhindert_kein_sauberes_ende():
     skript = (
         "import time\n"
         "from heizungsbruecke import __main__ as m, stdin_befehl\n"
-        f"stdin_befehl.starten(m.stdin_quelle(), {EIGEN!r}, lambda: None)\n"
+        f"stdin_befehl.starten(m.stdin_quelle(), {EIGEN!r}, lambda: None, lambda: None)\n"
         "time.sleep(0.2)\n"
         "raise SystemExit(0)\n"
     )
@@ -167,3 +181,37 @@ def test_ein_blockierter_stdin_thread_verhindert_kein_sauberes_ende():
         proc.stderr.close()
     assert b"Fatal Python error" not in stderr
     assert rueckgabe == 0
+
+
+# --- Befehl nachweis ---
+
+
+def test_die_nachweis_zeile_mit_der_eigenen_id_ruft_nur_den_nachweis(caplog):
+    gerufen, warnungen = _befehle(caplog, b"nachweis shg-aaaaaaaaaaaaaaaa\n")
+    assert gerufen == ["nachweis"]
+    assert warnungen == []
+
+
+def test_die_nachweis_zeile_mit_dem_zeilenende_des_supervisors_ruft_genau_einmal(caplog):
+    gerufen, warnungen = _befehle(caplog, b"nachweis shg-aaaaaaaaaaaaaaaa\n\n")
+    assert gerufen == ["nachweis"]
+    assert warnungen == []
+
+
+def test_beide_befehle_laufen_in_der_reihenfolge_der_zeilen(caplog):
+    daten = b"nachweis shg-aaaaaaaaaaaaaaaa\nentfernen shg-aaaaaaaaaaaaaaaa\nnachweis shg-aaaaaaaaaaaaaaaa\n"
+    gerufen, _ = _befehle(caplog, daten)
+    assert gerufen == ["nachweis", "entfernen", "nachweis"]
+
+
+def test_der_nachweis_einer_fremden_id_ruft_nichts_und_nennt_die_id_nicht(caplog):
+    gerufen, warnungen = _befehle(caplog, b"nachweis shg-bbbbbbbbbbbbbbbb\n")
+    assert gerufen == []
+    assert len(warnungen) == 1 and "andere_geraete_id" in warnungen[0].getMessage()
+    assert "shg-bbbbbbbbbbbbbbbb" not in caplog.text
+
+
+def test_die_befehlswoerter_sind_verschieden_und_das_zeilenformat_gilt_fuer_beide():
+    assert stdin_befehl.BEFEHL_NACHWEIS == "nachweis" and stdin_befehl.BEFEHL_ENTFERNEN == "entfernen"
+    assert stdin_befehl.ZEILE_FORMAT.format(befehl=stdin_befehl.BEFEHL_NACHWEIS, geraet_id=EIGEN) == f"nachweis {EIGEN}\n"
+    assert len(f"nachweis {EIGEN}") <= stdin_befehl.ZEILE_MAX

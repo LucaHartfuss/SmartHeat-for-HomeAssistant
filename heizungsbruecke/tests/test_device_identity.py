@@ -5,7 +5,9 @@ import inspect
 import secrets
 import stat
 
+import pytest
 from cryptography import x509
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
@@ -125,3 +127,69 @@ def test_boot_ids_differ_and_fit():
 
 def test_the_encodings_of_the_contract_are_implemented():
     assert {wire.SIGNATURE_ENCODING, wire.PUBLIC_KEY_ENCODING} <= set(identity._KODIERUNGEN)
+
+
+# --- Nachweis fuer den Geraetecode der Einrichtung ---
+
+NACHWEIS_PFAD = "/einrichtung/v1/geraetecode"
+
+
+def _signatur_prueft(ident, signatur: str, methode: str, pfad: str, zeit: int, koerper: bytes) -> bool:
+    """Die Pruefung des Servers (device_auth.verify): Signatur gegen den oeffentlichen Schluessel und die kanonische
+    Zeichenkette des V1-Schemas."""
+    der = base64.urlsafe_b64decode(signatur + "=" * (-len(signatur) % 4))
+    try:
+        ident.signing_key.public_key().verify(der, wire.canonical_string(methode, pfad, zeit, koerper),
+                                              ec.ECDSA(hashes.SHA256()))
+    except InvalidSignature:
+        return False
+    return True
+
+
+def test_der_nachweis_besteht_die_pruefung_des_servers_ueber_die_festen_werte(tmp_path):
+    ident = identity.load_or_create(tmp_path)
+    nachweis = identity.nachweis(ident, 1_700_000_000)
+    assert set(nachweis) == {"geraet_id", "zeitstempel", "signatur"}
+    assert nachweis["geraet_id"] == ident.device_id and nachweis["zeitstempel"] == 1_700_000_000
+    assert _signatur_prueft(ident, nachweis["signatur"], "POST", NACHWEIS_PFAD, 1_700_000_000, b"{}")
+
+
+def test_die_festen_werte_des_nachweises_stehen_im_vertragsmodul():
+    assert (wire.NACHWEIS_METHOD, wire.NACHWEIS_PATH, wire.NACHWEIS_BODY) == ("POST", NACHWEIS_PFAD, b"{}")
+    assert len(wire.NACHWEIS_BODY) == 2
+
+
+def test_der_nachweis_gilt_nur_fuer_diese_werte(tmp_path):
+    """Methode, Pfad, Koerper und Zeit sind Teil der Signatur: jede andere Kombination faellt durch (Gegenprobe zur
+    Pruefung oben, sonst bewiese sie nichts)."""
+    ident = identity.load_or_create(tmp_path)
+    signatur = identity.nachweis(ident, 100)["signatur"]
+    assert _signatur_prueft(ident, signatur, "POST", NACHWEIS_PFAD, 100, b"{}")
+    assert not _signatur_prueft(ident, signatur, "GET", NACHWEIS_PFAD, 100, b"{}")
+    assert not _signatur_prueft(ident, signatur, "POST", "/devices/register", 100, b"{}")
+    assert not _signatur_prueft(ident, signatur, "POST", NACHWEIS_PFAD, 101, b"{}")
+    assert not _signatur_prueft(ident, signatur, "POST", NACHWEIS_PFAD, 100, b"{ }")
+
+
+def test_der_nachweis_nimmt_weder_pfad_noch_koerper_entgegen(tmp_path):
+    """Ein anderer Pfad oder Koerper laesst sich gar nicht anfordern, und signiert wird immer ueber die Konstanten."""
+    assert list(inspect.signature(identity.nachweis).parameters) == ["ident", "jetzt"]
+    ident = identity.load_or_create(tmp_path)
+    gesehen = []
+    echte = identity.sign
+
+    def spion(key, method, path, timestamp, body):
+        gesehen.append((method, path, timestamp, body))
+        return echte(key, method, path, timestamp, body)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(identity, "sign", spion)
+        identity.nachweis(ident, 42)
+    assert gesehen == [("POST", NACHWEIS_PFAD, 42, b"{}")]
+
+
+def test_der_nachweis_traegt_keinen_schluessel(tmp_path):
+    ident = identity.load_or_create(tmp_path)
+    text = repr(identity.nachweis(ident, 7))
+    for geheim in (ident.claim_code, (tmp_path / identity.KEY_FILE).read_text(), "PRIVATE"):
+        assert geheim not in text

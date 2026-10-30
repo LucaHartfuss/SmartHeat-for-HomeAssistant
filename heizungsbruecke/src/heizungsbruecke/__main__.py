@@ -15,7 +15,9 @@ endet ueber prozess.starten in derselben 60-s-Pause und demselben exec.
 Lokaler Befehl (stdin_befehl): loescht der Nutzer den HA-Eintrag, schreibt die Integration `entfernen
 <geraet_id>` an das stdin des Add-ons (config.yaml stdin: true); ein Daemon-Thread liest fd 0 ungepuffert (nicht
 sys.stdin.buffer: ein darin blockierter Thread bricht das Prozessende ab) und stellt HaDeviceHost.lokal_abmelden in das
-Postfach des Geraetekerns (Device.im_geraete_thread). Das Geraet meldet sich dann wie bei sign_off ab.
+Postfach des Geraetekerns (Device.im_geraete_thread). Das Geraet meldet sich dann wie bei sign_off ab. Die Zeile
+`nachweis <geraet_id>` (Beginn der Einrichtung per Geraetecode) beantwortet der Zeilenleser selbst mit dem signierten
+Ereignis smartheat_nachweis (geraet_nachweis); fremde Geraete-IDs bewirken bei keinem Befehl etwas.
 
 Nach dem Entfernen (aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit im Modus
 abgemeldet mit der alten Konfiguration aus der Markierung) und startet danach neu; erst dieser Start loescht den
@@ -31,9 +33,10 @@ import sys
 import threading
 import time
 import urllib.parse
+from collections.abc import Callable
 from typing import BinaryIO
 
-from heizungsbruecke import config, derived_sensors, stdin_befehl
+from heizungsbruecke import config, derived_sensors, geraet_nachweis, stdin_befehl
 from heizungsbruecke.discovery import Discovery
 from heizungsbruecke.geraet_host import HaDeviceHost
 from heizungsbruecke.geraet_status import GeraetStatus
@@ -238,11 +241,15 @@ def stdin_quelle() -> BinaryIO | None:
         return None
 
 
-def stdin_anhaengen(geraet: HaDeviceHost, device, quelle: BinaryIO) -> threading.Thread:
-    """Lokalen Befehl `entfernen <eigene Geraete-ID>` aus quelle lesen; der Treffer meldet das Geraet im Geraete-Thread
-    ab (HaDeviceHost.lokal_abmelden ueber das Postfach, nie nebenlaeufig zum Befehlsregister)."""
+def stdin_anhaengen(geraet: HaDeviceHost, device, quelle: BinaryIO, ha_api,
+                    uhr: Callable[[], float] = time.time) -> threading.Thread:
+    """Lokale Befehle `entfernen <eigene Geraete-ID>` und `nachweis <eigene Geraete-ID>` aus quelle lesen; `entfernen`
+    meldet das Geraet im Geraete-Thread ab (HaDeviceHost.lokal_abmelden ueber das Postfach, nie nebenlaeufig zum
+    Befehlsregister), `nachweis` sendet das signierte Ereignis smartheat_nachweis ueber ha_api (Zeit aus uhr). Eine fremde
+    Geraete-ID bewirkt nichts."""
     return stdin_befehl.starten(quelle, device.identity.device_id,
-                                lambda: device.im_geraete_thread(geraet.lokal_abmelden))
+                                lambda: device.im_geraete_thread(geraet.lokal_abmelden),
+                                lambda: geraet_nachweis.senden(ha_api, device.identity, uhr))
 
 
 def _ruhen() -> None:
@@ -283,7 +290,7 @@ def main() -> None:  # pragma: no cover - Add-on-Einstieg (Startfehler und Ruhez
     geraet, device, status = teile
     quelle = stdin_quelle()
     if quelle is not None:
-        stdin_anhaengen(geraet, device, quelle)
+        stdin_anhaengen(geraet, device, quelle, ha_api)
     laufen(geraet, device, ha_api, status)
 
 
