@@ -47,7 +47,7 @@ def _verdrahtet(env, device, supervisor=None, *, markierung=None):
 def test_bootstrap_url_defaults_to_production(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
     monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
-    assert main_module.bootstrap_url() == main_module.DEFAULT_BOOTSTRAP_URL == "https://accounts.hartfussha.org"
+    assert main_module.bootstrap_url() == main_module.DEFAULT_BOOTSTRAP_URL == "https://accounts.setwell.de"
     (tmp_path / "options.json").write_text(json.dumps({"bootstrap_url": None, "log_level": "info"}))
     assert main_module.bootstrap_url() == main_module.DEFAULT_BOOTSTRAP_URL
     (tmp_path / "options.json").write_text(json.dumps({"bootstrap_url": "https://labor.example.test/"}))

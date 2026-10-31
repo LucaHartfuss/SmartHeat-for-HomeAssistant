@@ -458,8 +458,8 @@ for name in smartheat-gateway-$version.img.zst system-$version.ext4 boot-$versio
   (cd "$out" && sha256sum "$name" >"$name.sha256")
 done
 """
-API_URL = "https://geraete.hartfussha.org"
-PORTAL_URL = "https://portal.hartfussha.org"
+API_URL = "https://geraete.setwell.de"
+PORTAL_URL = "https://portal.setwell.de"
 SYSTEM_VERSION_DATEI = "9.9.9"
 
 
@@ -628,8 +628,8 @@ def test_ohne_arm64_oder_qemu_bricht_make_image_laut_ab_und_nichts_wird_hochgela
 
 @pytest.mark.parametrize("kwargs", [
     {"api": None}, {"portal": None}, {"api": None, "portal": None},
-    {"api": "http://geraete.hartfussha.org"}, {"portal": "https://192.0.2.1"}, {"api": "https://geraete.example.org"},
-    {"portal": "https://geraete.hartfussha.org:8443"},
+    {"api": "http://geraete.setwell.de"}, {"portal": "https://192.0.2.1"}, {"api": "https://geraete.example.org"},
+    {"portal": "https://geraete.setwell.de:8443"},
 ], ids=["ohne-api", "ohne-portal", "ohne-beide", "http", "ip", "fremde-zone", "port"])
 def test_ohne_gueltige_adressen_exit_2_vor_dem_bau(werk_system, kwargs):
     werk = werk_system

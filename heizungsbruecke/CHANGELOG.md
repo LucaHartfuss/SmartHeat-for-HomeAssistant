@@ -5,6 +5,9 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 ## Unveröffentlicht
 
+- Der Standard der Option `bootstrap_url` ist jetzt `https://accounts.setwell.de` (vorher `https://accounts.hartfussha.org`).
+  Ist die Option nicht gesetzt, meldet sich das Add-on nach dem Update dort an. Wer sein Gerät noch am bisherigen Server
+  betreibt, setzt `bootstrap_url` vor dem Update ausdrücklich auf `https://accounts.hartfussha.org`.
 - Scheitert beim Abmelden das Zurücksetzen der Heizung, nennt die Meldung jetzt die Werte, die SmartHeat selbst
   geschrieben hätte (Ursprungswert des Servers, auf die lokalen Grenzen gebracht), nicht den lokalen Ursprungswert.
   Geschrieben wird unverändert dasselbe.

@@ -12,7 +12,7 @@
 # traefen Bereiche wie [a-z] sonst auch Nicht-ASCII (Vollbreite, Umlaute).
 
 # Eigene DNS-Zonen (klein geschrieben, ohne Punkt am Ende). Einzige Stelle fuer die Allowlist.
-SHG_OWN_ZONES=(hartfussha.org)
+SHG_OWN_ZONES=(setwell.de)
 
 # shg_own_url_hint: Hinweistext "was ist erlaubt" fuer Fehlermeldungen (Skripte und Workflows).
 shg_own_url_hint() {

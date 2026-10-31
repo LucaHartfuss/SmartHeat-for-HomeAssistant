@@ -53,7 +53,7 @@ from smartheat_runtime.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BOOTSTRAP_URL = "https://accounts.hartfussha.org"
+DEFAULT_BOOTSTRAP_URL = "https://accounts.setwell.de"
 LOG_LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARNING, "error": logging.ERROR}
 #: Aufraeumen beim Start (startup: services, HA evtl. noch nicht bereit): so lange auf HA warten, um die Hilfssensoren
 #: zu loeschen; danach startet der Geraetekern trotzdem, und der naechste Start versucht es erneut.

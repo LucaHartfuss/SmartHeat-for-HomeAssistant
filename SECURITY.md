@@ -17,7 +17,7 @@ Report it privately by one of these ways:
 
 1. GitHub: open the **Security** tab of this repository and choose **Report a vulnerability** (private vulnerability
    reporting).
-2. E-mail: `security@hartfussha.org` (plain text; we do not offer PGP at the moment).
+2. E-mail: `security@setwell.de` (plain text; we do not offer PGP at the moment).
 
 Useful content: affected component and version, what an attacker gains, steps to reproduce or a proof of concept, and
 whether you think the issue is already being exploited (if so, say so in the first line). Please do not send
