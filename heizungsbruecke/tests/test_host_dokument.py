@@ -249,6 +249,14 @@ def test_without_binding_parameters_the_start_fails_and_with_them_it_runs(env):
     assert HaHost(FakeGeraet(mit), env.ha, clock=env.clock).load().binding.description.settle_seconds == 2100
 
 
+def test_a_stored_document_with_a_short_restore_list_does_not_start(env):
+    """Die lokale Mindestliste der Rueckstellung gilt auch fuer eine schon gespeicherte Konfiguration."""
+    konf = konfiguration_aus_optionen(OPTIONS)
+    kurz = {**konf, "bindungsparameter": {**konf["bindungsparameter"], "zurueck": [], "zurueck_optional": []}}
+    with pytest.raises(StartFailure, match="mindestens zurückstellen muss"):
+        HaHost(FakeGeraet(kurz), env.ha, clock=env.clock).load()
+
+
 def test_sign_off_without_binding_parameters_does_not_reset_and_logs_it(env, caplog):
     """Abmelden ohne Bindungsparameter setzt nicht zurueck (kein Schreiben an HA) und loggt den
     Grund; Gegenstueck zum Gateway (gateway/tests/test_host.py)."""

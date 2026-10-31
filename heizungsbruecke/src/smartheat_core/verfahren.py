@@ -6,7 +6,7 @@ smartheat_core/binding.py bis Add-on 1.0.0; Aenderung nur nach Rueckfrage (Regel
 tests/test_regel4_werte.py. Das Verfahren selbst (Code) waehlt der Host nach dem Hebelsatz (heizungsbruecke.ha_binding,
 Gateway-Treiber)."""
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from smartheat_core.levers import VAILLANT_VRC720, VIESSMANN_VICARE, WEISHAUPT_WWP, WEISHAUPT_WWP_BASIS, LeverSet
 from smartheat_core.write_budget import MAX_PER_DAY
@@ -31,7 +31,9 @@ class Verfahren:
     fehlerhafter Server keine Optionsnamen fuer Vorbereitung und Hilfswerte bilden kann (Regel 4).
     schreibgruppen_erlaubt: lokale Positivliste der Schreibgruppen; der Server darf je Gruppe nur dieselbe
     Hebelmenge senden (Reihenfolge egal) oder keine, damit er keine weiten Gruppen bildet, die ungezaehlt viele
-    physische Schreibvorgaenge ausloesen (Regel 4)."""
+    physische Schreibvorgaenge ausloesen (Regel 4). rueckstellung_pflicht: lokale Mindestliste der Hebel, die beim
+    Abmelden und Abo-Ende zurueckgestellt werden; `zurueck` des Servers muss sie alle enthalten (mehr darf er senden),
+    damit ein fehlerhafter Server die Rueckstellung nicht verkuerzen kann (Regel 4)."""
 
     lever_set: LeverSet
     prepared_lever: str | None
@@ -43,6 +45,7 @@ class Verfahren:
     schemata: tuple[str, ...] = ()
     praefixe_erlaubt: tuple[str, ...] = ()
     schreibgruppen_erlaubt: tuple[tuple[str, ...], ...] = ()
+    rueckstellung_pflicht: tuple[str, ...] = field(kw_only=True)  # Pflicht: ein neuer Hebelsatz ohne Liste startet nicht
 
 
 _WEISHAUPT_AUX = ("mode_select", "setpoint_comfort", "setpoint_setback")
@@ -57,16 +60,17 @@ VERFAHREN: dict[str, Verfahren] = {v.lever_set.id: v for v in (
     Verfahren(VAILLANT_VRC720, "room_setpoint", True, (), {
         "curve": "Heizkurve", "room_setpoint": "Wunschtemperatur der Zone", "heat_limit": "Heizgrenze",
         "min_flow": "Mindestvorlauftemperatur",
-    }, "Betriebsart der Zone", Schreibschutz(MAX_PER_DAY, None, None)),
+    }, "Betriebsart der Zone", Schreibschutz(MAX_PER_DAY, None, None), rueckstellung_pflicht=("heat_limit",)),
     Verfahren(WEISHAUPT_WWP, "room_setpoint", False, _WEISHAUPT_AUX, {
         "curve": "Heizkennlinie", "room_setpoint": "Raumsolltemperatur Normal", "heat_limit": "Sommer-Winter-Umschaltung",
     }, "Betriebsart", _WEISHAUPT_SCHUTZ, _WEISHAUPT_SCHEMATA,
-              _WEISHAUPT_PRAEFIXE),
+              _WEISHAUPT_PRAEFIXE, rueckstellung_pflicht=("curve", "room_setpoint", "heat_limit")),
     Verfahren(WEISHAUPT_WWP_BASIS, "room_setpoint", False, _WEISHAUPT_AUX, {"room_setpoint": "Raumsolltemperatur Normal"},
               "Betriebsart", _WEISHAUPT_SCHUTZ, _WEISHAUPT_SCHEMATA,
-              _WEISHAUPT_PRAEFIXE),
+              _WEISHAUPT_PRAEFIXE, rueckstellung_pflicht=("room_setpoint",)),
     # Viessmann: Komfort-/Eco-Programm verlassen; Cloud-Kontingent: Durchsetzen hoechstens 4 am Tag.
     Verfahren(VIESSMANN_VICARE, "room_setpoint", False, ("mode_select",), {
         "curve": "Neigung der Heizkurve", "level": "Niveau der Heizkurve", "room_setpoint": "Raumtemperatur Normal",
-    }, "Heizprogramm", Schreibschutz(4, None, None), schreibgruppen_erlaubt=(("curve", "level"),)),
+    }, "Heizprogramm", Schreibschutz(4, None, None), schreibgruppen_erlaubt=(("curve", "level"),),
+              rueckstellung_pflicht=("curve", "level", "room_setpoint")),
 )}

@@ -247,6 +247,22 @@ def test_schreibgruppen_lokale_positivliste():
     assert {k: v.schreibgruppen_erlaubt for k, v in VERFAHREN.items()} == SCHREIBGRUPPEN_ERLAUBT, R4
 
 
+#: Lokale Mindestliste der Rueckstellung je Hebelsatz: diese Hebel stellt der Client beim Abmelden und Abo-Ende immer
+#: zurueck; eine Konfiguration, deren `zurueck` einen davon auslaesst, weist er ab (Gefaehrdung G-9).
+RUECKSTELLUNG_PFLICHT = {
+    "vaillant_vrc720": ("heat_limit",),
+    "weishaupt_wwp": ("curve", "room_setpoint", "heat_limit"),
+    "weishaupt_wwp_basis": ("room_setpoint",),
+    "viessmann_vicare": ("curve", "level", "room_setpoint"),
+}
+
+
+def test_rueckstellung_pflicht_lokale_mindestliste():
+    from smartheat_core.verfahren import VERFAHREN
+
+    assert {k: v.rueckstellung_pflicht for k, v in VERFAHREN.items()} == RUECKSTELLUNG_PFLICHT, R4
+
+
 #: Spec Fixrunde A Schreibschutz 3.1/3.2 (A6-01, A6-34): Boost-Starts je Art (Schluessel -> (jeder Versuch zaehlt,
 #: Mindestabstaende in Sekunden, hoechstens je Tag)). Comfort- und Notfall-Boost zaehlen getrennt.
 BOOST_KONTINGENT = {"boost_start": (True, (1800,), 6), "emergency_start": (True, (1800,), 6)}
