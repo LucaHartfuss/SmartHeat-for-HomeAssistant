@@ -466,3 +466,83 @@ def test_wartezeit_fehler_nennt_min_60_und_max_7200(wartezeit):
     with pytest.raises(Fehler) as info:
         beschreibung("vaillant_vrc720", parameter("vaillant_vrc720", wartezeit_s=wartezeit))
     assert info.value.details == {"feld": "wartezeit_s", "regel": "bereich", "min": 60, "max": 7200}
+
+
+# --- Lokale Mindestliste der Rueckstellung (Regel 4) ---------------------------------------------------------------
+# Welche Hebel beim Abmelden oder Abo-Ende zurueckgestellt werden, entscheidet nicht der Server: eine leere oder
+# verkuerzte Liste `zurueck` weist der Client ab. Die Mindestlisten stehen hier als Literale, nie aus dem Produktcode.
+MINDEST_ZURUECK = {
+    "vaillant_vrc720": ("heat_limit",),
+    "weishaupt_wwp": ("curve", "room_setpoint", "heat_limit"),
+    "viessmann_vicare": ("curve", "level", "room_setpoint"),
+}
+FEHLENDER_PFLICHT_HEBEL = [(satz, hebel) for satz, liste in MINDEST_ZURUECK.items() for hebel in liste]
+#: Erlaubte Hebel ausser der Mindestliste, die der Server zusaetzlich zurueckstellen lassen darf.
+ZUSATZ_HEBEL = {"vaillant_vrc720": ("curve", "room_setpoint"), "weishaupt_wwp": (), "viessmann_vicare": ()}
+
+
+def _zurueck_mit(hebelsatz, zurueck):
+    # zurueck_optional leer: die Pruefung des optionalen Teils darf die Mindestliste nicht verdecken
+    return parameter(hebelsatz, zurueck=list(zurueck), zurueck_optional=[])
+
+
+def _zurueck_abgewiesen(hebelsatz, werte) -> dict:
+    with pytest.raises(Fehler) as info:
+        beschreibung(hebelsatz, werte)
+    return info.value.details
+
+
+def test_die_mindestlisten_sind_in_den_heutigen_parametern_enthalten():
+    """Gegenprobe der Tabelle: die Werte, die der Server heute sendet, erfuellen die Mindestliste."""
+    for satz, liste in MINDEST_ZURUECK.items():
+        assert set(liste) <= set(PARAMETER[satz]["zurueck"])
+
+
+@pytest.mark.parametrize(("hebelsatz", "fehlt"), FEHLENDER_PFLICHT_HEBEL)
+def test_zurueck_ohne_pflicht_hebel_wird_abgewiesen(hebelsatz, fehlt):
+    zurueck = [h for h in MINDEST_ZURUECK[hebelsatz] if h != fehlt]
+    details = _zurueck_abgewiesen(hebelsatz, _zurueck_mit(hebelsatz, zurueck))
+    assert details["feld"] == "zurueck"
+
+
+@pytest.mark.parametrize("hebelsatz", sorted(MINDEST_ZURUECK))
+def test_leere_zurueck_liste_wird_abgewiesen(hebelsatz):
+    assert _zurueck_abgewiesen(hebelsatz, _zurueck_mit(hebelsatz, []))["feld"] == "zurueck"
+
+
+@pytest.mark.parametrize("hebelsatz", sorted(MINDEST_ZURUECK))
+def test_zurueck_mit_voller_mindestliste_und_zusatz_wird_angenommen(hebelsatz):
+    zurueck = (*MINDEST_ZURUECK[hebelsatz], *ZUSATZ_HEBEL[hebelsatz])
+    d = beschreibung(hebelsatz, _zurueck_mit(hebelsatz, zurueck))
+    assert set(d.restore_originals) == set(zurueck)
+
+
+@pytest.mark.parametrize("hebelsatz", sorted(MINDEST_ZURUECK))
+def test_reihenfolge_der_zurueck_liste_ist_gleichgueltig(hebelsatz):
+    zurueck = list(reversed(MINDEST_ZURUECK[hebelsatz]))
+    assert set(beschreibung(hebelsatz, _zurueck_mit(hebelsatz, zurueck)).restore_originals) == set(zurueck)
+
+
+def test_vaillant_pflicht_hebel_darf_weiter_optional_sein():
+    """Die Mindestliste fordert die Rueckstellung von heat_limit; `zurueck_optional` (darf im Wiederherstellungspunkt
+    fehlen) bleibt wie heute erlaubt."""
+    d = beschreibung("vaillant_vrc720", parameter("vaillant_vrc720", zurueck=["heat_limit"],
+                                                   zurueck_optional=["heat_limit"]))
+    assert d.restore_originals == ("heat_limit",) and d.optional_restore == ("heat_limit",)
+
+
+def test_aussenweg_ein_dokument_mit_verkuerzter_liste_wird_von_der_konfigurationspruefung_abgewiesen():
+    """Ebene der Bindungsparameter reicht hier nicht: die Pruefung, auf der ein Dokument von aussen ankommt
+    (smartheat_core.config_check), nimmt das alte Dokument nicht an und liefert Feld und Regel des Vertrags."""
+    from geraet_helpers import gateway_konfiguration, ha_konfiguration
+
+    from smartheat_core import config_check as cc
+    faelle = (
+        (cc.HOST_GATEWAY, gateway_konfiguration, "viessmann_vicare", ("curve", "level")),
+        (cc.HOST_HA, ha_konfiguration, "vaillant_vrc720", ()),
+    )
+    for host, bauen, satz, kurz in faelle:
+        assert cc.pruefen(bauen(), None, host=host) is None  # Gegenprobe: die heutige Liste wird angenommen
+        ablehnung = cc.pruefen(bauen(bindungsparameter=_zurueck_mit(satz, kurz)), None, host=host)
+        assert ablehnung is not None, satz
+        assert ablehnung.grund == cc.UNGUELTIG and ablehnung.details["feld"] == "zurueck", satz
