@@ -160,6 +160,8 @@ def test_prepare_builds_the_stage(tmp_path):
     installer = stage / "installer" / "gateway"
     assert (installer / "host" / "install.sh").is_file() and not (installer / "host" / "tests").exists()
     assert (installer / "host" / "pilot_ssh_tunnel.sh").is_file()
+    assert (installer / "host" / "release-roots.pem").is_file()
+    assert not (installer / "host" / "release-roots.sha256").exists()  # die gepinnte Liste gehoert nicht aufs Geraet
     for name in ("rauc-backend", "probestart-frist"):
         assert (installer / "host" / name).is_file(), name
     for name in ("rootfs_checks.sh", "own_url.sh", "customize.sh"):

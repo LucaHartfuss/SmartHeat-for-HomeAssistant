@@ -115,6 +115,7 @@ inst="$STAGE/installer/gateway"
 mkdir -p "$inst/src/smartheat_gateway" "$inst/src/smartheat_core" "$inst/image" "$STAGE/bundle" "$STAGE/images"
 cp -a "$GW/host" "$inst/host"
 rm -rf "$inst/host/tests"
+rm -f "$inst/host/release-roots.sha256"  # Liste fuer die Release-Pruefung am Betreiberrechner, nicht fuers Geraet
 if [ "$RELEASE_ROOTS_SET" = 1 ]; then cp "$RELEASE_ROOTS" "$inst/host/release-roots.pem"; fi
 find "$inst/host" -name __pycache__ -type d -prune -exec rm -rf {} +
 cp "$HERE/rootfs_checks.sh" "$HERE/own_url.sh" "$HERE/customize.sh" "$inst/image/"
