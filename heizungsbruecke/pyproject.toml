@@ -13,6 +13,8 @@ version = {attr = "heizungsbruecke.version.ADDON_VERSION"}
 [tool.pytest.ini_options]
 pythonpath = ["src", "testhilfen"]
 testpaths = ["tests"]
+# die Akzeptanzsuite laeuft nur allein (scripts/check.sh, Schritt akzeptanz): ihre conftest.py verlangt --confcutdir
+addopts = "--ignore=tests/akzeptanz"
 markers = [
     "ws: WebSocket-Clienttests mit 1 s Abbau je Test; check_all.sh --schnell laesst sie aus, check.sh und CI nicht",
 ]
