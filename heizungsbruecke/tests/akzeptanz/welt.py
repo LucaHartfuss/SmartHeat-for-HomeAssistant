@@ -1,7 +1,6 @@
 """Die schmale Welt der Akzeptanzsuite: das echte Add-on (Geraetekern, HA-Host, Laufzeit, Regel-Worker, verdrahtet wie
-in __main__) auf Fake-HA, Fake-Link und gemeinsamer Fake-Uhr. Kein Netz, keine Threads: die Welt ruft
-`Device.schritt()` und `run_pending()` selbst und stellt danach die Uhr vor. Beobachtet wird nur die Aussenwirkung
-(Schreibvorgaenge an die Fake-HA, Nachrichten des Links). Prozess 1 nimmt die Dokumente an, Prozess 2 regelt."""
+in __main__) auf Fake-HA, Fake-Link und gemeinsamer Fake-Uhr, ohne Netz und Threads: `Device.schritt()` und
+`run_pending()` ruft die Welt selbst. Beobachtet wird nur die Aussenwirkung. Prozess 1 nimmt Dokumente an, 2 regelt."""
 import datetime
 import functools
 import json
@@ -12,6 +11,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from welt_handgriffe import Handgriffe
 
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import config
@@ -209,7 +209,7 @@ def _ohne_bootstrap(ident):
     raise AssertionError("Bootstrap-Aufruf in der Akzeptanzwelt (der Zugang ist gespeichert)")
 
 
-class Anlage:
+class Anlage(Handgriffe):
     """Eine Anlage (Hebelsatz x Verteilsystem) mit laufendem Add-on. `starten()` bringt sie in den Regelbetrieb,
     `server_antwortet(hebel)` ist die Antwort des Servers auf den letzten Snapshot, `runde(sekunden)` ein Durchlauf von
     Geraete-Thread und Regel-Worker mit anschliessend vorgestellter Uhr."""

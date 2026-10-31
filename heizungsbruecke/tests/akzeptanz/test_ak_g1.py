@@ -33,3 +33,52 @@ def test_ak_g1_01_forderung_unter_dem_minimum(welt, satz, verteilsystem):
     for hebel, minimum in minima.items():  # nie ein Schreibvorgang darunter, auch nicht auf dem Weg dorthin
         werte = [w for e, w, _ in anlage.ha.schreibvorgaenge if e == schreibziel(satz, hebel)]
         assert werte and min(werte) == minimum, (hebel, werte)
+
+
+HEBEL = ("curve", "room_setpoint", "heat_limit")
+NOTFALL_BOOST = {"curve": 1.5, "room_setpoint": 25.0, "heat_limit": 23.0}  # Vaillant x Heizkoerper, woertlich
+
+
+def _stand(anlage, satz):
+    """Aktueller Wert der drei Hebel an der Anlage."""
+    return {hebel: anlage.ha.states[schreibziel(satz, hebel)] for hebel in HEBEL}
+
+
+@pytest.mark.akzeptanz("AK-G1-03")
+def test_ak_g1_03_notbetrieb_und_notfall_boost(welt):
+    satz = "vaillant_vrc720"
+    anlage: Anlage = welt(satz, "Heizkoerper")
+    anlage.konfiguration["bindung"]["benachrichtigung"] = ["notify.mobile_app_handy"]
+    anlage.starten()  # Soll 21,0; der Server schweigt (Ack verweigert)
+    anlage.laufen(40)  # ein Fehlschlag: der Tick wird neu gesendet, noch kein Notbetrieb
+    assert len(anlage.link.of("up/snapshot")) == 2
+    assert not any("Notbetrieb aktiv" in text for text in anlage.meldetexte())
+    anlage.laufen(35)  # zweiter Fehlschlag: Notbetrieb mit Meldung in HA
+    assert any("Notbetrieb aktiv" in text for text in anlage.meldetexte())
+    vor, geschrieben = _stand(anlage, satz), len(anlage.ha.schreibvorgaenge)
+    anlage.raum(20.0)  # genau 1,0 K unter Soll: kein Notfall-Boost
+    anlage.runde(2)
+    assert len(anlage.ha.schreibvorgaenge) == geschrieben and _stand(anlage, satz) == vor
+    anlage.raum(19.9)  # 1,1 K unter Soll
+    anlage.runde(2)
+    assert _stand(anlage, satz) == NOTFALL_BOOST
+    anlage.raum(20.4)  # noch unter Soll - 0,5: der Boost bleibt
+    anlage.runde(2)
+    assert _stand(anlage, satz) == NOTFALL_BOOST
+    anlage.raum(20.5)  # Soll - 0,5 erreicht: zurueck auf die Werte davor
+    anlage.runde(2)
+    assert _stand(anlage, satz) == vor
+    anlage.laufen(1900)  # der naechste Notfall-Boost-Start ist erst nach einer halben Stunde erlaubt
+    anlage.raum(19.9)
+    anlage.runde(2)
+    assert _stand(anlage, satz) == NOTFALL_BOOST
+    anlage.server_antwortet({"curve": 0.8, "room_setpoint": 21.0, "heat_limit": 15.0})  # das Ack beendet den Notbetrieb
+    anlage.runde(2)
+    assert _stand(anlage, satz) == {"curve": 0.8, "room_setpoint": 21.0, "heat_limit": 15.0}
+    assert any("Notbetrieb beendet" in text for text in anlage.meldetexte())
+    assert "smartheat_notbetrieb" in anlage.zurueckgenommen()
+    anlage.laufen(1900)
+    geschrieben = len(anlage.ha.schreibvorgaenge)
+    anlage.raum(19.0)  # ohne Notbetrieb kein Notfall-Boost mehr
+    anlage.runde(2)
+    assert len(anlage.ha.schreibvorgaenge) == geschrieben

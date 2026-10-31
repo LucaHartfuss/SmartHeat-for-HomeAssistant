@@ -13,7 +13,7 @@ import pytest
 
 ORDNER = Path(__file__).resolve().parent
 #: alle Szenarien dieser Suite; jede ID hat genau einen Test mit @pytest.mark.akzeptanz("<ID>")
-IDS = ("AK-G1-01",)
+IDS = ("AK-G1-01", "AK-G1-03", "AK-G2-04", "AK-G3-01", "AK-G3-02")
 ERLAUBT = {"pytest", "cryptography", "heizungsbruecke"}
 UEBERSPRUNGEN = ("skip", "skipif", "xfail")
 
