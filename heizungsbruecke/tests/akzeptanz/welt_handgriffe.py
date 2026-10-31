@@ -16,6 +16,16 @@ class Handgriffe:
         """Der Raumfuehler zeigt `wert` (gemeldet wie jeder Zustandswechsel)."""
         self._zustandswechsel(RAUMFUEHLER, wert, None)
 
+    def ha_verbindet(self) -> None:
+        """Die Verbindung zu HA steht (wieder): das Add-on liest Wunsch und Fuehler neu und prueft lokal, ob ein Tick
+        faellig ist."""
+        self.trigger[-1].kwargs["on_connected"]()
+
+    def app_verstellt(self, entity: str, wert: float) -> None:
+        """Die Hersteller-App stellt `entity` auf `wert` (die Cloud-Integration meldet es als Zustandswechsel ohne
+        Bewohner)."""
+        self._zustandswechsel(entity, wert, None)
+
     def wunsch(self, wert: float) -> None:
         """Ein Bewohner stellt am Thermostat `wert` ein (nach der Entprellung von HA: 10 s stabil)."""
         self._zustandswechsel(ROOM_TARGET, wert, "bewohner")
