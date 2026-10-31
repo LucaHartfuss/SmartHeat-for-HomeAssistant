@@ -4,7 +4,7 @@
 # RAUC-System-Bundle mit dem Release-Schluessel (Hardware-Token oder Test-Kette) und laedt das Bundle per scp in die Ablage.
 #
 # Aufruf:  release_lokal.sh VERSION --schluessel PEM|pkcs11:URI --zertifikat DATEI --device-api-url URL --portal-base-url URL
-#                           [--roots DATEI] [--aus DIR] [--ohne-system] [--probe]
+#                           [--roots DATEI] [--aus DIR] [--ohne-system] [--probe | --labor]
 #   VERSION       x.y.z, ohne "v"; der Tag heisst gateway-vVERSION.
 #   --schluessel  PEM-Datei (Test-Kette) oder pkcs11:-URI des Release-Schluessels (signieren.py; die PIN gehoert nicht in
 #                 die URI, siehe signieren.py).
@@ -27,7 +27,14 @@
 #                 Nur mit einer Wegwerf-Kette: ein pkcs11:-Schluessel und der Standard-Schluesselbund
 #                 (gateway/host/release-roots.pem) sind im Probelauf verboten, sonst signierte --probe ohne Tag- und
 #                 Baum-Check mit dem echten Token.
-# Ohne --probe:
+#   --labor       Labor-Bau: baut wie das echte Release (auch Werks-Image und System-Bundle, ausser mit --ohne-system),
+#                 aber ohne Tag-, Baum- und Umgebungs-Check, ohne Upload und ohne Ausgabe der Werte auf stdout; am Ende
+#                 steht auf stderr, wo die Ergebnisse liegen. Der Arbeitsordner bleibt (ausser bei einem Fehler). Nur mit
+#                 Test-Roots: --roots ist Pflicht, ein pkcs11:-Schluessel ist verboten, und jede Root des Schluesselbunds
+#                 muss "(Test)" im Namen tragen und darf nicht in gateway/host/release-roots.sha256 des Checkouts stehen
+#                 (roots_pruefen.py, vor jedem Bau). Mit System gelten die Adressen und gateway/VERSION wie beim Release.
+#                 Schliesst sich mit --probe aus.
+# Ohne --probe und --labor:
 #   - $SHG_BUNDLE_ZIEL (scp-Ziel user@host:/pfad) und $SHG_BUNDLE_BASIS (https-Basis-URL der Ablage) muessen gesetzt sein,
 #   - der Arbeitsbaum ist sauber (auch ohne unversionierte Dateien) und HEAD ist der Commit des Tags gateway-vVERSION,
 #     dessen SSH-Signatur `git verify-tag` gegen .github/allowed_signers aus origin/main bestaetigt (frisch geholt, wie
@@ -57,7 +64,7 @@ umask 022
 
 usage() {
   echo "Aufruf: $0 VERSION --schluessel PEM|pkcs11:URI --zertifikat DATEI --device-api-url URL --portal-base-url URL" \
-       "[--roots DATEI] [--aus DIR] [--ohne-system] [--probe]" >&2
+       "[--roots DATEI] [--aus DIR] [--ohne-system] [--probe | --labor]" >&2
   exit 2
 }
 fehler() { echo "FEHLER: $*" >&2; exit 1; }
@@ -65,7 +72,7 @@ fehler() { echo "FEHLER: $*" >&2; exit 1; }
 [ $# -ge 1 ] || usage
 version="$1"; shift
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "FEHLER: Version muss x.y.z sein: $version" >&2; exit 2; }
-schluessel=""; zertifikat=""; roots=""; aus=""; probe=0; ohne_system=0; api_url=""; portal_url=""
+schluessel=""; zertifikat=""; roots=""; aus=""; probe=0; labor=0; ohne_system=0; api_url=""; portal_url=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --schluessel) [ $# -ge 2 ] || usage; schluessel="$2"; shift 2 ;;
@@ -73,6 +80,7 @@ while [ $# -gt 0 ]; do
     --roots) [ $# -ge 2 ] || usage; roots="$2"; shift 2 ;;
     --aus) [ $# -ge 2 ] || usage; aus="$2"; shift 2 ;;
     --probe) probe=1; shift ;;
+    --labor) labor=1; shift ;;
     --ohne-system) ohne_system=1; shift ;;
     --device-api-url) [ $# -ge 2 ] || usage; api_url="$2"; shift 2 ;;
     --portal-base-url) [ $# -ge 2 ] || usage; portal_url="$2"; shift 2 ;;
@@ -80,6 +88,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$schluessel" ] && [ -n "$zertifikat" ] || usage
+[ "$probe" = 0 ] || [ "$labor" = 0 ] || usage
 # syft (CycloneDX-SBOM): Image per Digest gepinnt, laeuft ohne Netz und liest das Archiv nur lesend. Erneuern: Tag holen
 # (`docker pull anchore/syft:vX.Y.Z`), Digest aus `docker inspect --format '{{index .RepoDigests 0}}'` eintragen; die CI
 # (release.yml, Job image) nutzt denselben Digest.
@@ -87,6 +96,7 @@ SYFT_IMAGE="anchore/syft:v1.55.0@sha256:4cc92b64ca74ffca4c94d4c8fcc01f2177313753
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
+roots_gegeben="$roots"
 roots="${roots:-$repo/gateway/host/release-roots.pem}"
 py() { "${PYTHON:-python3}" "$@"; }
 tag="gateway-v$version"
@@ -99,6 +109,13 @@ if [ "$probe" = 1 ]; then
   [[ "$schluessel" != pkcs11:* ]] || fehler "--probe signiert nie mit einem pkcs11:-Schluessel (echtes Token, ohne Tag- und Baum-Check)"
   [ "$(realpath -- "$roots")" != "$(realpath -- "$repo/gateway/host/release-roots.pem")" ] \
     || fehler "--probe braucht --roots einer Wegwerf-Kette, nicht den Standard-Schluesselbund (gateway/host/release-roots.pem)"
+fi
+if [ "$labor" = 1 ]; then
+  [ -n "$roots_gegeben" ] || fehler "--labor braucht --roots (die Test-Kette); der Standard-Schluesselbund ist nie erlaubt"
+  [[ "$schluessel" != pkcs11:* ]] || fehler "--labor signiert nie mit einem pkcs11:-Schluessel (echtes Token, ohne Tag- und Baum-Check)"
+  # Nur Test-Roots, und keine aus der gepinnten Liste (die des Checkouts genuegt: sie darf hier nur nichts verraten).
+  py "$here/roots_pruefen.py" labor --liste "$repo/gateway/host/release-roots.sha256" "$roots" >&2 \
+    || fehler "Schluesselbund $roots ist fuer den Labor-Bau nicht erlaubt (nur Test-Roots, nicht aus gateway/host/release-roots.sha256)"
 fi
 # Mit System (Standard) braucht es das Werkzeug des Werks-Images; der Probelauf der CI baut kein Image.
 system=1
@@ -115,7 +132,7 @@ if [ "$system" = 1 ]; then
   [ "$(cat "$repo/gateway/VERSION")" = "$version" ] \
     || fehler "gateway/VERSION ($(cat "$repo/gateway/VERSION")) ist nicht die Release-Version $version (Tag $tag auschecken)"
 fi
-if [ "$probe" = 0 ]; then
+if [ "$probe" = 0 ] && [ "$labor" = 0 ]; then
   [ -n "${SHG_BUNDLE_ZIEL:-}" ] && [ -n "${SHG_BUNDLE_BASIS:-}" ] \
     || fehler "SHG_BUNDLE_ZIEL (scp-Ziel user@host:/pfad) und SHG_BUNDLE_BASIS (https-Basis-URL) muessen gesetzt sein (Runbook Gateway-Release)"
   [[ "$SHG_BUNDLE_ZIEL" =~ ^[A-Za-z0-9._][A-Za-z0-9._-]*@[A-Za-z0-9._][A-Za-z0-9._-]*:/[A-Za-z0-9._/+-]*$ ]] \
@@ -211,6 +228,13 @@ fi
 
 if [ "$probe" = 1 ]; then
   echo "Probelauf: gebaut, geprueft und signiert, nichts hochgeladen." >&2
+  exit 0
+fi
+if [ "$labor" = 1 ]; then
+  echo "Labor-Bau: gebaut, geprueft und signiert, nichts hochgeladen. Ergebnisse in $aus (Bundle: $bundle/, SBOM: $sbom)" >&2
+  if [ "$system" = 1 ]; then
+    echo "Werks-Image und System-Bundle: $image_aus/ und $system_bundle" >&2
+  fi
   exit 0
 fi
 scp -r -- "$bundle" "${SHG_BUNDLE_ZIEL%/}/" >&2

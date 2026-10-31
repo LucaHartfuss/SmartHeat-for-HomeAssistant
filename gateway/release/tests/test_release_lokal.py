@@ -521,7 +521,8 @@ SYSTEM_VERSION_DATEI = "9.9.9"
 @pytest.fixture
 def werk_system(werk):
     """Wie `werk`, aber `gateway` ist ein Ordner aus Symlinks auf den Checkout mit eigener VERSION (9.9.9), einer
-    Attrappe make_image.sh und dem Schluesselbund der Test-Kette als host/release-roots.pem (der Standard-Schluesselbund)."""
+    Attrappe make_image.sh, dem Schluesselbund der Test-Kette als host/release-roots.pem (der Standard-Schluesselbund) und
+    einer Kopie der gepinnten Liste (host/release-roots.sha256) des Checkouts."""
     gw = werk.repo / "gateway"
     gw.unlink()
     gw.mkdir()
@@ -531,6 +532,7 @@ def werk_system(werk):
     (gw / "VERSION").write_text(f"{SYSTEM_VERSION_DATEI}\n")
     (gw / "host").mkdir()
     (gw / "host" / "release-roots.pem").write_text((werk.kette / "root.crt").read_text())
+    (gw / "host" / "release-roots.sha256").write_text((GW / "host" / "release-roots.sha256").read_text())
     (gw / "image").mkdir()
     (gw / "image" / "own_url.sh").symlink_to(GW / "image" / "own_url.sh")
     (gw / "image" / "make_image.sh").write_text(MAKE_IMAGE)
@@ -828,3 +830,128 @@ def test_probe_braucht_die_liste_nicht(werk):
     ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.test_kette / "release.key"),
                      "--zertifikat", str(werk.test_kette / "release.crt"), "--roots", str(werk.test_kette / "root.crt"))
     assert ergebnis.returncode == 0, ergebnis.stderr
+
+
+# --- Labor-Bau (--labor): wie das echte Release, aber nur Test-Roots, ohne Upload ------------------------------------------
+def _labor_args(werk, *, roots=True, schluessel=None, api=API_URL, portal=PORTAL_URL):
+    args = ["--labor", "--schluessel", schluessel or str(werk.test_kette / "release.key"),
+            "--zertifikat", str(werk.test_kette / "release.crt"), "--aus", str(werk.aus)]
+    if roots is True:
+        args += ["--roots", str(werk.test_kette / "root.crt")]
+    elif roots:
+        args += ["--roots", str(roots)]
+    if api is not None:
+        args += ["--device-api-url", api]
+    if portal is not None:
+        args += ["--portal-base-url", portal]
+    return args
+
+
+def _labor_lauf(werk, *zusatz, umgebung=None, ohne_system=False, **kwargs):
+    return _lauf(werk, *_labor_args(werk, **kwargs), *zusatz, ohne_system=ohne_system, umgebung=umgebung)
+
+
+def _labor_abgelehnt(werk, ergebnis):
+    assert ergebnis.returncode == 1, ergebnis.stderr
+    assert ergebnis.stdout == "" and "FEHLER:" in ergebnis.stderr
+    assert _log(werk, "docker.log") == [] and _log(werk, "make_image.log") == [] and _log(werk, "scp.log") == []
+    assert not werk.aus.exists()
+
+
+def test_labor_baut_mit_system_und_test_roots_ohne_upload(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk)  # kein Tag, keine Ablage-Umgebung
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert ergebnis.stdout == "" and _log(werk, "scp.log") == []
+    aus = werk.aus.resolve()
+    (aufruf,) = _log(werk, "make_image.log")
+    assert aufruf["argv"] == ["--bundle", str(aus / "werk-bundle"), "--out", str(aus / "image"),
+                              "--device-api-url", API_URL, "--portal-base-url", PORTAL_URL,
+                              "--release-roots", str(werk.test_kette / "root.crt")]
+    assert any(a["prog"] == "openssl" and "-sign" in a["argv"] for a in _log(werk, "rauc.log"))
+    bundle = aus / VERSION
+    assert (bundle / "system.raucb").read_bytes() == b"SYSTEM-BUNDLE" and _pruefen(werk, bundle, werk.test_kette) == 0
+    assert "system" in json.loads((bundle / "manifest.json").read_text())
+    assert (aus / "image").is_dir() and (aus / "werk-bundle").is_dir() and (aus / f"gateway-{VERSION}.cdx.json").is_file()
+    assert str(aus) in ergebnis.stderr  # die letzte Zeile sagt, wo die Ergebnisse liegen
+
+
+def test_labor_lehnt_eine_produktions_root_vor_dem_bau_ab(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, roots=werk.kette / "root.crt")
+    _labor_abgelehnt(werk, ergebnis)
+    assert "(Test)" in ergebnis.stderr and _abdruck(werk.kette / "root.crt") in ergebnis.stderr
+
+
+def test_labor_lehnt_eine_test_root_aus_der_liste_des_checkouts_ab(werk_system):
+    werk = werk_system
+    (werk.repo / LISTE).write_text(_liste_text(werk.test_kette / "root.crt"))
+    ergebnis = _labor_lauf(werk)
+    _labor_abgelehnt(werk, ergebnis)
+    assert "steht in der Liste" in ergebnis.stderr
+
+
+@pytest.mark.parametrize("schluessel", ["pkcs11:token=echt;object=release", "pkcs11:token=echt?pin-value=GEHEIME-PIN"])
+def test_labor_lehnt_einen_pkcs11_schluessel_ab(werk_system, schluessel):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, schluessel=schluessel)
+    _labor_abgelehnt(werk, ergebnis)
+    assert "pkcs11" in ergebnis.stderr and "GEHEIME-PIN" not in ergebnis.stderr
+
+
+def test_labor_verlangt_roots(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, roots=False)
+    _labor_abgelehnt(werk, ergebnis)
+    assert "--roots" in ergebnis.stderr
+
+
+def test_labor_und_probe_schliessen_sich_aus(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, "--probe")
+    assert ergebnis.returncode == 2 and "Aufruf" in ergebnis.stderr and ergebnis.stdout == ""
+    assert _log(werk, "docker.log") == [] and not werk.aus.exists()
+
+
+def test_labor_ohne_system_baut_nur_das_container_bundle(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, ohne_system=True, api=None, portal=None)  # ohne System keine Adressen noetig
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert ergebnis.stdout == "" and _log(werk, "make_image.log") == [] and _log(werk, "rauc.log") == []
+    assert _log(werk, "scp.log") == []
+    assert sorted(p.name for p in (werk.aus / VERSION).iterdir()) == DATEIEN
+    assert "system" not in json.loads((werk.aus / VERSION / "manifest.json").read_text())
+    assert not (werk.aus / "image").exists() and not (werk.aus / "werk-bundle").exists()
+
+
+@pytest.mark.parametrize("kwargs", [{"api": None}, {"portal": "http://portal.setwell.de"}])
+def test_labor_mit_system_verlangt_die_adressen(werk_system, kwargs):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, **kwargs)
+    assert ergebnis.returncode == 2, ergebnis.stderr
+    assert _log(werk, "docker.log") == [] and not werk.aus.exists()
+
+
+def test_labor_mit_system_verlangt_gateway_version_gleich_release_version(werk_system):
+    werk = werk_system
+    ergebnis = _lauf(werk, *_labor_args(werk), ohne_system=False, version="9.9.8")
+    _labor_abgelehnt(werk, ergebnis)
+    assert "gateway/VERSION" in ergebnis.stderr
+
+
+def test_labor_braucht_weder_tag_noch_sauberen_baum_noch_ablage(werk_system):
+    werk = werk_system
+    (werk.repo / "unversioniert.txt").write_text("Labor darf einen unsauberen Baum haben\n")
+    _liste_auf_origin_main(werk, None)  # auch die Liste auf origin/main wird im Labor nicht gelesen
+    assert _git(werk.repo, "tag", "--list") == ""
+    ergebnis = _labor_lauf(werk)
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert ergebnis.stdout == "" and _log(werk, "scp.log") == []
+
+
+def test_labor_raeumt_bei_einem_fehler_auf(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, umgebung={"ATTRAPPE_DOCKER_FEHLER": "1"})
+    assert ergebnis.returncode != 0 and ergebnis.stdout == ""
+    assert not list(werk.aus.iterdir())  # ein vorgegebener Arbeitsordner bleibt, aber leer
+    assert not list(werk.bin.parent.glob("setwell-release.*"))

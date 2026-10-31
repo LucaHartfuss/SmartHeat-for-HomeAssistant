@@ -126,6 +126,11 @@ def test_labor_test_root_with_a_placeholder_list_is_accepted(tmp_path, test_root
     assert code == 0
 
 
+def test_labor_placeholder_line_does_not_clear_the_real_entries(tmp_path, test_roots, capsys):
+    code, err = _pruefe(tmp_path, "labor", PLATZHALTER + _liste(test_roots[0]), test_roots[0], capsys)
+    assert code == 1 and _abdruck(test_roots[0]) in err
+
+
 def test_labor_mixed_bundle_is_rejected(tmp_path, echte_roots, test_roots, capsys):
     code, _ = _pruefe(tmp_path, "labor", PLATZHALTER, test_roots[0] + echte_roots[0], capsys)
     assert code == 1

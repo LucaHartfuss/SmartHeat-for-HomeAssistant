@@ -11,7 +11,7 @@ Subject des Zertifikats (ca.py: TEST_ROOT_CN).
 Aufruf: roots_pruefen.py produktion|labor --liste DATEI ROOTS
   produktion: die Liste ist kein Platzhalter und nicht leer; jede Root steht mit ihrem Fingerabdruck in der Liste und hat
               kein "(Test)" im Subject (auch dann nicht, wenn sie in der Liste steht).
-  labor:      jede Root hat "(Test)" im Subject und steht nicht in der Liste (ein Platzhalter zaehlt als leere Liste).
+  labor:      jede Root hat "(Test)" im Subject und steht nicht in der Liste (eine reine Platzhalter-Liste hat keine Eintraege).
 Exit 0 = gueltig, 1 = abgelehnt (je Grund eine Zeile FEHLER: auf stderr), 2 = falscher Aufruf."""
 import argparse
 import re
@@ -64,8 +64,6 @@ def pruefe(modus: str, liste: str, roots_pem: str) -> list[str]:
             return ["Die Liste der Release-Roots ist ein Platzhalter: erst die echte Root eintragen (AP-04-Root, Runbook 13.2)"]
         if not abdruecke:
             return ["Die Liste der Release-Roots ist leer: erst die echte Root eintragen (AP-04-Root, Runbook 13.2)"]
-    elif platzhalter:
-        abdruecke = set()
     gruende = []
     for root in kette.load_roots(roots_pem):
         name, finger = root.subject.rfc4514_string(), abdruck(root)
