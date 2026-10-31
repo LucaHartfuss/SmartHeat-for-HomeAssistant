@@ -29,7 +29,9 @@ _ROLLEN = {
     "viessmann_vicare": {"curve": "number.slope", "level": "number.shift",
                          "room_setpoint": "number.normal_temperature", "mode_select": "climate.heizkreis"},
 }
-_SENSOREN = {"room_target": "sensor.room_target", "outdoor_temp": "sensor.outdoor_temp"}
+#: Das Thermostat des Bewohners: eine Climate-Entity, der Wunsch steht im Attribut `temperature` (wie bei `client1`)
+THERMOSTAT = "climate.thermostat"
+_SENSOREN = {"room_target": f"{THERMOSTAT}::temperature", "outdoor_temp": "sensor.outdoor_temp"}
 RAUMFUEHLER = "sensor.room_actual"
 
 #: Startzustand der Schreibziele (innerhalb der Grenzen, nirgends gleich einem Minimum); je Verteilsystem
@@ -96,22 +98,25 @@ def schreibziel(satz: str, hebel: str) -> str:
 
 def zustand(satz: str, verteilsystem: str) -> dict:
     """Zustand der Fake-HA beim Start: Schreibziele, Sensoren (mit device_class im Zustand wie im echten HA)."""
-    zustand = {"sensor.room_actual": 20.0, "sensor.room_target": 21.0, "sensor.outdoor_temp": 5.0,
-               **_START[(satz, verteilsystem)]}
+    zustand = {"sensor.room_actual": 20.0, "sensor.outdoor_temp": 5.0, THERMOSTAT: "heat",
+               f"{THERMOSTAT}::temperature": 21.0, **_START[(satz, verteilsystem)]}
     if satz.startswith("weishaupt"):
         zustand.update(_WEISHAUPT_START)
     if satz == "viessmann_vicare":
         zustand.update(_VIESSMANN_START)
     zustand.update({f"sensor.{name}::device_class": "temperature"
-                    for name in ("room_actual", "room_target", "outdoor_temp")})
+                    for name in ("room_actual", "outdoor_temp")})
     return zustand
 
 
 def schreibziele(satz: str) -> list[dict]:
-    """Registry-Eintraege der Schreibziele: eine Plattform, ein Config-Entry, ein Geraet (Waermeerzeuger)."""
+    """Registry-Eintraege: die Schreibziele (eine Plattform, ein Config-Entry, ein Geraet: der Waermeerzeuger) und das
+    Thermostat (eigene Plattform, eigenes Geraet)."""
     plattform = PLATTFORM[satz]
     return [{"entity_id": entity, "platform": plattform, "config_entry_id": KONFIG_EINTRAG[plattform],
-             "device_id": f"d-{plattform}"} for entity in _ROLLEN[satz].values()]
+             "device_id": f"d-{plattform}"} for entity in _ROLLEN[satz].values()] + [
+        {"entity_id": THERMOSTAT, "platform": "generic_thermostat", "config_entry_id": "e-thermostat",
+         "device_id": "d-thermostat"}]
 
 
 def konfiguration(satz: str, verteilsystem: str) -> dict:

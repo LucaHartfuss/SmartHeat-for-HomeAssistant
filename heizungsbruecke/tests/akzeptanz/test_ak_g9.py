@@ -1,7 +1,7 @@
 """G-9: Endzustaende. Wird die Regelung beendet (Abmelden, Abo-Ende), stehen danach die zuletzt gelernten Regelwerte
 und die Heizgrenze, die vor dem ersten Schreiben stand; schlaegt das Zuruecksetzen fehl, versucht das Add-on es weiter."""
 import pytest
-from anlagen import LEERE_KONFIGURATION, konfiguration
+from anlagen import LEERE_KONFIGURATION, konfiguration, schreibziel
 from beobachtung import COMFORT_BOOST, REGELWERTE, SATZ, boost_anlage, boost_starts, stand
 
 from smartheat_device.prozess import Neustart
@@ -17,8 +17,8 @@ def _abgemeldet(anlage) -> bool:
                for m in anlage.ha.meldungen)
 
 
-def _abmelden(anlage) -> None:
-    anlage.konfiguration_senden(2, LEERE_KONFIGURATION)
+def _abmelden(anlage, version: int = 2) -> None:
+    anlage.konfiguration_senden(version, LEERE_KONFIGURATION)
     with pytest.raises(Neustart):
         anlage.runde(2)
     anlage.neu_starten()
@@ -62,6 +62,7 @@ def test_ak_g9_02_abgelehnte_rueckstellung_wird_weiter_versucht(welt):
     assert stand(anlage) == COMFORT_BOOST  # nichts ist zurueckgestellt
     texte = [t for t in anlage.meldetexte() if "nicht auf die zuletzt gelernten Werte" in t]
     assert texte and all(wert in texte[0] for wert in ("Heizkurve 0,9", "Zone 22", "Heizgrenze 17"))
+    assert any(m[0] == "dauerhaft" and "nicht auf die zuletzt gelernten Werte" in m[2] for m in anlage.ha.meldungen)  # kritisch
     assert "smartheat_wiederherstellung" not in anlage.zurueckgenommen()
     anlage.laufen_ueber_neustarts(2 * 3600)
     versuche = sorted({zeit for _, _, zeit in anlage.ha.abgelehnt})
@@ -72,3 +73,36 @@ def test_ak_g9_02_abgelehnte_rueckstellung_wird_weiter_versucht(welt):
     abgelehnt, schreibaufrufe = len(anlage.ha.abgelehnt), len(anlage.ha.schreibvorgaenge)
     anlage.laufen_ueber_neustarts(2 * 3600)  # Erfolg beendet die Versuche
     assert (len(anlage.ha.abgelehnt), len(anlage.ha.schreibvorgaenge)) == (abgelehnt, schreibaufrufe)
+
+
+#: lokale Mindestliste der Rueckstellung je Hebelsatz (woertlich, nie aus dem Produktcode)
+MINDESTLISTE = {"vaillant_vrc720": ("heat_limit",), "weishaupt_wwp": ("curve", "room_setpoint", "heat_limit"),
+                "weishaupt_wwp_basis": ("room_setpoint",), "viessmann_vicare": ("curve", "level", "room_setpoint")}
+#: Werte des Servers, die von den Startwerten der Anlage verschieden sind
+GELERNT = {"vaillant_vrc720": {"curve": 0.8, "room_setpoint": 21.5, "heat_limit": 17.0},
+           "weishaupt_wwp": {"curve": 0.8, "room_setpoint": 21.5, "heat_limit": 17.0},
+           "weishaupt_wwp_basis": {"room_setpoint": 21.5},
+           "viessmann_vicare": {"curve": 0.8, "level": -2.0, "room_setpoint": 21.5}}
+KUERZER = [("vaillant_vrc720", []), ("weishaupt_wwp", []), ("weishaupt_wwp", ["curve", "room_setpoint"]),
+           ("weishaupt_wwp_basis", []), ("viessmann_vicare", []), ("viessmann_vicare", ["curve", "level"])]
+
+
+@pytest.mark.akzeptanz("AK-G9-06")
+@pytest.mark.parametrize("satz,zurueck", KUERZER, ids=[f"{s}-{'-'.join(z) or 'leer'}" for s, z in KUERZER])
+def test_ak_g9_06_kuerzere_rueckstellliste_wird_abgewiesen(welt, satz, zurueck):
+    anlage = welt(satz, "Heizkoerper")
+    anlage.starten()
+    ursprung = {hebel: anlage.ha.states[schreibziel(satz, hebel)] for hebel in MINDESTLISTE[satz]}
+    anlage.server_antwortet(GELERNT[satz])
+    anlage.runde(2)
+    assert all(anlage.ha.states[schreibziel(satz, h)] != ursprung[h] for h in ursprung)  # die Regelung hat geschrieben
+    neu = konfiguration(satz, "Heizkoerper")
+    neu["bindungsparameter"]["zurueck"] = zurueck  # der Server will weniger zurueckstellen als die Mindestliste
+    neu["bindungsparameter"]["zurueck_optional"] = []
+    anlage.konfiguration_senden(2, neu)
+    anlage.runde(2)
+    antworten = [r for r in anlage.link.of("up/result") if r["dokument"] == "konfiguration" and r["version"] == 2]
+    assert [(r["ok"], r["error"]["grund"], r["error"]["details"]["feld"]) for r in antworten] == [
+        (False, "ungueltig", "zurueck")]  # abgewiesen, mit Feld
+    _abmelden(anlage, version=3)  # das vorige Dokument gilt noch: es stellt mindestens die Mindestliste zurueck
+    assert {hebel: anlage.ha.states[schreibziel(satz, hebel)] for hebel in ursprung} == ursprung

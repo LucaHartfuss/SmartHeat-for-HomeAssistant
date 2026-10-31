@@ -92,13 +92,16 @@ def _antworten(satz: str, verteilsystem: str, rng: random.Random):
 HILFSZIELE = {"number.komfort", "number.absenk", "select.betriebsart", "climate.heizkreis::preset_mode", "climate.heizkreis"}
 
 
-def _geschrieben(anlage, satz: str) -> dict[str, list]:
-    """Alle Schreibwerte je Hebel; ausser den Hilfszielen sind nur Schreibziele der Hebel erlaubt, mit endlichen Zahlen."""
+def _geschrieben(anlage, satz: str, raumsoll: tuple[float, float]) -> dict[str, list]:
+    """Alle Schreibwerte je Hebel; ausser den Hilfszielen sind nur Schreibziele der Hebel erlaubt, mit endlichen Zahlen.
+    Komfort- und Absenkwert liegen im Bereich des Raum-Solls (sie sind Raum-Soll-Werte)."""
     ziele = {schreibziel(satz, name): name for name in (*hebel_von(satz), *(["min_flow"] if satz.startswith("vaillant") else []))}
     werte: dict[str, list] = {name: [] for name in ziele.values()}
     for entity, wert, _ in anlage.ha.schreibvorgaenge:
         if entity in HILFSZIELE:
             assert isinstance(wert, str) or math.isfinite(wert), (entity, wert)
+            if entity in ("number.komfort", "number.absenk"):
+                assert raumsoll[0] <= wert <= raumsoll[1], (entity, wert)
             continue
         assert entity in ziele, f"Schreibaufruf auf {entity}"
         werte[ziele[entity]].append(wert)
@@ -127,7 +130,7 @@ def test_ak_g10_01_feindliche_antworten_bleiben_in_den_grenzen(welt, satz, verte
         anlage.runde(2)
         anlage.raum(22.0)
         anlage.runde(TAG)  # ein neuer Tag: das Tagesbudget der Weishaupt-Regler und die Abstaende gelten wieder
-    werte = _geschrieben(anlage, satz)
+    werte = _geschrieben(anlage, satz, bereiche["room_setpoint"])
     for name, liste in werte.items():
         untere, obere = bereiche[name]
         assert all(isinstance(w, float) and untere <= w <= obere for w in liste), (name, [w for w in liste if not untere <= w <= obere])

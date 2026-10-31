@@ -4,20 +4,27 @@ naechsten Runde. Gemischt in `welt.Anlage` ein (braucht `ha`, `trigger`)."""
 import io
 import os
 
-from anlagen import RAUMFUEHLER
+from anlagen import RAUMFUEHLER, THERMOSTAT
 
 import heizungsbruecke.__main__ as main_module
 from smartheat_device import device, identity
 from smartheat_device.prozess import Neustart
 
-ROOM_TARGET = "sensor.room_target"
+ROOM_TARGET = THERMOSTAT
 
 
 class Handgriffe:
-    def _zustandswechsel(self, entity: str, wert, user: str | None) -> None:
-        self.ha.states[entity] = wert
-        to_state = {"state": str(wert), "attributes": {}, "context": {"user_id": user, "parent_id": None}}
-        self.trigger[-1].kwargs["on_trigger_event"]({"platform": "state", "entity_id": entity, "to_state": to_state})
+    def _zustandswechsel(self, entity: str, wert, user: str | None, attribut: str | None = None) -> None:
+        """Zustand (oder Attribut) von `entity` wechselt auf `wert`; HA meldet es als Trigger."""
+        if attribut is None:
+            self.ha.states[entity] = wert
+            to_state = {"state": str(wert), "attributes": {}, "context": {"user_id": user, "parent_id": None}}
+        else:
+            self.ha.states[f"{entity}::{attribut}"] = wert
+            to_state = {"state": str(self.ha.states[entity]), "attributes": {attribut: wert},
+                        "context": {"user_id": user, "parent_id": None}}
+        self.trigger[-1].kwargs["on_trigger_event"]({"platform": "state", "entity_id": entity, "attribute": attribut,
+                                                     "to_state": to_state})
 
     def raum(self, wert: float) -> None:
         """Der Raumfuehler zeigt `wert` (gemeldet wie jeder Zustandswechsel)."""
@@ -35,7 +42,7 @@ class Handgriffe:
 
     def wunsch(self, wert: float) -> None:
         """Ein Bewohner stellt am Thermostat `wert` ein (nach der Entprellung von HA: 10 s stabil)."""
-        self._zustandswechsel(ROOM_TARGET, wert, "bewohner")
+        self._zustandswechsel(ROOM_TARGET, wert, "bewohner", "temperature")
 
     def raum_unlesbar(self) -> None:
         """Der Raumfuehler meldet `unavailable` (gemeldet wie jeder Zustandswechsel)."""

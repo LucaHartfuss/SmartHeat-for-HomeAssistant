@@ -102,6 +102,7 @@ def test_ak_g3_03_rastung_weist_heizkoerper_ab(welt, satz, verteilsystem):
     with pytest.raises(Neustart):  # das Abmelden startet den Prozess neu
         anlage.runde(2)
     assert anlage.ergebnis(3) == {"ok": True, "grund": None}
+    anlage.neu_starten()  # der Prozess kommt neu hoch: die Rastung ueberlebt den Neustart
     anlage.konfiguration_senden(4, heizkoerper)  # und wieder Heizkoerper
     anlage.runde(2)
     assert anlage.ergebnis(4) == {"ok": False, "grund": "hebelsatz_eingerastet"}

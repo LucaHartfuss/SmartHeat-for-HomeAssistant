@@ -72,7 +72,7 @@ def test_ak_g6_02_weishaupt_schreibt_hoechstens_zehnmal_am_tag(welt):
     anlage.starten()
     kurve = schreibziel("weishaupt_wwp", "curve")
     heute = _fuenfzehn_werte(anlage)
-    assert 0 < len(heute) <= 10  # das Tageslimit des Geraetespeichers
+    assert len(heute) == 10  # das Tageslimit des Geraetespeichers ist ausgeschoepft, nicht nur nicht ueberschritten
     assert [w for e, w, _ in heute if e == kurve][-1] < 1.0  # der letzte Kurvenwert fehlt noch
     assert len([t for t in anlage.meldetexte() if "Tageslimit" in t]) == 1  # eine Meldung, nicht je abgewiesenem Wert
     anlage.runde(TAG)  # der Folgetag: der letzte Kurvenwert wird nachgeholt
@@ -102,8 +102,10 @@ def test_ak_g6_03_lockerung_wird_abgewiesen(welt, satz, aendern, fehler):
     anlage.starten()
     neu = konfiguration(satz, "Heizkoerper")
     aendern(neu)
+    vorher = (dict(anlage.ha.states), list(anlage.ha.schreibvorgaenge))
     anlage.konfiguration_senden(2, neu)  # der Server lockert den Schreibschutz
     anlage.runde(2)
+    assert (anlage.ha.states, anlage.ha.schreibvorgaenge) == vorher  # die Abweisung aendert nichts an der Anlage
     antworten = [r for r in anlage.link.of("up/result") if r["dokument"] == "konfiguration" and r["version"] == 2]
     assert [(r["ok"], r["error"]) for r in antworten] == [(False, fehler)]  # abgewiesen, mit Feld und Regel
     if satz == "weishaupt_wwp":  # das alte Dokument gilt: das Tageslimit bleibt bei 10

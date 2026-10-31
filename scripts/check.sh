@@ -83,7 +83,7 @@ tests() {
   return $rc
 }
 # Akzeptanzsuite des Add-ons: eigener Lauf, die conftest.py im Ordner verlangt --confcutdir (nichts aus tests/ laden)
-akzeptanz() { (cd heizungsbruecke && "$PY" -m pytest -q -p no:cacheprovider --confcutdir=tests/akzeptanz tests/akzeptanz); }
+akzeptanz() { (cd heizungsbruecke && "$PY" -m pytest -q -p no:cacheprovider --confcutdir=tests/akzeptanz tests/akzeptanz --durations=5); }
 # Das eigene Repo ist dieser Checkout (auch ein Worktree), die Nachbarn kommen aus dem Dev-Root.
 contract() { "$PY" "$DEV/tools/contract_check.py" --addon "$PWD"; }
 docker_tests() {
