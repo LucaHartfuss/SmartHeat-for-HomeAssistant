@@ -8,6 +8,12 @@ Kommentare. Eine Zeile mit dem Platzhalter-Marker (wie in release-roots.pem) mac
 in der Liste ist nur eine Lesehilfe; entschieden wird ueber den Fingerabdruck. "Test-Root" heisst: "(Test)" steht im
 Subject des Zertifikats (ca.py: TEST_ROOT_CN).
 
+Der Schluesselbund muss ausserdem die strenge Form haben, die auch gateway/image/release_roots.sh verlangt: nur Leerzeilen
+ausserhalb der Bloecke, jeder Block genau "-----BEGIN CERTIFICATE-----" bis "-----END CERTIFICATE-----" mit Base64-Zeilen
+dazwischen, mindestens ein Block, sonst kein Text, und die Zahl der Bloecke ist die Zahl der Roots, die kette.load_roots
+liest. Das Geraet liest nur CERTIFICATE-Bloecke und ueberliest Text; RAUC (OpenSSL) liest im selben Schluesselbund auch
+andere Blockarten wie TRUSTED CERTIFICATE. Eine so angehaengte fremde Root saehe diese Pruefung sonst nicht.
+
 Aufruf: roots_pruefen.py produktion|labor --liste DATEI ROOTS
   produktion: die Liste ist kein Platzhalter und nicht leer; jede Root steht mit ihrem Fingerabdruck in der Liste und hat
               kein "(Test)" im Subject (auch dann nicht, wenn sie in der Liste steht).
@@ -26,6 +32,9 @@ from smartheat_host import kette  # noqa: E402
 
 TEST_MARKE = "(Test)"
 ZEILE = re.compile(r"^[0-9a-fA-F]{64}\s+\S.*$")
+BLOCK_ANFANG = "-----BEGIN CERTIFICATE-----"
+BLOCK_ENDE = "-----END CERTIFICATE-----"
+BASE64_ZEILE = re.compile(r"^[A-Za-z0-9+/]+=*$")
 
 
 class ListeFehler(Exception):
@@ -48,6 +57,32 @@ def lies_liste(text: str) -> tuple[set[str], bool]:
     return abdruecke, platzhalter
 
 
+def zaehle_bloecke(pem: str) -> int:
+    """Zahl der Zertifikatsbloecke; eine Abweichung von der strengen Form ist ein ListeFehler."""
+    bloecke, im_block, zeilen = 0, False, 0
+    for nummer, zeile in enumerate(pem.split("\n"), start=1):
+        if not im_block:
+            if not zeile:
+                continue
+            if zeile != BLOCK_ANFANG:
+                raise ListeFehler(f"Schluesselbund, Zeile {nummer}: nur Bloecke {BLOCK_ANFANG} und Leerzeilen erlaubt")
+            im_block, zeilen = True, 0
+        elif zeile == BLOCK_ENDE:
+            if zeilen == 0:
+                raise ListeFehler(f"Schluesselbund, Zeile {nummer}: leerer Zertifikatsblock")
+            im_block = False
+            bloecke += 1
+        elif BASE64_ZEILE.match(zeile):
+            zeilen += 1
+        else:
+            raise ListeFehler(f"Schluesselbund, Zeile {nummer}: im Zertifikatsblock nur Base64-Zeilen erlaubt")
+    if im_block:
+        raise ListeFehler("Schluesselbund: Zertifikatsblock ohne Ende")
+    if bloecke == 0:
+        raise ListeFehler("Schluesselbund: kein Zertifikatsblock")
+    return bloecke
+
+
 def abdruck(root: x509.Certificate) -> str:
     return root.fingerprint(hashes.SHA256()).hex()
 
@@ -64,8 +99,12 @@ def pruefe(modus: str, liste: str, roots_pem: str) -> list[str]:
             return ["Die Liste der Release-Roots ist ein Platzhalter: erst die echte Root eintragen (AP-04-Root, Runbook 13.2)"]
         if not abdruecke:
             return ["Die Liste der Release-Roots ist leer: erst die echte Root eintragen (AP-04-Root, Runbook 13.2)"]
+    bloecke = zaehle_bloecke(roots_pem)
+    roots = kette.load_roots(roots_pem)
+    if len(roots) != bloecke:
+        raise ListeFehler(f"Schluesselbund: {bloecke} Zertifikatsbloecke, aber {len(roots)} Roots gelesen")
     gruende = []
-    for root in kette.load_roots(roots_pem):
+    for root in roots:
         name, finger = root.subject.rfc4514_string(), abdruck(root)
         if modus == "produktion":
             if ist_test_root(root):

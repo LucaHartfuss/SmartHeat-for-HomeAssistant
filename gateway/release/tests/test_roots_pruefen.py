@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -97,7 +99,7 @@ def test_production_empty_list_is_rejected(tmp_path, echte_roots, capsys):
 def test_broken_line_is_rejected_in_both_modes(tmp_path, echte_roots, test_roots, capsys, modus, zeile):
     roots = echte_roots[0] if modus == "produktion" else test_roots[0]
     code, err = _pruefe(tmp_path, modus, _liste(roots) + zeile + "\n", roots, capsys)
-    assert code == 1 and "Zeile" in err
+    assert code == 1 and "Zeile 4" in err
 
 
 def test_hex_in_capitals_is_accepted(tmp_path, echte_roots, capsys):
@@ -144,11 +146,59 @@ def test_pem_with_a_broken_block_is_a_load_error_for_the_whole_bundle(tmp_path, 
     assert code == 1 and err.startswith("FEHLER:") and "Root" in err
 
 
-def test_pem_with_text_before_the_certificate_is_read_like_on_the_device(tmp_path, echte_roots, capsys):
+def test_pem_with_text_before_the_certificate_is_rejected(tmp_path, echte_roots, capsys):
     pem = "Notiz\n" + echte_roots[0]
-    assert len(kette.load_roots(pem)) == 1  # derselbe Lader wie am Geraet: Text davor ist dort ebenso harmlos
-    code, _ = _pruefe(tmp_path, "produktion", _liste(echte_roots[0]), pem, capsys)
+    assert len(kette.load_roots(pem)) == 1  # das Geraet ueberliest den Text, RAUC und die Image-Pruefung nicht
+    code, err = _pruefe(tmp_path, "produktion", _liste(echte_roots[0]), pem, capsys)
+    assert code == 1 and "Zeile 1" in err
+
+
+def test_pem_with_text_after_the_certificate_is_rejected(tmp_path, echte_roots, capsys):
+    code, err = _pruefe(tmp_path, "produktion", _liste(echte_roots[0]), echte_roots[0] + "Notiz\n", capsys)
+    assert code == 1 and "Zeile" in err
+
+
+@pytest.mark.parametrize("modus", ["produktion", "labor"])
+def test_appended_trusted_certificate_block_is_rejected(tmp_path, echte_roots, test_roots, capsys, modus):
+    roots = echte_roots[0] if modus == "produktion" else test_roots[0]
+    fremd = (echte_roots[1] if modus == "produktion" else test_roots[1]).replace("CERTIFICATE", "TRUSTED CERTIFICATE")
+    assert len(kette.load_roots(roots + fremd)) == 1  # cryptography sieht den Block nicht, OpenSSL schon
+    code, err = _pruefe(tmp_path, modus, _liste(echte_roots[0]), roots + fremd, capsys)
+    assert code == 1 and "TRUSTED" not in err and "Zeile" in err
+
+
+def test_appended_trusted_block_with_arbitrary_base64_is_rejected(tmp_path, echte_roots, capsys):
+    block = "-----BEGIN TRUSTED CERTIFICATE-----\nAAAA\n-----END TRUSTED CERTIFICATE-----\n"
+    code, _ = _pruefe(tmp_path, "produktion", _liste(echte_roots[0]), echte_roots[0] + block, capsys)
+    assert code == 1
+
+
+def test_pem_with_blank_lines_between_blocks_is_accepted(tmp_path, echte_roots, capsys):
+    code, _ = _pruefe(tmp_path, "produktion", _liste(*echte_roots), "\n" + echte_roots[0] + "\n\n" + echte_roots[1], capsys)
     assert code == 0
+
+
+@pytest.mark.parametrize("pem", ["", "\n\n", "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n",
+                                 "-----BEGIN CERTIFICATE-----\nAAAA\n"])
+def test_pem_without_a_proper_block_is_rejected(tmp_path, echte_roots, capsys, pem):
+    code, err = _pruefe(tmp_path, "produktion", _liste(echte_roots[0]), pem, capsys)
+    assert code == 1 and err.startswith("FEHLER:")
+
+
+def test_block_count_must_equal_the_number_of_roots_read(tmp_path, echte_roots, capsys, monkeypatch):
+    monkeypatch.setattr(roots_pruefen.kette, "load_roots", lambda pem: [])
+    code, err = _pruefe(tmp_path, "produktion", _liste(echte_roots[0]), echte_roots[0], capsys)
+    assert code == 1 and "1 Zertifikatsbloecke" in err
+
+
+def test_script_runs_isolated_without_pythonpath(tmp_path, echte_roots):
+    liste, roots = tmp_path / "liste.sha256", tmp_path / "roots.pem"
+    liste.write_text(_liste(echte_roots[0]))
+    roots.write_text(echte_roots[0])
+    skript = Path(roots_pruefen.__file__).resolve()
+    lauf = subprocess.run([sys.executable, "-I", str(skript), "produktion", "--liste", str(liste), str(roots)],
+                          capture_output=True, text=True, check=False)
+    assert lauf.returncode == 0, lauf.stderr
 
 
 def test_unreadable_files_are_an_error(tmp_path, capsys):

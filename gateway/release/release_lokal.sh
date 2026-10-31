@@ -10,8 +10,10 @@
 #                 die URI, siehe signieren.py).
 #   --zertifikat  das Release-Zertifikat (PEM, von ca.py ausstellen).
 #   --roots       Schluesselbund, gegen den die Signatur sofort geprueft wird (Standard: gateway/host/release-roots.pem, der
-#                 Schluesselbund im Geraete-Image). Auch das System-Bundle wird gegen ihn geprueft; ein anderer als der Standard
-#                 geht als --release-roots an make_image.sh (Labor-Image mit eigener Root).
+#                 Schluesselbund im Geraete-Image). Auch das System-Bundle wird gegen ihn geprueft. Das Skript kopiert ihn
+#                 einmal in einen privaten Temp-Ordner (0700 unter $TMPDIR, am Ende geloescht); Pruefung, Signatur, System-Bundle
+#                 und Werks-Image nehmen genau diese Kopie, und sie geht bei einem System-Bau immer als --release-roots an
+#                 make_image.sh (auch beim Standard-Schluesselbund).
 #   --device-api-url, --portal-base-url
 #                 Adressen im Werks-Image (eigener DNS-Name per https, gateway/image/own_url.sh); Pflicht, solange das
 #                 System gebaut wird.
@@ -42,8 +44,12 @@
 #     wer einen Tag setzt, kann die Liste in dessen Commit aendern),
 #   - jede Root des Schluesselbunds (Standard wie eigenes --roots) steht mit ihrem Fingerabdruck in
 #     gateway/host/release-roots.sha256 aus demselben frisch geholten origin/main und ist keine Test-Root ("(Test)" im Namen)
-#     (roots_pruefen.py, vor jedem Bau): die Liste kommt nicht aus dem Checkout, weil wer einen Tag setzt, sie im Commit
-#     aendern koennte; origin/main bewegt nur der Release-Workflow.
+#     (roots_pruefen.py, vor jedem Bau). Der Schluesselbund muss dabei die strenge Form haben (nur Bloecke
+#     "BEGIN CERTIFICATE"/"END CERTIFICATE" und Leerzeilen, kein anderer Text, keine andere Blockart wie TRUSTED CERTIFICATE,
+#     die RAUC zusaetzlich liest). Die Liste kommt aus origin/main, das nur der Release-Workflow bewegt: Das Bundle laesst
+#     sich erst nach CI-Gate und Fast-Forward von main bauen, ein Root-Tausch muss diesen Weg gehen. Das Skript und die
+#     Werkzeuge selbst kommen aus dem Checkout des Tags; gegen einen boesartigen Tag-Commit schuetzt die Tag-Signatur des
+#     Besitzers samt Gate (wie bei allowed_signers), nicht die Herkunft der Liste.
 # Ablauf: Image bauen (docker buildx, nur linux/arm64, OCI-Archiv mit SBOM, Zeitstempel aus dem Commit), CycloneDX-SBOM
 # (SG-16) des Archivs per gepinntem syft-Container nach <aus>/gateway-<VERSION>.cdx.json (neben dem Bundle, nicht darin),
 # build_bundle.py, verify_bundle.py (Neubau aus diesem Stand), signieren.py (Signatur und sofortige Pruefung mit dem Code
@@ -105,9 +111,19 @@ tag="gateway-v$version"
 [[ "$schluessel" == pkcs11:* ]] || [ -f "$schluessel" ] || fehler "Schluesseldatei fehlt"
 [ -f "$zertifikat" ] || fehler "Zertifikat fehlt: $zertifikat"
 [ -f "$roots" ] || fehler "Schluesselbund fehlt: $roots"
+# Der Schluesselbund wird einmal in einen privaten Ordner kopiert; ab hier pruefen und verwenden alle (roots_pruefen.py,
+# signieren.py, rauc_bundle.py, make_image.sh) genau diese Kopie, nie die Originaldatei, die sich dazwischen aendern koennte.
+# Ob es der Standard-Schluesselbund ist, entscheidet das Original.
+roots_original="$roots"
+roots_ordner=""
+roots_abraeumen() { if [ -n "$roots_ordner" ]; then rm -rf "${roots_ordner:?}"; fi; }
+trap roots_abraeumen EXIT
+roots_ordner="$(mktemp -d "${TMPDIR:-/tmp}/setwell-roots.XXXXXX")"
+cp -- "$roots" "$roots_ordner/release-roots.pem" || fehler "Schluesselbund nicht zu kopieren: $roots_original"
+roots="$roots_ordner/release-roots.pem"
 if [ "$probe" = 1 ]; then
   [[ "$schluessel" != pkcs11:* ]] || fehler "--probe signiert nie mit einem pkcs11:-Schluessel (echtes Token, ohne Tag- und Baum-Check)"
-  [ "$(realpath -- "$roots")" != "$(realpath -- "$repo/gateway/host/release-roots.pem")" ] \
+  [ "$(realpath -- "$roots_original")" != "$(realpath -- "$repo/gateway/host/release-roots.pem")" ] \
     || fehler "--probe braucht --roots einer Wegwerf-Kette, nicht den Standard-Schluesselbund (gateway/host/release-roots.pem)"
 fi
 if [ "$labor" = 1 ]; then
@@ -115,7 +131,7 @@ if [ "$labor" = 1 ]; then
   [[ "$schluessel" != pkcs11:* ]] || fehler "--labor signiert nie mit einem pkcs11:-Schluessel (echtes Token, ohne Tag- und Baum-Check)"
   # Nur Test-Roots, und keine aus der gepinnten Liste (die des Checkouts genuegt: sie darf hier nur nichts verraten).
   py "$here/roots_pruefen.py" labor --liste "$repo/gateway/host/release-roots.sha256" "$roots" >&2 \
-    || fehler "Schluesselbund $roots ist fuer den Labor-Bau nicht erlaubt (nur Test-Roots, nicht aus gateway/host/release-roots.sha256)"
+    || fehler "Schluesselbund $roots_original ist fuer den Labor-Bau nicht erlaubt (nur Test-Roots, nicht aus gateway/host/release-roots.sha256)"
 fi
 # Mit System (Standard) braucht es das Werkzeug des Werks-Images; der Probelauf der CI baut kein Image.
 system=1
@@ -159,7 +175,7 @@ if [ "$probe" = 0 ] && [ "$labor" = 0 ]; then
   git -C "$repo" show origin/main:gateway/host/release-roots.sha256 >"$roots_liste" 2>/dev/null \
     || { rm -f "$roots_liste"; fehler "gateway/host/release-roots.sha256 fehlt auf origin/main (gepinnte Liste der Release-Roots)"; }
   py "$here/roots_pruefen.py" produktion --liste "$roots_liste" "$roots" >&2 \
-    || { rm -f "$roots_liste"; fehler "Schluesselbund $roots passt nicht zur Liste der Release-Roots auf origin/main"; }
+    || { rm -f "$roots_liste"; fehler "Schluesselbund $roots_original passt nicht zur Liste der Release-Roots auf origin/main"; }
   rm -f "$roots_liste"
   [ "$(git -C "$repo" rev-parse "$tag^{commit}")" = "$(git -C "$repo" rev-parse HEAD)" ] \
     || fehler "HEAD ist nicht der Commit von $tag (erst den Tag auschecken)"
@@ -183,6 +199,7 @@ for pfad in "$bundle" "$archiv" "$sbom" "$werk_bundle" "$image_aus" "$buehne" "$
 done
 abraeumen() {
   local rc=$?
+  roots_abraeumen
   if [ "$eigener_ordner" = 1 ] && { [ "$probe" = 1 ] || [ "$rc" -ne 0 ]; }; then
     rm -rf "${aus:?}"
   elif [ "$rc" -ne 0 ]; then
@@ -213,10 +230,9 @@ if [ "$system" = 1 ]; then
   # Manifest erst danach (sonst haengte das Manifest vom Image ab, das Image vom Manifest).
   bundle_bauen "$werk_bundle"
   image_args=(--bundle "$werk_bundle" --out "$image_aus" --device-api-url "$api_url" --portal-base-url "$portal_url")
-  # Eigener Schluesselbund (Labor, Wegwerf-Kette): das Image bekommt dieselben Roots, gegen die hier signiert wird.
-  if [ "$(realpath -- "$roots")" != "$(realpath -- "$repo/gateway/host/release-roots.pem")" ]; then
-    image_args+=(--release-roots "$roots")
-  fi
+  # Das Image bekommt immer genau die gepruefte Kopie, gegen die hier signiert wird (auch beim Standard-Schluesselbund);
+  # make_image.sh prueft ihre Form ein zweites Mal.
+  image_args+=(--release-roots "$roots")
   bash "$make_image" "${image_args[@]}" >&2 || fehler "make_image.sh gescheitert (Werks-Image nicht gebaut)"
   py "$here/rauc_bundle.py" --version "$version" --system "$image_aus/system-$version.ext4" \
     --boot "$image_aus/boot-$version.vfat" --zertifikat "$zertifikat" --schluessel "$schluessel" --roots "$roots" \

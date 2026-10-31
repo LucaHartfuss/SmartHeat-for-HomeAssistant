@@ -499,9 +499,10 @@ done
 import json, os, sys
 log, bundle, *argv = sys.argv[1:]
 manifest = json.load(open(os.path.join(bundle, "manifest.json")))
+roots = open(argv[argv.index("--release-roots") + 1]).read() if "--release-roots" in argv else None
 with open(log, "a") as datei:
     datei.write(json.dumps({"argv": argv, "dateien": sorted(os.listdir(bundle)), "system": "system" in manifest,
-                            "min": manifest["min_updater_version"]}) + "\\n")
+                            "min": manifest["min_updater_version"], "roots": roots}) + "\\n")
 PY
 if [ -n "${ATTRAPPE_MAKE_IMAGE_FEHLER:-}" ]; then
   echo "FEHLER: linux/arm64 braucht einen arm64-Docker-Host oder QEMU-binfmt fuer aarch64" >&2
@@ -597,20 +598,72 @@ def test_werks_image_traegt_das_bundle_ohne_system_und_die_adressen(werk_system)
     _signierter_tag(werk)
     assert _system_lauf(werk).returncode == 0
     (aufruf,) = _log(werk, "make_image.log")
-    assert aufruf["argv"] == ["--bundle", str(werk.aus.resolve() / "werk-bundle"), "--out", str(werk.aus.resolve() / "image"),
-                              "--device-api-url", API_URL, "--portal-base-url", PORTAL_URL,
-                              "--release-roots", str(werk.kette / "root.crt")]
+    *vorn, flagge, kopie = aufruf["argv"]
+    assert vorn == ["--bundle", str(werk.aus.resolve() / "werk-bundle"), "--out", str(werk.aus.resolve() / "image"),
+                    "--device-api-url", API_URL, "--portal-base-url", PORTAL_URL]
+    assert flagge == "--release-roots" and kopie != str(werk.kette / "root.crt")
+    assert aufruf["roots"] == (werk.kette / "root.crt").read_text()
     # das erste Bundle des Geraets: signiert, ohne Systemteil (sonst haengte das Manifest vom Image ab)
     assert aufruf["dateien"] == sorted([*DATEIEN]) and aufruf["system"] is False and aufruf["min"] == "0.8.0"
 
 
-def test_standard_schluesselbund_geht_nicht_an_make_image(werk_system):
-    """Ohne --roots gilt gateway/host/release-roots.pem, der Schluesselbund im Image: --release-roots entfaellt."""
+def test_standard_schluesselbund_geht_als_kopie_an_make_image(werk_system):
+    """Auch ohne --roots (Standard-Schluesselbund) bekommt das Image die gepruefte Kopie mit gleichem Inhalt."""
     werk = werk_system
     _signierter_tag(werk)
     assert _system_lauf(werk, roots=False).returncode == 0
     (aufruf,) = _log(werk, "make_image.log")
-    assert "--release-roots" not in aufruf["argv"] and len(aufruf["argv"]) == 8
+    assert len(aufruf["argv"]) == 10 and aufruf["argv"][-2] == "--release-roots"
+    standard = werk.repo / "gateway" / "host" / "release-roots.pem"
+    assert aufruf["argv"][-1] != str(standard) and aufruf["roots"] == standard.read_text()
+
+
+PYTHON_PROTOKOLL = f'''#!{sys.executable}
+import json, os, sys
+with open(os.path.join(os.environ["ATTRAPPE_LOGS"], "py.log"), "a") as protokoll:
+    protokoll.write(json.dumps(sys.argv[1:]) + "\\n")
+os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])
+'''
+
+
+@pytest.mark.parametrize("standard", [True, False])
+def test_alle_verwender_bekommen_dieselbe_kopie_des_schluesselbunds(werk_system, standard):
+    werk = werk_system
+    wrapper = werk.bin / "python-protokoll"
+    wrapper.write_text(PYTHON_PROTOKOLL)
+    wrapper.chmod(0o755)
+    _signierter_tag(werk)
+    ergebnis = _system_lauf(werk, roots=not standard, umgebung={"PYTHON": str(wrapper)})
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    original = werk.repo / "gateway" / "host" / "release-roots.pem" if standard else werk.kette / "root.crt"
+    kopien = {}
+    for argv in _log(werk, "py.log"):
+        name = Path(argv[0]).name
+        if name == "roots_pruefen.py":
+            kopien.setdefault(name, []).append(argv[-1])
+        elif name in ("signieren.py", "rauc_bundle.py"):
+            kopien.setdefault(name, []).append(argv[argv.index("--roots") + 1])
+    (aufruf,) = _log(werk, "make_image.log")
+    kopien["make_image.sh"] = [aufruf["argv"][aufruf["argv"].index("--release-roots") + 1]]
+    assert sorted(kopien) == ["make_image.sh", "rauc_bundle.py", "roots_pruefen.py", "signieren.py"]
+    assert len(kopien["signieren.py"]) == 2  # Bundle ohne System und Bundle mit System
+    (kopie,) = {pfad for pfade in kopien.values() for pfad in pfade}  # alle Verwender: derselbe Pfad
+    assert kopie != str(original) and not kopie.startswith(str(werk.repo))
+    assert aufruf["roots"] == original.read_text()
+    assert not Path(kopie).exists() and not list(werk.bin.parent.glob("setwell-roots.*"))  # auch nach Erfolg weg
+    assert (werk.aus / "image").is_dir()  # die Ergebnisse bleiben unberuehrt
+
+
+def test_kopie_des_schluesselbunds_wird_auch_bei_einem_fehler_entfernt(werk_system, tmp_path):
+    werk = werk_system
+    _signierter_tag(werk)
+    assert _system_lauf(werk, umgebung={"ATTRAPPE_DOCKER_FEHLER": "1"}).returncode != 0
+    fremde = tmp_path / "fremde"
+    _echte_kette_anlegen(fremde)
+    ergebnis = _lauf(werk, *_system_args(werk, roots=False), "--roots", str(fremde / "root.crt"), ohne_system=False,
+                     umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
+    assert ergebnis.returncode == 1  # Root nicht in der Liste: bricht vor dem Bau ab
+    assert not list(werk.bin.parent.glob("setwell-roots.*"))
 
 
 def test_system_bundle_wird_mit_dem_schluessel_des_manifests_signiert(werk_system):
@@ -807,7 +860,8 @@ def test_eigene_roots_aus_der_liste_laufen_und_gehen_an_make_image(werk_system, 
                      umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
     assert ergebnis.returncode == 0, ergebnis.stderr
     (aufruf,) = _log(werk, "make_image.log")
-    assert aufruf["argv"][-2:] == ["--release-roots", str(buendel)]
+    assert aufruf["argv"][-2] == "--release-roots" and aufruf["argv"][-1] != str(buendel)
+    assert aufruf["roots"] == buendel.read_text()
     assert len(_log(werk, "scp.log")) == 1
 
 
@@ -865,9 +919,9 @@ def test_labor_baut_mit_system_und_test_roots_ohne_upload(werk_system):
     assert ergebnis.stdout == "" and _log(werk, "scp.log") == []
     aus = werk.aus.resolve()
     (aufruf,) = _log(werk, "make_image.log")
-    assert aufruf["argv"] == ["--bundle", str(aus / "werk-bundle"), "--out", str(aus / "image"),
-                              "--device-api-url", API_URL, "--portal-base-url", PORTAL_URL,
-                              "--release-roots", str(werk.test_kette / "root.crt")]
+    assert aufruf["argv"][:-1] == ["--bundle", str(aus / "werk-bundle"), "--out", str(aus / "image"),
+                                   "--device-api-url", API_URL, "--portal-base-url", PORTAL_URL, "--release-roots"]
+    assert aufruf["roots"] == (werk.test_kette / "root.crt").read_text()
     assert any(a["prog"] == "openssl" and "-sign" in a["argv"] for a in _log(werk, "rauc.log"))
     bundle = aus / VERSION
     assert (bundle / "system.raucb").read_bytes() == b"SYSTEM-BUNDLE" and _pruefen(werk, bundle, werk.test_kette) == 0
@@ -945,6 +999,13 @@ def test_labor_braucht_weder_tag_noch_sauberen_baum_noch_ablage(werk_system):
     _liste_auf_origin_main(werk, None)  # auch die Liste auf origin/main wird im Labor nicht gelesen
     assert _git(werk.repo, "tag", "--list") == ""
     ergebnis = _labor_lauf(werk)
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert ergebnis.stdout == "" and _log(werk, "scp.log") == []
+
+
+def test_labor_laedt_auch_mit_gueltigen_ziel_und_basis_nichts_hoch(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert ergebnis.stdout == "" and _log(werk, "scp.log") == []
 
