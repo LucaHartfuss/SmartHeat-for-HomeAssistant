@@ -224,8 +224,8 @@ def test_riesenzahlen_sind_ein_wertefehler():
 
 
 def test_zurueck_optional_nur_aus_zurueck():
-    assert _try(parameter("vaillant_vrc720", zurueck=[], zurueck_optional=["heat_limit"]))
-    assert _try(parameter("vaillant_vrc720", zurueck=[], zurueck_optional=[])) is None
+    assert _try(parameter("vaillant_vrc720", zurueck=["curve"], zurueck_optional=["heat_limit"]))
+    assert _try(parameter("vaillant_vrc720", zurueck=["heat_limit"], zurueck_optional=[])) is None
 
 
 H = "hz_operationmode_"
@@ -409,7 +409,8 @@ _VERSTOESSE = {
     "schreibgruppen_regel": _mit("vaillant_vrc720", schreibgruppen=[["curve"]]),
     "schreibgruppen_erlaubt": _mit("vaillant_vrc720", schreibgruppen=[["curve", "room_setpoint"]]),
     "zaehler": _mit("vaillant_vrc720", zaehler="monthly"),
-    "zurueck_optional": _mit("vaillant_vrc720", zurueck=[], zurueck_optional=["heat_limit"]),
+    "zurueck_optional": _mit("vaillant_vrc720", zurueck=["curve"], zurueck_optional=["heat_limit"]),
+    "zurueck_mindestliste": _mit("vaillant_vrc720", zurueck=["curve"], zurueck_optional=[]),
 }
 
 
@@ -474,11 +475,13 @@ def test_wartezeit_fehler_nennt_min_60_und_max_7200(wartezeit):
 MINDEST_ZURUECK = {
     "vaillant_vrc720": ("heat_limit",),
     "weishaupt_wwp": ("curve", "room_setpoint", "heat_limit"),
+    "weishaupt_wwp_basis": ("room_setpoint",),
     "viessmann_vicare": ("curve", "level", "room_setpoint"),
 }
 FEHLENDER_PFLICHT_HEBEL = [(satz, hebel) for satz, liste in MINDEST_ZURUECK.items() for hebel in liste]
 #: Erlaubte Hebel ausser der Mindestliste, die der Server zusaetzlich zurueckstellen lassen darf.
-ZUSATZ_HEBEL = {"vaillant_vrc720": ("curve", "room_setpoint"), "weishaupt_wwp": (), "viessmann_vicare": ()}
+ZUSATZ_HEBEL = {"vaillant_vrc720": ("curve", "room_setpoint"), "weishaupt_wwp": (), "weishaupt_wwp_basis": (),
+                "viessmann_vicare": ()}
 
 
 def _zurueck_mit(hebelsatz, zurueck):

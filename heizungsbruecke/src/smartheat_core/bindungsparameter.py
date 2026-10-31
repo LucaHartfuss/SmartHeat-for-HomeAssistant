@@ -148,6 +148,9 @@ def beschreibung(hebelsatz: str, parameter) -> BindingDescription:
     if not set(zurueck_optional) <= set(zurueck):
         raise Fehler("Ein optionaler Rückstell-Hebel der Bindungsparameter muss auch unter den zurückzustellenden "
                      "Hebeln stehen.", "zurueck_optional", "ungueltig")
+    if not set(verfahren.rueckstellung_pflicht) <= set(zurueck):  # Lokale Mindestliste, nie vom Server
+        raise Fehler("Die zurückzustellenden Hebel der Bindungsparameter enthalten nicht alle Hebel, die dieser "
+                     "Hebelsatz mindestens zurückstellen muss.", "zurueck", "ungueltig")
     nur_lesen = _hebel(parameter["nur_lesen"], tuple(h for h in LEVERS if h not in hebel), "nur_lesen")
     schemata = _schemata(parameter["schemata"], verfahren)
     energie = _energie(parameter["energie"])
