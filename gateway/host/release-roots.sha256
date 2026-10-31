@@ -1,0 +1,7 @@
+# Gepinnte Liste der Produktions-Roots des Gateway-Releases. Sie ergaenzt release-roots.pem.
+# Format je Zeile: <64 Hex, SHA-256 ueber die DER-Form des Zertifikats>, Leerraum (Leerzeichen oder Tabulator), <Name der Root>.
+# Der Name ist nur eine Lesehilfe; entschieden wird allein ueber den Fingerabdruck. Leerzeilen und Zeilen mit # sind
+# Kommentare. Eine echte Release-Bauung nimmt nur Roots aus dieser Liste (gateway/release/roots_pruefen.py).
+# Aenderung nur zusammen mit release-roots.pem, wenn die echte Root angelegt wird oder die Root wechselt
+# (docs/ci-cd-runbook.md, Abschnitte 13.2 und 13.6). Das Geraet bekommt diese Datei nicht.
+# SMARTHEAT-PLATZHALTER - die Fingerabdruecke der echten Roots kommen vor dem ersten Release

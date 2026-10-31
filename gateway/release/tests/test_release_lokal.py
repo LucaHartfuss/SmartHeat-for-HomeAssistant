@@ -3,7 +3,10 @@ Attrappen im PATH; Git, build_bundle.py, verify_bundle.py und signieren.py laufe
 Wegwerf-Repo (`gateway` ist dort ein Symlink auf den Checkout; fuer das System-Bundle ein Ordner aus Symlinks mit eigener
 VERSION, Attrappe make_image.sh und eigenem Schluesselbund, `werk_system`), damit Tag und Arbeitsbaum echt geprueft werden,
 ohne dass der Checkout selbst angefasst wird. Tags tragen eine SSH-Signatur (git tag -s mit gpg.format=ssh); die Schluesselliste
-kommt aus origin/main (ein Wegwerf-Repo `ablage`), nicht aus dem Checkout und nicht aus der Git-Konfiguration."""
+kommt aus origin/main (ein Wegwerf-Repo `ablage`), nicht aus dem Checkout und nicht aus der Git-Konfiguration; ebenso die
+gepinnte Liste der Release-Roots (`gateway/host/release-roots.sha256`). `werk.kette` ist eine Kette mit Produktions-Root (ohne
+"(Test)" im Namen), deren Root in dieser Liste steht, wie bei einem echten Release; `werk.test_kette` ist die Wegwerf-Kette
+des Probelaufs."""
 import hashlib
 import json
 import os
@@ -16,6 +19,10 @@ from pathlib import Path
 
 import pytest
 import rauc_attrappe
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 
 import ca
 import rauc_bundle
@@ -25,6 +32,9 @@ VERSION = "9.9.9"
 TAG = f"gateway-v{VERSION}"
 ZIEL = "bundles@ablage.example.org:/srv/setwell/gateway"
 BASIS = "https://download.example.org/gateway"
+PASSPHRASE = "passphrase-fuer-den-test"
+LISTE = "gateway/host/release-roots.sha256"
+PLATZHALTER_LISTE = "# Liste\n# SMARTHEAT-PLATZHALTER - die Fingerabdruecke der echten Roots kommen vor dem ersten Release\n"
 
 DOCKER = f'''#!{sys.executable}
 import json, os, sys
@@ -66,13 +76,53 @@ def _git(repo: Path, *args: str, **env: str) -> str:
     return subprocess.run(["git", "-C", str(repo), *args], env=umgebung, capture_output=True, text=True, check=True).stdout
 
 
+def _echte_kette_anlegen(ziel: Path) -> None:
+    """Kette wie ein echtes Release: Root ohne "(Test)" im Namen (ca.root_anlegen), Blatt per ca.ausstellen."""
+    ca.root_anlegen(ziel, PASSPHRASE)
+    key = ec.generate_private_key(ec.SECP256R1())
+    csr = x509.CertificateSigningRequestBuilder().subject_name(
+        x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Setwell Release")])).sign(key, hashes.SHA256())
+    blatt = ca.ausstellen((ziel / "root.crt").read_bytes(), (ziel / "root.key").read_bytes(), PASSPHRASE,
+                          csr.public_bytes(serialization.Encoding.PEM), 12)
+    (ziel / "release.crt").write_bytes(blatt)
+    (ziel / "release.key").write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                                         serialization.NoEncryption()))
+
+
+@pytest.fixture(scope="module")
+def echte_kette_vorlage(tmp_path_factory):
+    ziel = tmp_path_factory.mktemp("echte-kette") / "kette"
+    _echte_kette_anlegen(ziel)
+    return ziel
+
+
+def _abdruck(root_crt: Path) -> str:
+    return x509.load_pem_x509_certificate(root_crt.read_bytes()).fingerprint(hashes.SHA256()).hex()
+
+
+def _liste_text(*roots: Path) -> str:
+    return "# Liste\n" + "".join(f"{_abdruck(root)}  Root {nummer}\n" for nummer, root in enumerate(roots, start=1))
+
+
+def _liste_auf_origin_main(werk, text: str | None) -> None:
+    """Setzt die gepinnte Liste im Remote (Zweig main); `None` entfernt die Datei."""
+    datei = werk.ablage / LISTE
+    if text is None:
+        _git(werk.ablage, "rm", "-q", LISTE)
+    else:
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        datei.write_text(text)
+        _git(werk.ablage, "add", LISTE)
+    _git(werk.ablage, "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-q", "-m", "Liste der Roots")
+
+
 def _ssh_schluessel(pfad: Path) -> Path:
     subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "test@example.org", "-f", str(pfad)], check=True)
     return pfad
 
 
 @pytest.fixture
-def werk(tmp_path):
+def werk(tmp_path, echte_kette_vorlage):
     """Wegwerf-Repo mit einem Commit; Attrappen docker und scp im PATH; erlaubte Signierschluessel in `signers`."""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -88,11 +138,17 @@ def werk(tmp_path):
                              ("tag.gpgsign", "false"), ("gpg.format", "ssh"), ("user.signingkey", str(erlaubt)),
                              ("gpg.ssh.allowedSignersFile", str(signers))):
         _git(repo, "config", schluessel, wert)
-    ablage = tmp_path / "ablage"  # der Remote origin: sein Zweig main haelt die Schluesselliste
+    kette = tmp_path / "kette"
+    shutil.copytree(echte_kette_vorlage, kette)
+    test_kette = tmp_path / "test-kette"
+    ca.test_kette_anlegen(test_kette)
+    ablage = tmp_path / "ablage"  # der Remote origin: sein Zweig main haelt die Schluesselliste und die Liste der Roots
     (ablage / ".github").mkdir(parents=True)
     (ablage / ".github" / "allowed_signers").write_text(zeile.format(erlaubt.with_suffix(".pub").read_text()))
+    (ablage / LISTE).parent.mkdir(parents=True)
+    (ablage / LISTE).write_text(_liste_text(kette / "root.crt"))
     _git(ablage, "init", "-q", "-b", "main")
-    _git(ablage, "add", ".github")
+    _git(ablage, "add", ".github", "gateway")
     _git(ablage, "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-q", "-m", "Liste")
     _git(repo, "remote", "add", "origin", str(ablage))
     _git(repo, "add", "gateway")
@@ -104,11 +160,9 @@ def werk(tmp_path):
         datei = bin_dir / name
         datei.write_text(text)
         datei.chmod(datei.stat().st_mode | stat.S_IXUSR)
-    kette = tmp_path / "kette"
-    ca.test_kette_anlegen(kette)
     werk = type("Werk", (), {})()
     werk.repo, werk.bin, werk.logs, werk.kette, werk.erlaubt, werk.fremd = repo, bin_dir, logs, kette, erlaubt, fremd
-    werk.ablage = ablage
+    werk.ablage, werk.test_kette = ablage, test_kette
     werk.aus = tmp_path / "aus"
     return werk
 
@@ -144,9 +198,9 @@ def _log(werk, name) -> list:
     return [json.loads(zeile) for zeile in pfad.read_text().splitlines()] if pfad.exists() else []
 
 
-def _pruefen(werk, bundle: Path) -> int:
+def _pruefen(werk, bundle: Path, kette: Path | None = None) -> int:
     umgebung = {**os.environ, "PYTHONPATH": str(GW / "host")}
-    return subprocess.run([sys.executable, "-m", "smartheat_host.kette", str(werk.kette / "root.crt"),
+    return subprocess.run([sys.executable, "-m", "smartheat_host.kette", str((kette or werk.kette) / "root.crt"),
                            str(bundle / "manifest.json"), str(bundle / "manifest.json.sig")], env=umgebung,
                           capture_output=True, text=True).returncode
 
@@ -156,15 +210,15 @@ DATEIEN = ["docker-compose.yml", "gateway-image.oci.tar", "manifest.json", "mani
 
 def test_release_lokal_probe_baut_und_signiert_ohne_upload(werk):
     (werk.repo / "unversioniert.txt").write_text("Probe darf einen unsauberen Baum haben, ohne Tag\n")
-    ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.kette / "release.key"),
-                     "--zertifikat", str(werk.kette / "release.crt"), "--roots", str(werk.kette / "root.crt"),
+    ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.test_kette / "release.key"),
+                     "--zertifikat", str(werk.test_kette / "release.crt"), "--roots", str(werk.test_kette / "root.crt"),
                      "--aus", str(werk.aus))
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert ergebnis.stdout == ""  # keine Werte fuer bundle add: nichts wurde hochgeladen
     assert _log(werk, "scp.log") == []
     bundle = werk.aus / VERSION
     assert sorted(p.name for p in bundle.iterdir()) == DATEIEN
-    assert _pruefen(werk, bundle) == 0
+    assert _pruefen(werk, bundle, werk.test_kette) == 0
     build, syft = _log(werk, "docker.log")
     assert build[:2] == ["buildx", "build"] and "--sbom=true" in build
     assert build[build.index("--platform") + 1] == "linux/arm64"
@@ -328,8 +382,8 @@ def test_release_lokal_ohne_ziel_und_basis_bricht_laut_ab(werk, umgebung):
 
 
 def test_probe_braucht_weder_ziel_noch_tag(werk):
-    ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.kette / "release.key"),
-                     "--zertifikat", str(werk.kette / "release.crt"), "--roots", str(werk.kette / "root.crt"))
+    ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.test_kette / "release.key"),
+                     "--zertifikat", str(werk.test_kette / "release.crt"), "--roots", str(werk.test_kette / "root.crt"))
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert _log(werk, "scp.log") == []
     assert not list(werk.bin.parent.glob("setwell-release.*"))  # der Wegwerf-Ordner ist weg
@@ -347,7 +401,8 @@ def test_docker_fehler_laesst_nichts_zurueck_und_laedt_nichts_hoch(werk):
 
 def test_signatur_gegen_fremde_roots_bricht_vor_dem_upload_ab(werk, tmp_path):
     _signierter_tag(werk)
-    ca.test_kette_anlegen(tmp_path / "andere")
+    _echte_kette_anlegen(tmp_path / "andere")
+    _liste_auf_origin_main(werk, _liste_text(werk.kette / "root.crt", tmp_path / "andere" / "root.crt"))
     ergebnis = _lauf(werk, "--schluessel", str(werk.kette / "release.key"), "--zertifikat", str(werk.kette / "release.crt"),
                      "--roots", str(tmp_path / "andere" / "root.crt"), "--aus", str(werk.aus),
                      umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
@@ -357,8 +412,8 @@ def test_signatur_gegen_fremde_roots_bricht_vor_dem_upload_ab(werk, tmp_path):
 
 
 def test_vorhandenes_ergebnis_wird_nie_ueberschrieben(werk):
-    args = ("--probe", "--schluessel", str(werk.kette / "release.key"), "--zertifikat", str(werk.kette / "release.crt"),
-            "--roots", str(werk.kette / "root.crt"), "--aus", str(werk.aus))
+    args = ("--probe", "--schluessel", str(werk.test_kette / "release.key"), "--zertifikat", str(werk.test_kette / "release.crt"),
+            "--roots", str(werk.test_kette / "root.crt"), "--aus", str(werk.aus))
     assert _lauf(werk, *args).returncode == 0
     vorher = (werk.aus / VERSION / "manifest.json").read_bytes()
     zweiter = _lauf(werk, *args)
@@ -387,11 +442,11 @@ def test_ungueltige_version_exit_2(werk, version):
 
 
 def test_fehlende_schluesseldatei_oder_zertifikat_bricht_vor_dem_bau_ab(werk):
-    ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.kette / "gibt-es-nicht.key"),
-                     "--zertifikat", str(werk.kette / "release.crt"), "--roots", str(werk.kette / "root.crt"))
+    ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.test_kette / "gibt-es-nicht.key"),
+                     "--zertifikat", str(werk.test_kette / "release.crt"), "--roots", str(werk.test_kette / "root.crt"))
     assert ergebnis.returncode == 1 and _log(werk, "docker.log") == []
-    ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.kette / "release.key"),
-                     "--zertifikat", str(werk.kette / "fehlt.crt"), "--roots", str(werk.kette / "root.crt"))
+    ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.test_kette / "release.key"),
+                     "--zertifikat", str(werk.test_kette / "fehlt.crt"), "--roots", str(werk.test_kette / "root.crt"))
     assert ergebnis.returncode == 1 and _log(werk, "docker.log") == []
 
 
@@ -412,8 +467,8 @@ def test_pkcs11_uri_wird_ohne_dateipruefung_durchgereicht(werk):
 @pytest.mark.parametrize("schluessel", ["pkcs11:token=echt;object=release", "pkcs11:token=echt?pin-value=GEHEIME-PIN"])
 def test_probe_lehnt_einen_pkcs11_schluessel_ab(werk, schluessel):
     """M-4: --probe baut und signiert ohne Tag- und Baum-Check, also nie mit dem echten Token."""
-    ergebnis = _lauf(werk, "--probe", "--schluessel", schluessel, "--zertifikat", str(werk.kette / "release.crt"),
-                     "--roots", str(werk.kette / "root.crt"), "--aus", str(werk.aus))
+    ergebnis = _lauf(werk, "--probe", "--schluessel", schluessel, "--zertifikat", str(werk.test_kette / "release.crt"),
+                     "--roots", str(werk.test_kette / "root.crt"), "--aus", str(werk.aus))
     assert ergebnis.returncode == 1 and "pkcs11" in ergebnis.stderr and ergebnis.stdout == ""
     assert "GEHEIME-PIN" not in ergebnis.stderr
     assert _log(werk, "docker.log") == [] and not werk.aus.exists()
@@ -421,7 +476,7 @@ def test_probe_lehnt_einen_pkcs11_schluessel_ab(werk, schluessel):
 
 @pytest.mark.parametrize("roots", [None, "gateway/host/release-roots.pem", "gateway/../gateway/host/release-roots.pem"])
 def test_probe_lehnt_den_standard_schluesselbund_ab(werk, roots):
-    argumente = ["--probe", "--schluessel", str(werk.kette / "release.key"), "--zertifikat", str(werk.kette / "release.crt"),
+    argumente = ["--probe", "--schluessel", str(werk.test_kette / "release.key"), "--zertifikat", str(werk.test_kette / "release.crt"),
                  "--aus", str(werk.aus)]
     if roots:
         argumente += ["--roots", str(werk.repo / roots)]
@@ -444,9 +499,10 @@ done
 import json, os, sys
 log, bundle, *argv = sys.argv[1:]
 manifest = json.load(open(os.path.join(bundle, "manifest.json")))
+roots = open(argv[argv.index("--release-roots") + 1]).read() if "--release-roots" in argv else None
 with open(log, "a") as datei:
     datei.write(json.dumps({"argv": argv, "dateien": sorted(os.listdir(bundle)), "system": "system" in manifest,
-                            "min": manifest["min_updater_version"]}) + "\\n")
+                            "min": manifest["min_updater_version"], "roots": roots}) + "\\n")
 PY
 if [ -n "${ATTRAPPE_MAKE_IMAGE_FEHLER:-}" ]; then
   echo "FEHLER: linux/arm64 braucht einen arm64-Docker-Host oder QEMU-binfmt fuer aarch64" >&2
@@ -466,7 +522,8 @@ SYSTEM_VERSION_DATEI = "9.9.9"
 @pytest.fixture
 def werk_system(werk):
     """Wie `werk`, aber `gateway` ist ein Ordner aus Symlinks auf den Checkout mit eigener VERSION (9.9.9), einer
-    Attrappe make_image.sh und dem Schluesselbund der Test-Kette als host/release-roots.pem (der Standard-Schluesselbund)."""
+    Attrappe make_image.sh, dem Schluesselbund der Test-Kette als host/release-roots.pem (der Standard-Schluesselbund) und
+    einer Kopie der gepinnten Liste (host/release-roots.sha256) des Checkouts."""
     gw = werk.repo / "gateway"
     gw.unlink()
     gw.mkdir()
@@ -476,6 +533,7 @@ def werk_system(werk):
     (gw / "VERSION").write_text(f"{SYSTEM_VERSION_DATEI}\n")
     (gw / "host").mkdir()
     (gw / "host" / "release-roots.pem").write_text((werk.kette / "root.crt").read_text())
+    (gw / "host" / "release-roots.sha256").write_text((GW / "host" / "release-roots.sha256").read_text())
     (gw / "image").mkdir()
     (gw / "image" / "own_url.sh").symlink_to(GW / "image" / "own_url.sh")
     (gw / "image" / "make_image.sh").write_text(MAKE_IMAGE)
@@ -540,20 +598,72 @@ def test_werks_image_traegt_das_bundle_ohne_system_und_die_adressen(werk_system)
     _signierter_tag(werk)
     assert _system_lauf(werk).returncode == 0
     (aufruf,) = _log(werk, "make_image.log")
-    assert aufruf["argv"] == ["--bundle", str(werk.aus.resolve() / "werk-bundle"), "--out", str(werk.aus.resolve() / "image"),
-                              "--device-api-url", API_URL, "--portal-base-url", PORTAL_URL,
-                              "--release-roots", str(werk.kette / "root.crt")]
+    *vorn, flagge, kopie = aufruf["argv"]
+    assert vorn == ["--bundle", str(werk.aus.resolve() / "werk-bundle"), "--out", str(werk.aus.resolve() / "image"),
+                    "--device-api-url", API_URL, "--portal-base-url", PORTAL_URL]
+    assert flagge == "--release-roots" and kopie != str(werk.kette / "root.crt")
+    assert aufruf["roots"] == (werk.kette / "root.crt").read_text()
     # das erste Bundle des Geraets: signiert, ohne Systemteil (sonst haengte das Manifest vom Image ab)
     assert aufruf["dateien"] == sorted([*DATEIEN]) and aufruf["system"] is False and aufruf["min"] == "0.8.0"
 
 
-def test_standard_schluesselbund_geht_nicht_an_make_image(werk_system):
-    """Ohne --roots gilt gateway/host/release-roots.pem, der Schluesselbund im Image: --release-roots entfaellt."""
+def test_standard_schluesselbund_geht_als_kopie_an_make_image(werk_system):
+    """Auch ohne --roots (Standard-Schluesselbund) bekommt das Image die gepruefte Kopie mit gleichem Inhalt."""
     werk = werk_system
     _signierter_tag(werk)
     assert _system_lauf(werk, roots=False).returncode == 0
     (aufruf,) = _log(werk, "make_image.log")
-    assert "--release-roots" not in aufruf["argv"] and len(aufruf["argv"]) == 8
+    assert len(aufruf["argv"]) == 10 and aufruf["argv"][-2] == "--release-roots"
+    standard = werk.repo / "gateway" / "host" / "release-roots.pem"
+    assert aufruf["argv"][-1] != str(standard) and aufruf["roots"] == standard.read_text()
+
+
+PYTHON_PROTOKOLL = f'''#!{sys.executable}
+import json, os, sys
+with open(os.path.join(os.environ["ATTRAPPE_LOGS"], "py.log"), "a") as protokoll:
+    protokoll.write(json.dumps(sys.argv[1:]) + "\\n")
+os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])
+'''
+
+
+@pytest.mark.parametrize("standard", [True, False])
+def test_alle_verwender_bekommen_dieselbe_kopie_des_schluesselbunds(werk_system, standard):
+    werk = werk_system
+    wrapper = werk.bin / "python-protokoll"
+    wrapper.write_text(PYTHON_PROTOKOLL)
+    wrapper.chmod(0o755)
+    _signierter_tag(werk)
+    ergebnis = _system_lauf(werk, roots=not standard, umgebung={"PYTHON": str(wrapper)})
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    original = werk.repo / "gateway" / "host" / "release-roots.pem" if standard else werk.kette / "root.crt"
+    kopien = {}
+    for argv in _log(werk, "py.log"):
+        name = Path(argv[0]).name
+        if name == "roots_pruefen.py":
+            kopien.setdefault(name, []).append(argv[-1])
+        elif name in ("signieren.py", "rauc_bundle.py"):
+            kopien.setdefault(name, []).append(argv[argv.index("--roots") + 1])
+    (aufruf,) = _log(werk, "make_image.log")
+    kopien["make_image.sh"] = [aufruf["argv"][aufruf["argv"].index("--release-roots") + 1]]
+    assert sorted(kopien) == ["make_image.sh", "rauc_bundle.py", "roots_pruefen.py", "signieren.py"]
+    assert len(kopien["signieren.py"]) == 2  # Bundle ohne System und Bundle mit System
+    (kopie,) = {pfad for pfade in kopien.values() for pfad in pfade}  # alle Verwender: derselbe Pfad
+    assert kopie != str(original) and not kopie.startswith(str(werk.repo))
+    assert aufruf["roots"] == original.read_text()
+    assert not Path(kopie).exists() and not list(werk.bin.parent.glob("setwell-roots.*"))  # auch nach Erfolg weg
+    assert (werk.aus / "image").is_dir()  # die Ergebnisse bleiben unberuehrt
+
+
+def test_kopie_des_schluesselbunds_wird_auch_bei_einem_fehler_entfernt(werk_system, tmp_path):
+    werk = werk_system
+    _signierter_tag(werk)
+    assert _system_lauf(werk, umgebung={"ATTRAPPE_DOCKER_FEHLER": "1"}).returncode != 0
+    fremde = tmp_path / "fremde"
+    _echte_kette_anlegen(fremde)
+    ergebnis = _lauf(werk, *_system_args(werk, roots=False), "--roots", str(fremde / "root.crt"), ohne_system=False,
+                     umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
+    assert ergebnis.returncode == 1  # Root nicht in der Liste: bricht vor dem Bau ab
+    assert not list(werk.bin.parent.glob("setwell-roots.*"))
 
 
 def test_system_bundle_wird_mit_dem_schluessel_des_manifests_signiert(werk_system):
@@ -597,8 +707,8 @@ def test_ohne_system_ruft_weder_make_image_noch_rauc(werk_system):
 
 def test_probe_bleibt_ohne_system_und_braucht_keine_adressen(werk_system):
     werk = werk_system
-    ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.kette / "release.key"),
-                     "--zertifikat", str(werk.kette / "release.crt"), "--roots", str(werk.kette / "root.crt"),
+    ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.test_kette / "release.key"),
+                     "--zertifikat", str(werk.test_kette / "release.crt"), "--roots", str(werk.test_kette / "root.crt"),
                      "--aus", str(werk.aus), ohne_system=False)
     assert ergebnis.returncode == 0, ergebnis.stderr
     assert _log(werk, "make_image.log") == [] and _log(werk, "rauc.log") == [] and _log(werk, "scp.log") == []
@@ -676,3 +786,233 @@ def test_vorhandenes_system_ergebnis_wird_nicht_ueberschrieben(werk_system):
     ergebnis = _system_lauf(werk)
     assert ergebnis.returncode == 1 and "image existiert schon" in ergebnis.stderr
     assert _log(werk, "docker.log") == [] and (werk.aus / "image").is_dir()
+
+
+# --- Gepinnte Liste der Release-Roots: nur aus origin/main, vor jedem Bau ---------------------------------------------------
+def _echter_lauf(werk, roots: Path | None = None):
+    return _lauf(werk, "--schluessel", str(werk.kette / "release.key"), "--zertifikat", str(werk.kette / "release.crt"),
+                 "--roots", str(roots or werk.kette / "root.crt"), "--aus", str(werk.aus),
+                 umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
+
+
+def _nichts_gebaut(werk, ergebnis):
+    assert ergebnis.returncode == 1, ergebnis.stderr
+    assert ergebnis.stdout == ""
+    assert _log(werk, "docker.log") == [] and _log(werk, "make_image.log") == [] and _log(werk, "scp.log") == []
+    assert not werk.aus.exists()
+
+
+def test_root_nur_in_der_liste_des_checkouts_bricht_vor_dem_bau_ab(werk_system):
+    """Die Liste im Checkout des Tags zaehlt nicht: wer einen Tag setzt, koennte sie im Commit aendern."""
+    werk = werk_system
+    _liste_auf_origin_main(werk, _liste_text(werk.test_kette / "root.crt"))  # eine andere Root; die Root des Laufs fehlt
+    (werk.repo / LISTE).write_text(_liste_text(werk.kette / "root.crt"))
+    _git(werk.repo, "add", "-A")
+    _git(werk.repo, "commit", "-q", "-m", "eigene Liste")
+    _signierter_tag(werk)
+    ergebnis = _system_lauf(werk)
+    _nichts_gebaut(werk, ergebnis)
+    assert _abdruck(werk.kette / "root.crt") in ergebnis.stderr and "steht nicht in der Liste" in ergebnis.stderr
+
+
+def test_test_root_bricht_ab_auch_wenn_sie_in_der_liste_von_origin_main_steht(werk):
+    _liste_auf_origin_main(werk, _liste_text(werk.test_kette / "root.crt"))
+    _signierter_tag(werk)
+    ergebnis = _echter_lauf(werk, werk.test_kette / "root.crt")
+    _nichts_gebaut(werk, ergebnis)
+    assert "(Test)" in ergebnis.stderr
+
+
+def test_platzhalter_liste_auf_origin_main_bricht_ab(werk):
+    _liste_auf_origin_main(werk, PLATZHALTER_LISTE)
+    _signierter_tag(werk)
+    ergebnis = _echter_lauf(werk)
+    _nichts_gebaut(werk, ergebnis)
+    assert "Platzhalter" in ergebnis.stderr and "AP-04-Root" in ergebnis.stderr
+
+
+def test_fehlende_liste_auf_origin_main_bricht_ab(werk):
+    _liste_auf_origin_main(werk, None)
+    _signierter_tag(werk)
+    ergebnis = _echter_lauf(werk)
+    _nichts_gebaut(werk, ergebnis)
+    assert "release-roots.sha256 fehlt auf origin/main" in ergebnis.stderr
+
+
+def test_liste_auf_origin_main_ohne_die_root_bricht_vor_dem_bau_ab(werk):
+    """Gegenprobe zum Erfolgsfall (laedt_per_scp): dieselbe Kette laeuft, sobald ihre Root in der Liste steht."""
+    _liste_auf_origin_main(werk, _liste_text(werk.test_kette / "root.crt"))
+    _signierter_tag(werk)
+    ergebnis = _echter_lauf(werk)
+    _nichts_gebaut(werk, ergebnis)
+    assert _abdruck(werk.kette / "root.crt") in ergebnis.stderr
+
+
+def test_eigene_roots_aus_der_liste_laufen_und_gehen_an_make_image(werk_system, tmp_path):
+    werk = werk_system
+    zweite = tmp_path / "zweite"
+    _echte_kette_anlegen(zweite)
+    buendel = tmp_path / "roots.pem"
+    buendel.write_text((werk.kette / "root.crt").read_text() + (zweite / "root.crt").read_text())
+    _liste_auf_origin_main(werk, _liste_text(werk.kette / "root.crt", zweite / "root.crt"))
+    _signierter_tag(werk)
+    ergebnis = _lauf(werk, *_system_args(werk, roots=False), "--roots", str(buendel), ohne_system=False,
+                     umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    (aufruf,) = _log(werk, "make_image.log")
+    assert aufruf["argv"][-2] == "--release-roots" and aufruf["argv"][-1] != str(buendel)
+    assert aufruf["roots"] == buendel.read_text()
+    assert len(_log(werk, "scp.log")) == 1
+
+
+def test_eigene_roots_mit_einer_fremden_root_im_buendel_gehen_nicht(werk_system, tmp_path):
+    werk = werk_system
+    fremde = tmp_path / "fremde"
+    _echte_kette_anlegen(fremde)
+    buendel = tmp_path / "roots.pem"
+    buendel.write_text((werk.kette / "root.crt").read_text() + (fremde / "root.crt").read_text())
+    _signierter_tag(werk)  # in der Liste auf origin/main steht nur die Root der Kette
+    ergebnis = _lauf(werk, *_system_args(werk, roots=False), "--roots", str(buendel), ohne_system=False,
+                     umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
+    _nichts_gebaut(werk, ergebnis)
+    assert _abdruck(fremde / "root.crt") in ergebnis.stderr and _abdruck(werk.kette / "root.crt") not in ergebnis.stderr
+
+
+def test_probe_braucht_die_liste_nicht(werk):
+    """Der Probelauf nimmt die Wegwerf-Kette, ohne dass irgendeine Liste sie kennt oder fehlt."""
+    _liste_auf_origin_main(werk, None)
+    ergebnis = _lauf(werk, "--probe", "--schluessel", str(werk.test_kette / "release.key"),
+                     "--zertifikat", str(werk.test_kette / "release.crt"), "--roots", str(werk.test_kette / "root.crt"))
+    assert ergebnis.returncode == 0, ergebnis.stderr
+
+
+# --- Labor-Bau (--labor): wie das echte Release, aber nur Test-Roots, ohne Upload ------------------------------------------
+def _labor_args(werk, *, roots=True, schluessel=None, api=API_URL, portal=PORTAL_URL):
+    args = ["--labor", "--schluessel", schluessel or str(werk.test_kette / "release.key"),
+            "--zertifikat", str(werk.test_kette / "release.crt"), "--aus", str(werk.aus)]
+    if roots is True:
+        args += ["--roots", str(werk.test_kette / "root.crt")]
+    elif roots:
+        args += ["--roots", str(roots)]
+    if api is not None:
+        args += ["--device-api-url", api]
+    if portal is not None:
+        args += ["--portal-base-url", portal]
+    return args
+
+
+def _labor_lauf(werk, *zusatz, umgebung=None, ohne_system=False, **kwargs):
+    return _lauf(werk, *_labor_args(werk, **kwargs), *zusatz, ohne_system=ohne_system, umgebung=umgebung)
+
+
+def _labor_abgelehnt(werk, ergebnis):
+    assert ergebnis.returncode == 1, ergebnis.stderr
+    assert ergebnis.stdout == "" and "FEHLER:" in ergebnis.stderr
+    assert _log(werk, "docker.log") == [] and _log(werk, "make_image.log") == [] and _log(werk, "scp.log") == []
+    assert not werk.aus.exists()
+
+
+def test_labor_baut_mit_system_und_test_roots_ohne_upload(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk)  # kein Tag, keine Ablage-Umgebung
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert ergebnis.stdout == "" and _log(werk, "scp.log") == []
+    aus = werk.aus.resolve()
+    (aufruf,) = _log(werk, "make_image.log")
+    assert aufruf["argv"][:-1] == ["--bundle", str(aus / "werk-bundle"), "--out", str(aus / "image"),
+                                   "--device-api-url", API_URL, "--portal-base-url", PORTAL_URL, "--release-roots"]
+    assert aufruf["roots"] == (werk.test_kette / "root.crt").read_text()
+    assert any(a["prog"] == "openssl" and "-sign" in a["argv"] for a in _log(werk, "rauc.log"))
+    bundle = aus / VERSION
+    assert (bundle / "system.raucb").read_bytes() == b"SYSTEM-BUNDLE" and _pruefen(werk, bundle, werk.test_kette) == 0
+    assert "system" in json.loads((bundle / "manifest.json").read_text())
+    assert (aus / "image").is_dir() and (aus / "werk-bundle").is_dir() and (aus / f"gateway-{VERSION}.cdx.json").is_file()
+    assert str(aus) in ergebnis.stderr  # die letzte Zeile sagt, wo die Ergebnisse liegen
+
+
+def test_labor_lehnt_eine_produktions_root_vor_dem_bau_ab(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, roots=werk.kette / "root.crt")
+    _labor_abgelehnt(werk, ergebnis)
+    assert "(Test)" in ergebnis.stderr and _abdruck(werk.kette / "root.crt") in ergebnis.stderr
+
+
+def test_labor_lehnt_eine_test_root_aus_der_liste_des_checkouts_ab(werk_system):
+    werk = werk_system
+    (werk.repo / LISTE).write_text(_liste_text(werk.test_kette / "root.crt"))
+    ergebnis = _labor_lauf(werk)
+    _labor_abgelehnt(werk, ergebnis)
+    assert "steht in der Liste" in ergebnis.stderr
+
+
+@pytest.mark.parametrize("schluessel", ["pkcs11:token=echt;object=release", "pkcs11:token=echt?pin-value=GEHEIME-PIN"])
+def test_labor_lehnt_einen_pkcs11_schluessel_ab(werk_system, schluessel):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, schluessel=schluessel)
+    _labor_abgelehnt(werk, ergebnis)
+    assert "pkcs11" in ergebnis.stderr and "GEHEIME-PIN" not in ergebnis.stderr
+
+
+def test_labor_verlangt_roots(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, roots=False)
+    _labor_abgelehnt(werk, ergebnis)
+    assert "--roots" in ergebnis.stderr
+
+
+def test_labor_und_probe_schliessen_sich_aus(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, "--probe")
+    assert ergebnis.returncode == 2 and "Aufruf" in ergebnis.stderr and ergebnis.stdout == ""
+    assert _log(werk, "docker.log") == [] and not werk.aus.exists()
+
+
+def test_labor_ohne_system_baut_nur_das_container_bundle(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, ohne_system=True, api=None, portal=None)  # ohne System keine Adressen noetig
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert ergebnis.stdout == "" and _log(werk, "make_image.log") == [] and _log(werk, "rauc.log") == []
+    assert _log(werk, "scp.log") == []
+    assert sorted(p.name for p in (werk.aus / VERSION).iterdir()) == DATEIEN
+    assert "system" not in json.loads((werk.aus / VERSION / "manifest.json").read_text())
+    assert not (werk.aus / "image").exists() and not (werk.aus / "werk-bundle").exists()
+
+
+@pytest.mark.parametrize("kwargs", [{"api": None}, {"portal": "http://portal.setwell.de"}])
+def test_labor_mit_system_verlangt_die_adressen(werk_system, kwargs):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, **kwargs)
+    assert ergebnis.returncode == 2, ergebnis.stderr
+    assert _log(werk, "docker.log") == [] and not werk.aus.exists()
+
+
+def test_labor_mit_system_verlangt_gateway_version_gleich_release_version(werk_system):
+    werk = werk_system
+    ergebnis = _lauf(werk, *_labor_args(werk), ohne_system=False, version="9.9.8")
+    _labor_abgelehnt(werk, ergebnis)
+    assert "gateway/VERSION" in ergebnis.stderr
+
+
+def test_labor_braucht_weder_tag_noch_sauberen_baum_noch_ablage(werk_system):
+    werk = werk_system
+    (werk.repo / "unversioniert.txt").write_text("Labor darf einen unsauberen Baum haben\n")
+    _liste_auf_origin_main(werk, None)  # auch die Liste auf origin/main wird im Labor nicht gelesen
+    assert _git(werk.repo, "tag", "--list") == ""
+    ergebnis = _labor_lauf(werk)
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert ergebnis.stdout == "" and _log(werk, "scp.log") == []
+
+
+def test_labor_laedt_auch_mit_gueltigen_ziel_und_basis_nichts_hoch(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, umgebung={"SHG_BUNDLE_ZIEL": ZIEL, "SHG_BUNDLE_BASIS": BASIS})
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert ergebnis.stdout == "" and _log(werk, "scp.log") == []
+
+
+def test_labor_raeumt_bei_einem_fehler_auf(werk_system):
+    werk = werk_system
+    ergebnis = _labor_lauf(werk, umgebung={"ATTRAPPE_DOCKER_FEHLER": "1"})
+    assert ergebnis.returncode != 0 and ergebnis.stdout == ""
+    assert not list(werk.aus.iterdir())  # ein vorgegebener Arbeitsordner bleibt, aber leer
+    assert not list(werk.bin.parent.glob("setwell-release.*"))
