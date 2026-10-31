@@ -1,7 +1,7 @@
 """rootfs_checks.sh an einem nachgebauten Root-Dateisystem: ein gutes besteht, jede einzelne
 Verletzung (geteilte Identitaet, Passwort, SSH im Serien-Image, Tunnel-Token, fehlende Archive, fremde
 Geraete-API-Adresse) laesst es scheitern. Dazu die Adress-Regel own_url.sh (Nutzer-Vorgabe 2026-10-07: eigener
-DNS-Name per https in der eigenen Zone hartfussha.org, keine IP-Adresse, keine AWS-Adresse) direkt."""
+DNS-Name per https in der eigenen Zone setwell.de, keine IP-Adresse, keine AWS-Adresse) direkt."""
 import hashlib
 import os
 import shutil
@@ -76,31 +76,35 @@ def _docker_versions_without_fingerprint() -> dict[str, str]:
 
 
 GOOD_URLS = [
-    "https://accounts.hartfussha.org",
-    "https://accounts.hartfussha.org/",
-    "https://portal.hartfussha.org",
-    "https://a-b.c1.hartfussha.org",
-    "https://hartfussha.org",
-    "https://Accounts.Hartfussha.ORG",
-    "https://ACCOUNTS.HARTFUSSHA.ORG",
+    "https://accounts.setwell.de",
+    "https://accounts.setwell.de/",
+    "https://portal.setwell.de",
+    "https://a-b.c1.setwell.de",
+    "https://setwell.de",
+    "https://Accounts.Setwell.DE",
+    "https://ACCOUNTS.SETWELL.DE",
 ]
 # Sonst zulaessige DNS-Namen ausserhalb der eigenen Zone (Nutzer-Vorgabe 2026-10-07, Allowlist)
 FOREIGN_ZONE_URLS = [
     "https://accounts.example.test",
     "https://portal.example.test",
     "https://a-b.c1.example.org",
-    "https://hartfussha.org.evil.com",
-    "https://accounts.hartfussha.org.evil.com",
-    "https://evilhartfussha.org",
-    "https://accounts.evilhartfussha.org",
-    "https://hartfussha.com",
-    "https://hartfussha.org-evil.com",
+    "https://setwell.de.evil.com",
+    "https://accounts.setwell.de.evil.com",
+    "https://evilsetwell.de",
+    "https://accounts.evilsetwell.de",
+    "https://setwell.com",
+    "https://setwell.de-evil.com",
+    # die frueher benutzte, jetzt private Zone gehoert nicht mehr zur erlaubten Menge
+    "https://accounts.hartfussha.org",
+    "https://portal.hartfussha.org",
+    "https://hartfussha.org",
 ]
 BAD_URLS = [
     "",
-    "http://accounts.hartfussha.org",
-    "accounts.hartfussha.org",
-    "ftp://accounts.hartfussha.org",
+    "http://accounts.setwell.de",
+    "accounts.setwell.de",
+    "ftp://accounts.setwell.de",
     "https://",
     "https://192.168.2.154",
     "https://192.168.2.154/",
@@ -113,18 +117,18 @@ BAD_URLS = [
     "https://accounts.localhost",
     "https://gateway.local",
     "https://accounts",
-    "https://user@accounts.hartfussha.org",
-    "https://user:pw@accounts.hartfussha.org",
-    "https://accounts.hartfussha.org:443",
-    "https://accounts.hartfussha.org/api",
-    "https://accounts.hartfussha.org/?x=1",
-    "https://accounts.hartfussha.org#x",
-    "https://accounts.hartfussha.org.",
-    "https://-bad.hartfussha.org",
-    "https://bad-.hartfussha.org",
-    "https://acc ounts.hartfussha.org",
-    " https://accounts.hartfussha.org",
-    "https://accounts.hartfussha.org\nSHG_ROOT=/",
+    "https://user@accounts.setwell.de",
+    "https://user:pw@accounts.setwell.de",
+    "https://accounts.setwell.de:443",
+    "https://accounts.setwell.de/api",
+    "https://accounts.setwell.de/?x=1",
+    "https://accounts.setwell.de#x",
+    "https://accounts.setwell.de.",
+    "https://-bad.setwell.de",
+    "https://bad-.setwell.de",
+    "https://acc ounts.setwell.de",
+    " https://accounts.setwell.de",
+    "https://accounts.setwell.de\nSHG_ROOT=/",
     "https://abc123.execute-api.eu-central-1.amazonaws.com",
     "https://my-lb-1234.eu-central-1.elb.amazonaws.com",
     "https://ec2-3-120-1-1.eu-central-1.compute.amazonaws.com",
@@ -135,7 +139,7 @@ BAD_URLS = [
     "https://main.d1234.amplifyapp.com",
     "https://app.eu-central-1.elasticbeanstalk.com",
     "https://a1234.awsglobalaccelerator.com",
-    "https://accounts.amazonaws.com.hartfussha.org",
+    "https://accounts.amazonaws.com.setwell.de",
     # weitere AWS-Namen und .aws als oberste Ebene
     "https://x.amazonaws.cn",
     "https://myapp.amazonlightsail.com",
@@ -161,8 +165,8 @@ NON_ASCII_URLS = [
     "https://x.amazonaws.\uff43\uff4f\uff4d",
     "https://b\u00fccher.example",
     "https://a.b.\u00e9",
-    "https://accounts\uff0ehartfussha.org",
-    "https://\uff41ccounts.hartfussha.org",
+    "https://accounts\uff0esetwell.de",
+    "https://\uff41ccounts.setwell.de",
 ]
 BAD_URLS += NON_ASCII_URLS + FOREIGN_ZONE_URLS
 
@@ -203,12 +207,12 @@ def test_own_url_rejects_ip_aws_and_everything_but_https_with_a_dns_name(url):
 @pytest.mark.parametrize("url", FOREIGN_ZONE_URLS)
 def test_own_url_names_the_own_zone_for_foreign_names(url):
     result = _problem(url)
-    assert result.returncode == 1 and "Zone hartfussha.org" in result.stdout, result.stdout
+    assert result.returncode == 1 and "Zone setwell.de" in result.stdout, result.stdout
 
 
 @pytest.mark.parametrize("url", [
-    "https://accounts.hartfussha.org.",  # Punkt am Ende: weiterhin abgelehnt (kein vollstaendiger Name)
-    "https://x.amazonaws.com.hartfussha.org",  # Denylist bleibt (Tiefenverteidigung), auch in der eigenen Zone
+    "https://accounts.setwell.de.",  # Punkt am Ende: weiterhin abgelehnt (kein vollstaendiger Name)
+    "https://x.amazonaws.com.setwell.de",  # Denylist bleibt (Tiefenverteidigung), auch in der eigenen Zone
     "https://192.168.2.154",
 ])
 def test_other_rules_still_win_before_the_zone(url):
@@ -221,11 +225,11 @@ def test_own_zones_are_defined_once_in_own_url_sh():
     script = 'source "$1"; printf "%s|" "${SHG_OWN_ZONES[@]}"; echo; shg_own_url_hint'
     result = subprocess.run(["bash", "-c", script, "_", str(OWN_URL)], capture_output=True, text=True, check=False)
     zones, hint = result.stdout.splitlines()
-    assert zones == "hartfussha.org|"
-    assert "hartfussha.org" in hint and "https://" in hint
+    assert zones == "setwell.de|"
+    assert "setwell.de" in hint and "https://" in hint and "hartfussha" not in hint
     for path in IMAGE.glob("*.sh"):
         if path.name != "own_url.sh":
-            assert "hartfussha" not in path.read_text(), path
+            assert "setwell" not in path.read_text(), path
 
 
 @pytest.mark.parametrize("locale", LOCALES)
@@ -242,7 +246,7 @@ def test_own_url_accepts_good_urls_in_every_locale(url, locale):
 
 
 def test_own_url_restores_the_callers_locale():
-    script = 'source "$1"; shg_own_url_problem https://accounts.hartfussha.org; printf %s "$LC_ALL"'
+    script = 'source "$1"; shg_own_url_problem https://accounts.setwell.de; printf %s "$LC_ALL"'
     result = subprocess.run(["bash", "-c", script, "_", str(OWN_URL)], capture_output=True, text=True, check=False,
                             env={**os.environ, "LC_ALL": "C.UTF-8"})
     assert result.stdout == "C.UTF-8"
@@ -259,8 +263,8 @@ def _good(root: Path) -> Path:
         "etc/passwd": "root:x:0:0:root:/root:/bin/bash\npi:x:1000:1000::/home/pi:/bin/bash\n"
                       "nobody:*:65534:65534::/nonexistent:/usr/sbin/nologin\nlocked:!x:1001:1001::/:/bin/false\n",
         "etc/apt/sources.list.d/raspi.sources": "URIs: http://archive.raspberrypi.com/debian/\n",
-        ENV: "SHG_ROOT=/var/lib/smartheat\nSHG_DEVICE_API_URL=https://accounts.hartfussha.org\n"
-             "SHG_PORTAL_BASE_URL=https://portal.hartfussha.org\nTZ=Europe/Berlin\n",
+        ENV: "SHG_ROOT=/var/lib/smartheat\nSHG_DEVICE_API_URL=https://accounts.setwell.de\n"
+             "SHG_PORTAL_BASE_URL=https://portal.setwell.de\nTZ=Europe/Berlin\n",
         # Werkseinstellung: erstes Bundle (signiert) und state.json-Vorlage; die Archive schreibt der Test unten
         f"{WERK}/state.json": '{"current": "0.3.0", "in_progress": null}',
         f"{WERK}/bundle/manifest.json": '{"version": "0.3.0"}',
@@ -400,7 +404,7 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     lambda r: (r / WANTS / "smartheat-updater.service").unlink(),
     lambda r: (r / WANTS / "docker.service").unlink(),
     lambda r: (r / "etc/apt/sources.list.d/raspi.sources").unlink(),
-    lambda r: (r / ENV).write_text("SHG_DEVICE_API_URL=http://x\nSHG_PORTAL_BASE_URL=https://portal.hartfussha.org\n"),
+    lambda r: (r / ENV).write_text("SHG_DEVICE_API_URL=http://x\nSHG_PORTAL_BASE_URL=https://portal.setwell.de\n"),
     lambda r: (r / ENV).unlink(),
     lambda r: (r / "etc/passwd").write_text("root:x:0:0::/root:/bin/bash\npi::1000:1000::/home/pi:/bin/bash\n"),
     lambda r: (r / "etc/passwd").write_text("root:$6$salt$hash:0:0::/root:/bin/bash\n"),
@@ -590,41 +594,41 @@ def test_eth0_asks_dhcpv4_with_the_mac(tmp_path, breakit):
     assert result.returncode != 0 and len(fails) == 1 and "Client-ID" in fails[0], result.stdout
 
 
-@pytest.mark.parametrize("url", ["https://accounts.hartfussha.org", "https://accounts.hartfussha.org/"])
+@pytest.mark.parametrize("url", ["https://accounts.setwell.de", "https://accounts.setwell.de/"])
 def test_own_hostname_as_device_api_passes(tmp_path, url):
     root = _good(tmp_path)
-    (root / ENV).write_text(f"SHG_DEVICE_API_URL={url}\nSHG_PORTAL_BASE_URL=https://portal.hartfussha.org\n")
+    (root / ENV).write_text(f"SHG_DEVICE_API_URL={url}\nSHG_PORTAL_BASE_URL=https://portal.setwell.de\n")
     assert _run(root).returncode == 0
 
 
 @pytest.mark.parametrize("url", [
     "https://192.168.2.154", "https://192.168.2.154:8443", "https://[2001:db8::1]", "https://localhost",
     "https://abc123.execute-api.eu-central-1.amazonaws.com", "https://my-lb-1.eu-central-1.elb.amazonaws.com",
-    "https://abc.eu-central-1.awsapprunner.com", "https://accounts.hartfussha.org/api", "https://accounts",
-    "https://user@accounts.hartfussha.org", "", "https://accounts.example.test", "https://hartfussha.org.evil.com",
+    "https://abc.eu-central-1.awsapprunner.com", "https://accounts.setwell.de/api", "https://accounts",
+    "https://user@accounts.setwell.de", "", "https://accounts.example.test", "https://setwell.de.evil.com",
 ])
 def test_device_api_must_be_an_own_dns_name(tmp_path, url):
     root = _good(tmp_path)
-    (root / ENV).write_text(f"SHG_DEVICE_API_URL={url}\nSHG_PORTAL_BASE_URL=https://portal.hartfussha.org\n")
+    (root / ENV).write_text(f"SHG_DEVICE_API_URL={url}\nSHG_PORTAL_BASE_URL=https://portal.setwell.de\n")
     result = _run(root)
     assert result.returncode != 0 and "FAIL: Geraete-API" in result.stdout
 
 
 @pytest.mark.parametrize("url", ["https://10.0.0.5", "https://portal.cloudfront.net", "", "https://portal.example.test",
-                                 "https://evilhartfussha.org"])
+                                 "https://evilsetwell.de"])
 def test_portal_must_be_an_own_dns_name(tmp_path, url):
     root = _good(tmp_path)
-    (root / ENV).write_text(f"SHG_DEVICE_API_URL=https://accounts.hartfussha.org\nSHG_PORTAL_BASE_URL={url}\n")
+    (root / ENV).write_text(f"SHG_DEVICE_API_URL=https://accounts.setwell.de\nSHG_PORTAL_BASE_URL={url}\n")
     result = _run(root)
     assert result.returncode != 0 and "FAIL: Portal" in result.stdout
 
 
 @pytest.mark.parametrize("extra", [
-    "SHG_DEVICE_API_URL=https://accounts.hartfussha.org\n",  # doppelt, auch mit gleichem Wert
+    "SHG_DEVICE_API_URL=https://accounts.setwell.de\n",  # doppelt, auch mit gleichem Wert
     "SHG_PORTAL_BASE_URL=https://10.0.0.5\n",
     " SHG_DEVICE_API_URL=https://10.0.0.5\n",
     "export SHG_DEVICE_API_URL=https://10.0.0.5\n",
-    "SHG_PORTAL_BASE_URL =https://portal.hartfussha.org\n",
+    "SHG_PORTAL_BASE_URL =https://portal.setwell.de\n",
     "#SHG_DEVICE_API_URL=https://10.0.0.5\n",
 ])
 def test_gateway_env_needs_exactly_one_plain_assignment_per_address(tmp_path, extra):

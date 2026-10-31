@@ -47,13 +47,34 @@ def _verdrahtet(env, device, supervisor=None, *, markierung=None):
 def test_bootstrap_url_defaults_to_production(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
     monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
-    assert main_module.bootstrap_url() == main_module.DEFAULT_BOOTSTRAP_URL == "https://accounts.hartfussha.org"
+    assert main_module.bootstrap_url() == main_module.DEFAULT_BOOTSTRAP_URL == "https://accounts.setwell.de"
     (tmp_path / "options.json").write_text(json.dumps({"bootstrap_url": None, "log_level": "info"}))
     assert main_module.bootstrap_url() == main_module.DEFAULT_BOOTSTRAP_URL
     (tmp_path / "options.json").write_text(json.dumps({"bootstrap_url": "https://labor.example.test/"}))
     assert main_module.bootstrap_url() == "https://labor.example.test"
     monkeypatch.setenv("SMARTHEAT_BOOTSTRAP_URL", "http://server:5001")
     assert main_module.bootstrap_url() == "http://server:5001"
+
+
+def test_the_log_names_the_source_of_the_bootstrap_address_never_the_option_value(tmp_path, monkeypatch, caplog):
+    """Standard: der Hostname der Konstante steht im Log (kein Zugangsdatum); Option und Umgebung nur als Quelle,
+    nie mit Wert. So zeigt das Log einen stillen Rueckfall auf den Standard nach einem Update."""
+    monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
+    monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
+    with caplog.at_level(logging.INFO):
+        assert main_module.bootstrap_url() == main_module.DEFAULT_BOOTSTRAP_URL
+    assert "Standard accounts.setwell.de" in caplog.text
+    caplog.clear()
+    (tmp_path / "options.json").write_text(json.dumps({"bootstrap_url": "https://nutzer:geheim@labor.example.test/"}))
+    with caplog.at_level(logging.INFO):
+        assert main_module.bootstrap_url() == "https://nutzer:geheim@labor.example.test"
+    assert "aus Option bootstrap_url" in caplog.text and "Standard" not in caplog.text
+    assert "labor.example.test" not in caplog.text and "geheim" not in caplog.text
+    caplog.clear()
+    monkeypatch.setenv("SMARTHEAT_BOOTSTRAP_URL", "http://server-intern:5001")
+    with caplog.at_level(logging.INFO):
+        assert main_module.bootstrap_url() == "http://server-intern:5001"
+    assert "aus Umgebung SMARTHEAT_BOOTSTRAP_URL" in caplog.text and "server-intern" not in caplog.text
 
 
 def test_bootstrap_url_option_must_be_https(tmp_path, monkeypatch, caplog):

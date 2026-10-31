@@ -1,5 +1,11 @@
 # Changelog SmartHeat-Gateway
 
+## Unveroeffentlicht
+
+- Die erlaubte eigene Zone fuer Geraete-API- und Portal-Adresse im Image (`SHG_OWN_ZONES` in `own_url.sh`) ist jetzt
+  `setwell.de` (vorher `hartfussha.org`, die Domain bleibt privat). Es gilt nur diese eine Zone, keine Mischliste:
+  ein Image mit Adressen unter `hartfussha.org` wird beim Bau abgelehnt. Bereits gebaute Images behalten ihre Adressen.
+
 ## 0.9.0
 
 - Uebernahme-Code nur nach einem Knopfdruck am Geraet (SG-02, GPC21): Der Container wertet `host/knopf.json` des
