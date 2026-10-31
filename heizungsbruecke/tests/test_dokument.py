@@ -542,8 +542,9 @@ def test_beschreibung_kommt_aus_der_gespeicherten_konfiguration():
     """Start und Abmelden (HaHost.sign_off_parts) bauen die Beschreibung ueber
     dokument_config.beschreibung aus der gespeicherten Konfiguration -- nicht aus einer Tabelle."""
     hebelsatz = KONFIGURATION["hebelsatz"]
-    konfiguration = {**KONFIGURATION, "bindungsparameter": parameter(hebelsatz, zurueck=[], zurueck_optional=[])}
-    assert dokument_config.beschreibung(konfiguration).restore_originals == ()
+    konfiguration = {**KONFIGURATION, "bindungsparameter": parameter(
+        hebelsatz, zurueck=["room_setpoint", "heat_limit"], zurueck_optional=[])}
+    assert dokument_config.beschreibung(konfiguration).restore_originals == ("room_setpoint", "heat_limit")
     ohne = {**KONFIGURATION, "bindungsparameter": None}
     with pytest.raises(ConfigError):
         dokument_config.beschreibung(ohne)
