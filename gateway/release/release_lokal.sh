@@ -32,7 +32,11 @@
 #   - der Arbeitsbaum ist sauber (auch ohne unversionierte Dateien) und HEAD ist der Commit des Tags gateway-vVERSION,
 #     dessen SSH-Signatur `git verify-tag` gegen .github/allowed_signers aus origin/main bestaetigt (frisch geholt, wie
 #     scripts/ci/tag_pruefen.sh; nie aus dem Checkout des Tags und nicht aus gpg.ssh.allowedSignersFile des Betreibers:
-#     wer einen Tag setzt, kann die Liste in dessen Commit aendern).
+#     wer einen Tag setzt, kann die Liste in dessen Commit aendern),
+#   - jede Root des Schluesselbunds (Standard wie eigenes --roots) steht mit ihrem Fingerabdruck in
+#     gateway/host/release-roots.sha256 aus demselben frisch geholten origin/main und ist keine Test-Root ("(Test)" im Namen)
+#     (roots_pruefen.py, vor jedem Bau): die Liste kommt nicht aus dem Checkout, weil wer einen Tag setzt, sie im Commit
+#     aendern koennte; origin/main bewegt nur der Release-Workflow.
 # Ablauf: Image bauen (docker buildx, nur linux/arm64, OCI-Archiv mit SBOM, Zeitstempel aus dem Commit), CycloneDX-SBOM
 # (SG-16) des Archivs per gepinntem syft-Container nach <aus>/gateway-<VERSION>.cdx.json (neben dem Bundle, nicht darin),
 # build_bundle.py, verify_bundle.py (Neubau aus diesem Stand), signieren.py (Signatur und sofortige Pruefung mit dem Code
@@ -132,6 +136,14 @@ if [ "$probe" = 0 ]; then
   git -C "$repo" -c "gpg.ssh.allowedSignersFile=$liste" verify-tag "$tag" >&2 \
     || { rm -f "$liste"; fehler "Tag $tag fehlt oder seine SSH-Signatur ist von keinem Schluessel aus .github/allowed_signers (origin/main)"; }
   rm -f "$liste"
+  # Gepinnte Liste der Release-Roots aus demselben frischen origin/main (nie aus dem Checkout): jede Root des Schluesselbunds
+  # muss mit ihrem Fingerabdruck darin stehen und darf keine Test-Root sein. Vor jedem Bau, auch fuer ein eigenes --roots.
+  roots_liste="$(mktemp "${TMPDIR:-/tmp}/release-roots.XXXXXX")"
+  git -C "$repo" show origin/main:gateway/host/release-roots.sha256 >"$roots_liste" 2>/dev/null \
+    || { rm -f "$roots_liste"; fehler "gateway/host/release-roots.sha256 fehlt auf origin/main (gepinnte Liste der Release-Roots)"; }
+  py "$here/roots_pruefen.py" produktion --liste "$roots_liste" "$roots" >&2 \
+    || { rm -f "$roots_liste"; fehler "Schluesselbund $roots passt nicht zur Liste der Release-Roots auf origin/main"; }
+  rm -f "$roots_liste"
   [ "$(git -C "$repo" rev-parse "$tag^{commit}")" = "$(git -C "$repo" rev-parse HEAD)" ] \
     || fehler "HEAD ist nicht der Commit von $tag (erst den Tag auschecken)"
 fi
