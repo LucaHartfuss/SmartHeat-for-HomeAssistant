@@ -31,6 +31,8 @@ class FakeHa:
         self.states, self.registry, self.uhr = dict(states), registry, uhr
         self.schreibvorgaenge: list[tuple[str, object, float]] = []
         self.meldungen: list[tuple] = []
+        self.abgelehnt: list[tuple[str, object, float]] = []  # abgewiesene Schreibaufrufe; HA lehnt bis lehnt_ab_bis ab
+        self.lehnt_ab_bis = 0.0
 
     def websocket_url(self):
         return "ws://ha.test/api/websocket"
@@ -65,6 +67,9 @@ class FakeHa:
         return str(self.states[f"{entity_id}::{attribute}"])
 
     def _schreiben(self, schluessel, wert):
+        if self.uhr() < self.lehnt_ab_bis:
+            self.abgelehnt.append((schluessel, wert, self.uhr()))
+            raise OSError("HA lehnt den Schreibaufruf ab")
         self.states[schluessel] = wert
         self.schreibvorgaenge.append((schluessel, wert, self.uhr()))
 
@@ -236,12 +241,17 @@ class Anlage(Handgriffe):
             device.Device, clock=self.uhr, wall=lambda: self.uhr.wand().timestamp(),
             bootstrap_client=_ohne_bootstrap, link_factory=link))
         for name in ("HaDeviceHost", "GeraetStatus", "Discovery"):
-            mp.setattr(main_module, name, functools.partial(getattr(main_module, name), clock=self.uhr))
+            mp.setattr(main_module, name, self._mit_uhr(getattr(main_module, name)))
+
+    def _mit_uhr(self, klasse):
+        """Die Klasse des Produkts, die ihre Uhr aus der Welt bekommt (Klassenattribute wie `host` bleiben)."""
+        uhr = self.uhr
+        return type("MitUhr", (klasse,), {"__init__": lambda selbst, *a, **k: klasse.__init__(selbst, *a, clock=uhr, **k)})
 
     def _prozess(self):
         """Ein Start wie `main` ihn vorbereitet: Geraetekern und Host auf denselben Dateien."""
-        geraet, self.device, status = main_module._vorbereiten(self.ha, self.supervisor, URL)
-        return geraet, status
+        self._geraet, self.device, status = main_module._vorbereiten(self.ha, self.supervisor, URL)
+        return self._geraet, status
 
     def _zugang(self) -> None:
         ident = identity.load_or_create(self.daten / device.DEVICE_DIR)

@@ -2,7 +2,7 @@
 der Wunsch am Thermostat wird nie geschrieben. Die Grenzen stehen hier woertlich, nie aus dem Produktcode."""
 import pytest
 from anlagen import LEERE_KONFIGURATION, RAUMFUEHLER, schreibziel
-from beobachtung import COMFORT_BOOST, REGELWERTE, SATZ, stand
+from beobachtung import COMFORT_BOOST, REGELWERTE, SATZ, boost_anlage, stand
 from welt_handgriffe import ROOM_TARGET
 
 from smartheat_device.prozess import Neustart
@@ -93,3 +93,20 @@ def test_ak_g8_02_der_wunsch_am_thermostat_wird_nie_geschrieben(welt):
     assert _am_thermostat(anlage) == []  # die Wunsch-Entity bekam nie einen Schreibaufruf
     assert anlage.ha.states[ROOM_TARGET] == 22.5  # und steht noch auf dem Wunsch des Bewohners
     assert len([w for e, w, _ in anlage.ha.schreibvorgaenge if e == ziel]) >= 4  # der Hebel wurde in jeder Stufe benutzt
+
+
+@pytest.mark.akzeptanz("AK-G8-03")
+def test_ak_g8_03_entfernen_ueber_stdin_stellt_zurueck_fremde_id_nicht(welt):
+    anlage = boost_anlage(welt, heizgrenze=17.0)
+    anlage.stdin_sendet(b"entfernen shg-fremd\n")  # ein anderes Geraet: nichts geschieht
+    neustart = False
+    try:
+        anlage.laufen(120)
+    except Neustart:
+        neustart = True
+    assert not neustart and stand(anlage) == COMFORT_BOOST
+    anlage.stdin_sendet(f"entfernen {anlage.geraete_id()}\n".encode())  # der geloeschte Eintrag dieses Geraets
+    with pytest.raises(Neustart):
+        anlage.runde(2)
+    anlage.neu_starten()
+    assert stand(anlage) == {"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 17.0}

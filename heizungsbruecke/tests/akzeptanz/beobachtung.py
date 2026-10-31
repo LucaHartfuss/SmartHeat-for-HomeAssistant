@@ -19,12 +19,14 @@ def boost_starts(anlage, satz: str = SATZ) -> list[float]:
     return [zeit for entity, wert, zeit in anlage.ha.schreibvorgaenge if entity == ziel and wert == COMFORT_BOOST["curve"]]
 
 
-def boost_anlage(welt, satz: str = SATZ):
+def boost_anlage(welt, satz: str = SATZ, heizgrenze: float | None = None):
     """Warmer Start (21,0 bei Soll 21,0), Server antwortet, dann der Bewohner hebt den Wunsch bei kaltem Raum auf 22:
-    Der Comfort-Boost laeuft."""
+    Der Comfort-Boost laeuft. Mit `heizgrenze` steht die Heizgrenze vor dem ersten Schreiben auf diesem Wert."""
     from anlagen import RAUMFUEHLER
 
     anlage = welt(satz, "Heizkoerper")
+    if heizgrenze is not None:
+        anlage.ha.states[schreibziel(satz, "heat_limit")] = heizgrenze
     anlage.ha.states[RAUMFUEHLER] = 21.0
     anlage.starten()
     anlage.server_antwortet({"curve": 0.8, "room_setpoint": 21.0, "heat_limit": 15.0})
