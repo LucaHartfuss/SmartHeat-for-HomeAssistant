@@ -107,7 +107,7 @@ def test_load_refuses_missing_binding_parameters_with_the_config_key(data_dir, c
 def test_load_refuses_a_short_restore_list_with_the_config_key(data_dir, clock):
     parameter = bindung_beispiele.parameter("viessmann_vicare", zurueck=["curve"])
     host = _host(Paths(data_dir), konfiguration(bindungsparameter=parameter), clock)
-    with pytest.raises(StartFailure, match="zurückzustellen") as error:
+    with pytest.raises(StartFailure, match="mindestens zurückstellen muss") as error:
         host.load()
     assert error.value.key == "konfiguration" and host.driver is None
 

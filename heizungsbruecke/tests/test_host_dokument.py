@@ -253,7 +253,7 @@ def test_a_stored_document_with_a_short_restore_list_does_not_start(env):
     """Die lokale Mindestliste der Rueckstellung gilt auch fuer eine schon gespeicherte Konfiguration."""
     konf = konfiguration_aus_optionen(OPTIONS)
     kurz = {**konf, "bindungsparameter": {**konf["bindungsparameter"], "zurueck": [], "zurueck_optional": []}}
-    with pytest.raises(StartFailure, match="zurückzustellen"):
+    with pytest.raises(StartFailure, match="mindestens zurückstellen muss"):
         HaHost(FakeGeraet(kurz), env.ha, clock=env.clock).load()
 
 

@@ -286,7 +286,7 @@ def test_beschreibung_ohne_bindungsparameter_ist_ein_konfigurationsfehler():
 def test_gespeicherte_kurze_rueckstellliste_ist_ein_konfigurationsfehler(zurueck):
     """Die lokale Mindestliste gilt auch fuer ein schon gespeichertes Dokument: der Start scheitert laut."""
     kurz = {**KONF_MIT, "bindungsparameter": parameter("viessmann_vicare", zurueck=zurueck)}
-    with pytest.raises(ConfigError, match="zurückzustellen"):
+    with pytest.raises(ConfigError, match="mindestens zurückstellen muss"):
         dc.beschreibung(kurz)
 
 
