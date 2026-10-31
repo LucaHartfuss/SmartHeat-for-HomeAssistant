@@ -93,11 +93,12 @@ def bootstrap_url() -> str | None:
     """Umgebung SMARTHEAT_BOOTSTRAP_URL (nur E2E/Tests) vor der Option bootstrap_url vor dem Produktions-Standard. Der
     Standard gilt nur, wenn beides fehlt (Schluessel fehlt oder null, options.json fehlt ganz): eine ungueltige Angabe
     und eine kaputte options.json fallen nie auf die Produktion zurueck (ein falsch eingestelltes Labor-Add-on meldete
-    sich sonst dort an), sondern ergeben None. Ins Log kommt nur der Grund, nie die Adresse (sie kann Zugangsdaten
-    tragen)."""
+    sich sonst dort an), sondern ergeben None. Ins Log kommt nur der Grund bzw. die Quelle (beim Standard dessen
+    Hostname), nie der Wert einer Option oder Umgebung (er kann Zugangsdaten tragen)."""
     override = os.environ.get("SMARTHEAT_BOOTSTRAP_URL")
     if override:
         quelle, value = "SMARTHEAT_BOOTSTRAP_URL", override
+        quelle_log = "aus Umgebung SMARTHEAT_BOOTSTRAP_URL"
     else:
         optionen = _optionen()
         if optionen is None:
@@ -105,12 +106,17 @@ def bootstrap_url() -> str | None:
                            "bleibt im Ruhezustand")
             return None
         quelle, value = "bootstrap_url", optionen.get("bootstrap_url")
-        value = DEFAULT_BOOTSTRAP_URL if value is None else value  # nicht gesetzt (fehlt oder null)
+        if value is None:  # nicht gesetzt (fehlt oder null)
+            value = DEFAULT_BOOTSTRAP_URL
+            quelle_log = "Standard " + str(urllib.parse.urlsplit(DEFAULT_BOOTSTRAP_URL).hostname)
+        else:
+            quelle_log = "aus Option bootstrap_url"
     grund = _url_fehler(value, http_erlaubt=quelle == "SMARTHEAT_BOOTSTRAP_URL")
     if grund is not None:
         logger.warning("%s ungueltig (%s): das Geraet meldet sich nicht an und bleibt im Ruhezustand", quelle, grund)
         return None
     assert isinstance(value, str)
+    logger.info("Bootstrap-Adresse: %s", quelle_log)  # Quelle, nie der Wert einer Option oder Umgebung
     return value.rstrip("/")
 
 
