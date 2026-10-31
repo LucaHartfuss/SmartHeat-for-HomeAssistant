@@ -129,3 +129,9 @@ def konfiguration(satz: str, verteilsystem: str) -> dict:
         "raumfuehler": [RAUMFUEHLER], "tagestick": "12:00", "abo": "aktiv", "mindest_software": "1.0.0",
         "software": None, "bindungsparameter": parameter,
     }
+
+
+#: Konfiguration ohne Anlage: das Abmelden vom Dienst (Felder wie die Konfiguration, ohne Inhalt)
+LEERE_KONFIGURATION = {
+    "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None, "bindung": None, "raumfuehler": [],
+    "tagestick": None, "abo": None, "mindest_software": "1.0.0", "software": None, "bindungsparameter": None}

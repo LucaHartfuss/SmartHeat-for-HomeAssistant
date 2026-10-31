@@ -1,8 +1,10 @@
 """Fussbodenheizung: lokale Obergrenzen (Estrich), kein Comfort-Boost, Notfall-Boost nur bis zum lokalen Maximum.
 Die Grenzen stehen hier woertlich, nie aus dem Produktcode."""
 import pytest
-from anlagen import ALLE, hebel_von, schreibziel
+from anlagen import ALLE, LEERE_KONFIGURATION, hebel_von, konfiguration, schreibziel
 from welt import Anlage
+
+from smartheat_device.prozess import Neustart
 
 #: lokales Maximum je (Hebelsatz, Verteilsystem) und Hebel (Regel 4), woertlich
 MAXIMA = {
@@ -80,4 +82,28 @@ def test_ak_g3_02_notfall_boost_nur_bis_zum_maximum(welt, satz, verteilsystem):
     assert len(anlage.ha.schreibvorgaenge) > geschrieben  # der Notfall-Boost schreibt
     assert _ist(anlage, satz, maxima) == maxima
     for hebel, maximum in maxima.items():
+        assert _hoechste(anlage, satz, hebel) <= maximum, hebel
+
+
+@pytest.mark.akzeptanz("AK-G3-03")
+@pytest.mark.parametrize("satz,verteilsystem", FBH, ids=[f"{s}-{v}" for s, v in FBH])
+def test_ak_g3_03_rastung_weist_heizkoerper_ab(welt, satz, verteilsystem):
+    maxima = MAXIMA[(satz, verteilsystem)]
+    heizkoerper = konfiguration(satz, "Heizkoerper")
+    anlage: Anlage = welt(satz, verteilsystem)
+    anlage.starten()  # als Fussbodenheizung eingerichtet
+    anlage.konfiguration_senden(2, heizkoerper)  # der Server schickt Heizkoerper
+    anlage.runde(2)
+    assert anlage.ergebnis(2) == {"ok": False, "grund": "hebelsatz_eingerastet"}
+    anlage.server_antwortet({hebel: FORDERUNG[hebel] for hebel in maxima})  # weit ueber jedem Maximum
+    anlage.runde(2)
+    assert _ist(anlage, satz, maxima) == maxima  # die Grenzen der Fussbodenheizung gelten weiter
+    anlage.konfiguration_senden(3, LEERE_KONFIGURATION)  # Abmelden loest die Rastung nicht
+    with pytest.raises(Neustart):  # das Abmelden startet den Prozess neu
+        anlage.runde(2)
+    assert anlage.ergebnis(3) == {"ok": True, "grund": None}
+    anlage.konfiguration_senden(4, heizkoerper)  # und wieder Heizkoerper
+    anlage.runde(2)
+    assert anlage.ergebnis(4) == {"ok": False, "grund": "hebelsatz_eingerastet"}
+    for hebel, maximum in maxima.items():  # nie ein Schreibvorgang ueber dem Maximum, auch nicht beim Abmelden
         assert _hoechste(anlage, satz, hebel) <= maximum, hebel

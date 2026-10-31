@@ -4,13 +4,13 @@ in __main__) auf Fake-HA, Fake-Link und gemeinsamer Fake-Uhr, ohne Netz und Thre
 import datetime
 import functools
 import json
-from zoneinfo import ZoneInfo
 
 from anlagen import RAUMFUEHLER, konfiguration, schreibziele, zustand
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from uhr import Uhr
 from welt_handgriffe import Handgriffe
 
 import heizungsbruecke.__main__ as main_module
@@ -19,20 +19,6 @@ from heizungsbruecke.derived_sensors import DerivedSensors
 from smartheat_device import bootstrap, device, identity
 
 URL = "https://accounts.example.test"
-BERLIN = ZoneInfo("Europe/Berlin")
-START = datetime.datetime(2027, 1, 15, 9, 0, tzinfo=BERLIN)  # Tagestick 12:00 wird nicht erreicht
-
-
-class Uhr:
-    """Monotone Uhr der Welt; die Wanduhr (Berlin) laeuft mit."""
-
-    jetzt = 1000.0
-
-    def __call__(self) -> float:
-        return self.jetzt
-
-    def wand(self) -> datetime.datetime:
-        return START + datetime.timedelta(seconds=self.jetzt - 1000.0)
 
 
 class FakeHa:
@@ -67,7 +53,7 @@ class FakeHa:
                 for entity in ids]
 
     def get_state(self, entity_id):
-        return self.states[entity_id]
+        return float(self.states[entity_id])  # wie die echte API: unavailable und Text sind ungueltig (ValueError)
 
     def get_raw_state(self, entity_id):
         wert = self.states[entity_id]
