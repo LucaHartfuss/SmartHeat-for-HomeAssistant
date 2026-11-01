@@ -2,7 +2,7 @@
 oder `entity::attribut` (Add-on-Konvention, siehe ha_api.get_state). Ungueltige oder
 unplausible Werte zaehlen nicht; ohne gueltigen Wert rendert das Template `none`, der Sensor
 steht dann auf `unknown` und der Tick meldet einen lokalen Datenfehler."""
-from smartheat_runtime.plausibility import OUTDOOR_TEMP_RANGE, ROOM_TEMP_RANGE
+from smartheat_runtime.plausibility import ROOM_TEMP_RANGE
 
 
 def _source_expression(ref: str) -> str:
@@ -26,10 +26,3 @@ def room_temperature_template(room_sensors: list[str]) -> str:
         "{{ (ns.values | sum / ns.values | length) | round(2) if ns.values else none }}"
     )
 
-
-def outdoor_temperature_template(weather_entity_id: str) -> str:
-    low, high = OUTDOOR_TEMP_RANGE
-    return (
-        f"{{% set v = state_attr('{weather_entity_id}', 'temperature') | float(none) %}}"
-        f"{{{{ v if v is not none and {low:g} <= v <= {high:g} else none }}}}"
-    )

@@ -218,12 +218,12 @@ FREIE_KLASSE = "*"
 _TEMPERATUR = ("sensor", "temperature")
 _FREI = ("sensor", FREIE_KLASSE)
 #: Form je Feld der Bindung: erlaubte (Domaene, Geraeteklasse); Klasse None =
-#: Domaene ohne Klassenpruefung (climate, weather). Zusaetzlich zu inventur.entity_erlaubt. Schreibziele stehen nicht
+#: Domaene ohne Klassenpruefung (climate). Zusaetzlich zu inventur.entity_erlaubt. Schreibziele stehen nicht
 #: hier (sie halten SCHREIBREGELN und schreibziele_befund); jedes andere Feld ist nicht erlaubt (fail closed). Der
 #: Server fuehrt dieselben Regeln in einrichtung/ha_rollen.py, der Contract-Check vergleicht beide.
 ROLLEN_FORM: dict[str, tuple[tuple[str, str | None], ...]] = {
     "room_target": (("climate", None), _TEMPERATUR),
-    "outdoor_temp": (("weather", None), _TEMPERATUR),
+    "outdoor_temp": (_TEMPERATUR,),
     "flow_setpoint": (_TEMPERATUR,), "flow_temperature": (_TEMPERATUR,), "return_temperature": (_TEMPERATUR,),
     "system_water_pressure": (("sensor", "pressure"),),
     **{f"energy_{kanal}": (("sensor", "energy"),) for kanal in ENERGIE_KANAELE},

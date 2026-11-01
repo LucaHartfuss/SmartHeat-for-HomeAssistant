@@ -810,7 +810,7 @@ def test_source_change_is_announced_once_and_not_critical(env):
     _start(env)
     _start(env)
 
-    changed = [text for text in env.ha.pushes if "Quelle der Raum- oder Außentemperatur" in text]
+    changed = [text for text in env.ha.pushes if "Quelle der Raumtemperatur" in text]
     assert len(changed) == 1
     assert not any(entry[0] == "smartheat_quellwechsel" for entry in env.ha.persistent)
 

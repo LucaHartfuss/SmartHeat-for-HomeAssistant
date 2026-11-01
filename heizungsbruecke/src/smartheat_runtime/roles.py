@@ -17,8 +17,7 @@ ALL_ROLES = (
     "generator_hours", "generator_starts", "generator_state",
 )
 
-# Pflicht-Entities der Bruecke (fuer alle Profile gleich). room_actual (und bei einer weather-Quelle
-# outdoor_temp) kommen aus derived_sensors.
+# Pflicht-Entities der Bruecke (fuer alle Profile gleich). room_actual kommt aus derived_sensors.
 REQUIRED_ROLES = (
     "room_actual", "room_target", "curve_current", "shift_current", "min_flow", "heat_limit", "outdoor_temp",
 )

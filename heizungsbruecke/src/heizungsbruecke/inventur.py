@@ -26,7 +26,7 @@ OHNE_REGISTRY = "ohne_registry"
 
 #: Lokale Positivliste: was der Server-Filter darueber hinaus verlangt, faellt weg. Keine
 #: Plattformliste (G-7): ein Sensor ohne passende Klasse bleibt nur, wenn seine Plattform etwas Einstellbares liefert.
-ERLAUBTE_DOMAENEN = frozenset({"climate", "number", "select", "weather"})
+ERLAUBTE_DOMAENEN = frozenset({"climate", "number", "select"})
 ERLAUBTE_BINAER_KLASSEN = frozenset({"battery"})
 ERLAUBTE_SENSOR_KLASSEN = frozenset({"temperature", "battery", "energy", "gas", "pressure", "power", "duration"})
 EINSTELLBARE_DOMAENEN = frozenset({"climate", "number", "select"})

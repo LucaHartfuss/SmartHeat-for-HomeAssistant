@@ -1,6 +1,6 @@
 """Hilfs-Entities der Bruecke. Der Raumtemperatur-Template-Sensor ist die Rolle room_actual (Mittel
-aller gueltigen Raumfuehler), bei einer weather-Quelle ein Aussentemperatur-Template die Rolle
-outdoor_temp. Der Server bildet alle Mittelwerte aus der Telemetrie.
+aller gueltigen Raumfuehler). Die Aussentemperatur kommt aus einem Sensor und braucht keine Hilfs-Entity.
+Der Server bildet alle Mittelwerte aus der Telemetrie.
 
 Jeder Helfer merkt sich die Quelle, auf der er angelegt wurde (derived_sensors.json). Fehlt sie oder
 weicht sie ab, wird er geloescht und neu angelegt; die Entity-ID bleibt dabei gleich (slugify(name),
@@ -11,13 +11,14 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
+from heizungsbruecke.helper_templates import room_temperature_template
 from smartheat_core.logtext import lesbar
 from smartheat_runtime.backup_store import load_backup, save_backup
 
 logger = logging.getLogger(__name__)
 
-# Tracking-Schluessel der Helfer, die dieses Add-on anlegt; jeder andere Eintrag ist ein Altrest.
+# Tracking-Schluessel der Helfer, die dieses Add-on anlegt oder frueher angelegt hat (outdoor_temperature: nur noch zum
+# Entfernen der Anlage, ensure_all legt ihn nicht mehr an); jeder andere Eintrag ist ein Altrest.
 TRACKING_KEYS = ("room_temperature", "outdoor_temperature")
 
 
@@ -30,9 +31,7 @@ class DerivedSensors:
     sources_fingerprint: str
 
 
-def ensure_all(
-    ha_api, tenant_id: str, room_sensors: list[str], outdoor_source: str, state_path: Path,
-) -> DerivedSensors:
+def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], state_path: Path) -> DerivedSensors:
     tracking = load_backup(state_path)
     replaced: list[str] = []
     sources: dict[str, str] = {}
@@ -53,17 +52,6 @@ def ensure_all(
         lambda: ha_api.create_template_sensor(name=f"SmartHeat {tenant_id} Raumtemperatur", template=room_template),
     )
     result = {"room_actual": room_actual}
-
-    if outdoor_source.startswith("weather."):
-        outdoor_template = outdoor_temperature_template(outdoor_source)
-        result["outdoor_temp"] = ensure(
-            "outdoor_temperature", outdoor_template,
-            lambda: ha_api.create_template_sensor(
-                name=f"SmartHeat {tenant_id} Außentemperatur", template=outdoor_template,
-            ),
-        )
-    else:
-        _drop_unused(ha_api, tracking, "outdoor_temperature", state_path, tenant_id)
 
     fingerprint = hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()[:12]
     return DerivedSensors(entity_ids=result, replaced=tuple(replaced), sources_fingerprint=fingerprint)
@@ -93,7 +81,7 @@ def _ensure_entity(
 
 
 def _drop_unused(ha_api, tracking: dict, key: str, state_path: Path, tenant_id: str) -> str | None:
-    """Ein nicht mehr gebrauchter Helfer (Template-Helfer bei weather -> sensor) wird entfernt, erst in HA
+    """Ein Helfer der Anlage wird entfernt, erst in HA
     (ha_api.delete_helper mit dem Tenant fuer die Titelpruefung), dann aus dem Tracking. Gibt die entfernte
     Entity-ID zurueck, None ohne Tracking-Eintrag. Wirft, wenn das Loeschen scheitert; der Eintrag bleibt dann
     stehen."""

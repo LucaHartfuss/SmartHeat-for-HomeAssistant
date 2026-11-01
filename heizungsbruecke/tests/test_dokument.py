@@ -586,13 +586,24 @@ def test_fh1_lese_rollen_auf_fremde_entities_abgelehnt(rolle, ref):
 
 def test_fh1_gegenprobe_dieselben_rollen_auf_erlaubten_entities():
     ha = _ha()
-    _dazu(ha, "weather.haus")
     _dazu(ha, "select.betriebsart", "mypyllant")
     _dazu(ha, "sensor.betriebsart_text", "mypyllant")
-    konfiguration = _mit_rolle("outdoor_temp", "weather.haus")
+    konfiguration = _mit_rolle("outdoor_temp", "sensor.outdoor_temp")
     for rolle, ref in (("mode_select", "select.betriebsart"), ("operating_mode", "sensor.betriebsart_text")):
         konfiguration = _mit_rolle_in(rolle, ref, konfiguration)
     assert _rollen(konfiguration, ha) is None
+
+
+@pytest.mark.parametrize("ref", ["weather.haus", "weather.haus::temperature"])
+def test_eine_weather_entity_ist_keine_quelle_der_aussentemperatur(ref):
+    """Der Server liefert das Wetter selbst; eine weather-Entity als Rolle outdoor_temp scheitert laut, bei der
+    Zuordnung wie beim Start. Gegenprobe: der Aussenfuehler (sensor) derselben Anlage wird angenommen."""
+    ha = _ha()
+    _dazu(ha, "weather.haus")
+    konfiguration = _mit_rolle("outdoor_temp", ref)
+    assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "outdoor_temp", "regel": "nicht_erlaubt"}
+    assert _rollen(konfiguration, ha) == ("outdoor_temp", "nicht_erlaubt")
+    assert _rollen(_mit_rolle("outdoor_temp", "sensor.outdoor_temp"), ha) is None
 
 
 def test_gegenprobe_climate_ist_auch_als_mode_select_erlaubt():
@@ -880,10 +891,10 @@ FORM_FAELLE = [
              [("sensor.soll", "zha", "battery"), ("sensor.soll", "mypyllant", None), ("number.wunsch", "mypyllant", None),
               ("select.wunsch", "mypyllant", None), ("weather.haus", None, None)]),
     *_faelle(("outdoor_temp",),
-             [("weather.haus", None, None), ("sensor.aussen", "zha", "temperature"),
-              ("weather.haus", None, "humidity")],
-             [("sensor.aussen", "zha", "pressure"), ("sensor.aussen", "mypyllant", None),
-              ("climate.aussen", "mypyllant", None), ("number.aussen", "mypyllant", None)]),
+             [("sensor.aussen", "zha", "temperature")],
+             [("sensor.aussen", "zha", "pressure"), ("sensor.aussen", "zha", "humidity"), ("sensor.aussen", "mypyllant", None),
+              ("climate.aussen", "mypyllant", None), ("number.aussen", "mypyllant", None),
+              ("weather.haus", None, None), ("weather.haus", None, "temperature")]),
     *_faelle(("flow_setpoint", "flow_temperature", "return_temperature"),
              [("sensor.vorlauf", "zha", "temperature")],
              [("sensor.vorlauf", "zha", "energy"), ("sensor.vorlauf", "mypyllant", None),
