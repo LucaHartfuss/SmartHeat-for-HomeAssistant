@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from configs import SENSOR, THERMOSTAT, konfiguration, kreis_bindung, leer
+from rastung_beispiele import rastung_aus
 
 from smartheat_core import rastung
 from smartheat_device import wire
@@ -130,7 +131,7 @@ def test_rastung_path_is_where_the_document_store_writes_the_lock(tmp_path):
                           treiber_pruefen=lambda bindung: config.treiber_pruefen(paths, bindung))
     ergebnis = store.empfangen("konfiguration", {"schema": wire.SCHEMA, "version": 1, **konfiguration()})
     assert ergebnis.ok and paths.rastung.is_file()
-    assert rastung.lesen(paths.rastung) == rastung.Rastung("viessmann_vicare", "Heizkoerper")
+    assert rastung.lesen(paths.rastung) == rastung_aus(konfiguration())
     config.parse_dokument(konfiguration(), paths, lambda: entitlement.ACTIVE)
     with pytest.raises(ConfigError, match="festgelegt"):
         config.parse_dokument(konfiguration(verteilsystem="Fussbodenheizung"), paths, lambda: entitlement.ACTIVE)

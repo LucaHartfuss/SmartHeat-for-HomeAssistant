@@ -127,8 +127,9 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
 def rastung_pruefen(konfiguration, rastung_pfad: Path) -> None:
     """Zweite Linie: die Laufzeit startet bzw. setzt nur zurueck, wenn die Konfiguration zur
     Rastung passt; der Dokumentspeicher hat das schon geprueft, das hier deckt einen Fehler dort ab. Wirft ConfigError."""
-    if not rastung.passt(rastung.lesen(rastung_pfad), kreisansicht.erste(konfiguration)):
-        raise ConfigError(f"Konfiguration: {rastung.TEXT}")
+    gelesen = rastung.lesen(rastung_pfad)
+    if not rastung.passt(gelesen, konfiguration):
+        raise ConfigError(f"Konfiguration: {rastung.text_zu(gelesen)}")
 
 
 def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,

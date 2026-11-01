@@ -3,13 +3,13 @@ import pytest
 from bindung_beispiele import parameter
 from device_helpers import SENSOR
 from geraet_helpers import gateway_konfiguration
+from rastung_beispiele import fuer
 
 from smartheat_core import config_check as cc
 from smartheat_core import rastung
-from smartheat_core.rastung import Rastung
 from smartheat_device import fehler, wire
 
-LOCK = Rastung("viessmann_vicare", "Heizkoerper")
+LOCK = ("viessmann_vicare", "Heizkoerper")
 
 
 def _form(ablehnung):
@@ -19,7 +19,7 @@ def _form(ablehnung):
 
 
 def _pruefen(neu, rastung=None, **kwargs):
-    return _form(cc.pruefen(neu, rastung, host=cc.HOST_GATEWAY, **kwargs))
+    return _form(cc.pruefen(neu, fuer(rastung, neu), host=cc.HOST_GATEWAY, **kwargs))
 
 
 def test_grund_ausserhalb_des_vertrags_wird_ungueltig_und_geloggt(monkeypatch, caplog):

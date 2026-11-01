@@ -5,17 +5,17 @@ import konfig_form
 import pytest
 from bindung_beispiele import parameter
 from geraet_helpers import gateway_konfiguration, ha_konfiguration
+from rastung_beispiele import fuer
 
 from smartheat_core import config_check as cc
 from smartheat_core import kreisansicht
-from smartheat_core.rastung import Rastung
 from smartheat_device import fehler, wire
 
-LOCK = Rastung("viessmann_vicare", "Heizkoerper")
+LOCK = ("viessmann_vicare", "Heizkoerper")
 
 
 def _geprueft(neu, rastung=None, **kwargs):
-    ablehnung = cc.pruefen(neu, rastung, host=kwargs.pop("host", cc.HOST_GATEWAY), **kwargs)
+    ablehnung = cc.pruefen(neu, fuer(rastung, neu), host=kwargs.pop("host", cc.HOST_GATEWAY), **kwargs)
     if ablehnung is not None:
         assert not hasattr(ablehnung, "text") and fehler.gueltig(ablehnung.details), ablehnung
     return ablehnung

@@ -18,6 +18,7 @@ from fakes import FakeClock
 from geraet_helpers import gateway_konfiguration, ha_konfiguration
 from hypothesis import example, given
 from hypothesis import strategies as st
+from rastung_beispiele import rastung_aus
 from runtime_helpers import (
     NICHT_NUMERISCH,
     SAETZE,
@@ -35,7 +36,6 @@ from smartheat_core import config_check as cc
 from smartheat_core.bindungsparameter import beschreibung
 from smartheat_core.clamping import round_to_step
 from smartheat_core.pipeline import LeverPipeline
-from smartheat_core.rastung import Rastung
 from smartheat_core.safety import LOCAL_SAFETY, check_invariants, resolve_local_safety
 from smartheat_device import fehler
 from smartheat_runtime.state import StateStore
@@ -364,7 +364,7 @@ def test_serverantwort_mit_beliebigen_schrittweiten_und_anlagenbereichen_schreib
 # --- config_check.pruefen (F-client-kern-04) ---
 
 VORLAGEN = {cc.HOST_GATEWAY: gateway_konfiguration(), cc.HOST_HA: ha_konfiguration()}
-RASTUNGEN = {cc.HOST_GATEWAY: Rastung("viessmann_vicare", HK), cc.HOST_HA: Rastung("vaillant_vrc720", HK)}
+RASTUNGEN = {host: rastung_aus(vorlage) for host, vorlage in VORLAGEN.items()}
 
 
 @pytest.mark.parametrize("host", sorted(VORLAGEN))

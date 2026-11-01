@@ -4,6 +4,7 @@ import json
 import pytest
 from fakes import FakeHa
 from geraet_helpers import FakeGeraet, bedienung_inhalt, konfiguration_aus_optionen
+from rastung_beispiele import rastung_aus
 from runtime_helpers import OPTIONS
 
 from heizungsbruecke import config
@@ -299,7 +300,8 @@ def test_a_climate_target_without_attribute_is_a_start_failure(env):
 
 def _rastung_schreiben(verteilsystem):
     from smartheat_core import rastung
-    rastung.schreiben(config.RASTUNG_PATH, rastung.Rastung("vaillant_vrc720", verteilsystem),
+    rastung.schreiben(config.RASTUNG_PATH,
+                      rastung_aus(konfiguration_aus_optionen(OPTIONS), verteilsystem=verteilsystem),
                       "2026-10-14T00:00:00+00:00")
 
 

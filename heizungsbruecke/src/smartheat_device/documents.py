@@ -31,12 +31,12 @@ ungueltiges oder fehlendes Feld laesst das gemerkte Angebot stehen. Das ist dass
 uebergibt; software_soll_nachholen des Gateways bietet es nach einem Neustart erneut an. Fehlt der Schluessel in
 dokumente.json oder hat sein Wert nicht die Vertragsform, ist nichts gemerkt (kein Kompatibilitaetspfad).
 
-Rastung: Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen
+Rastung: Hebelsatz, Verteilsystem, Schreibziele und Soll-Entity je Kreis der ersten eingerichteten Konfiguration stehen
 in sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der
-Konfiguration geschrieben. Fehlt die Datei bei gespeicherter eingerichteter Konfiguration (Stand vor dieser Version),
-rastet der Start (nicht in der Nur-Lese-Verwendung, rasten=False). Scheitert das Schreiben erst nach dem Ersetzen (fsync
-des Ordners), gilt die Rastung vom Datentraeger. Eine kaputte oder manipulierte Datei (auch ein Symlink) lehnt jede
-eingerichtete Konfiguration ab (rastung.lesen)."""
+Konfiguration geschrieben. Der Start rastet nie nach: fehlt die Datei bei gespeicherter eingerichteter Konfiguration
+oder steht sie im alten Format, holt die einmalige Migration im Wartungsfenster es nach (rastung_migration). Scheitert
+das Schreiben erst nach dem Ersetzen (fsync des Ordners), gilt die Rastung vom Datentraeger. Eine kaputte oder
+manipulierte Datei (auch ein Symlink, auch das alte Format) lehnt jede eingerichtete Konfiguration ab (rastung.lesen)."""
 import copy
 import logging
 import re
@@ -46,7 +46,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeGuard
 
-from smartheat_core import config_check, dateien, kreisansicht, rastung, wallclock
+from smartheat_core import config_check, dateien, rastung, wallclock
 from smartheat_core.rastung import Rastung
 from smartheat_device import fehler, nachrichten, wire
 from smartheat_runtime import soll_speicher
@@ -232,10 +232,8 @@ class DocumentStore:
                  treiber_pruefen: config_check.TreiberPruefung | None = None,
                  vor_speichern: Callable[[dict | None, dict], None] | None = None, rasten: bool = True) -> None:
         """vor_speichern(alt, neu): DeviceHost.konfiguration_vorbereiten; die Nur-Lese-Verwendungen (Aufraeumen beim
-        Start) uebergeben keinen und rasten=False: der Konstruktor schreibt dann keine Rastung nach (sie fehlt bei
-        gespeicherter eingerichteter Konfiguration), auch nicht bei einem Fehler im Ordner; rastung bleibt None. Ein
-        solcher Store ist nur zum Lesen: empfangen einer eingerichteten Konfiguration, die rasten muesste, wirft
-        RuntimeError (Programmierfehler), bevor etwas gespeichert wird."""
+        Start) uebergeben keinen und rasten=False. Ein solcher Store ist nur zum Lesen: empfangen einer eingerichteten
+        Konfiguration, die rasten muesste, wirft RuntimeError (Programmierfehler), bevor etwas gespeichert wird."""
         self._dir = directory
         self._rasten_erlaubt = rasten
         self._host, self._software_version, self._treiber_pruefen = host, software_version, treiber_pruefen
@@ -273,23 +271,17 @@ class DocumentStore:
         return self._rastung
 
     def _rastung_laden(self) -> Rastung | None:
-        """Fehlt die Datei und ist die gespeicherte Konfiguration eingerichtet, gilt deren Paar (Regel "erste
-        eingerichtete Konfiguration", z. B. client1 beim ersten Start mit dieser Version). Eine vorhandene, auch
-        kaputte Datei wird nie ueberschrieben."""
-        gelesen = rastung.lesen(self._rastung_pfad)
-        inhalt = self.inhalt(KONFIGURATION)
-        if self._rasten_erlaubt and gelesen is None and inhalt is not None and not config_check.ist_leer(inhalt):
-            return self._rasten(inhalt)
-        return gelesen
+        """Nur lesen, nie aus der gespeicherten Konfiguration nachrasten: eine fehlende Datei bei eingerichteter
+        Konfiguration (Stand vor der Rastung je Kreis) holt die einmalige Migration im Wartungsfenster nach
+        (smartheat_device.rastung_migration). Eine vorhandene, auch kaputte Datei wird nie ueberschrieben."""
+        return rastung.lesen(self._rastung_pfad)
 
     def _rasten(self, inhalt: dict) -> Rastung | None:
         if not self._rasten_erlaubt:  # Programmierfehler: ein Nur-Lese-Store (rasten=False) empfaengt keine Dokumente
             raise RuntimeError("DocumentStore mit rasten=False schreibt keine Rastung")
-        sicht = kreisansicht.erste(inhalt)  # bis die Rastung je Kreis fuehrt: das Paar des ersten Kreises
-        hebelsatz, verteilsystem = sicht["hebelsatz"], sicht["verteilsystem"]
-        if not (isinstance(hebelsatz, str) and isinstance(verteilsystem, str)):
+        neu = rastung.aus_konfiguration(inhalt)
+        if neu is None:
             return None
-        neu = Rastung(hebelsatz, verteilsystem)
         try:
             rastung.schreiben(self._rastung_pfad, neu, wallclock.now().isoformat(timespec="seconds"))
         except BaseException:

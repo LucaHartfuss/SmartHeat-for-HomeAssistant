@@ -20,6 +20,7 @@ from geraet_helpers import (
     bedienung_inhalt,
     konfiguration_aus_optionen,
 )
+from rastung_beispiele import rastung_aus
 from runtime_helpers import OPTIONS, _quiet_backup
 
 import heizungsbruecke.__main__ as main_module
@@ -748,7 +749,7 @@ def test_a_marker_that_does_not_fit_the_lock_stays_on_reset_and_nothing_is_delet
     if rastung_datei == "kaputt":
         config.RASTUNG_PATH.write_text("{kaputt")
     else:
-        rastung.schreiben(config.RASTUNG_PATH, rastung.Rastung("vaillant_vrc720", "Fussbodenheizung"),
+        rastung.schreiben(config.RASTUNG_PATH, rastung_aus(konfiguration, verteilsystem="Fussbodenheizung"),
                           "2026-10-18T00:00:00+02:00")
     device = FakeDevice({**konfiguration, "anlage": None})
     ha = DeletingHa()

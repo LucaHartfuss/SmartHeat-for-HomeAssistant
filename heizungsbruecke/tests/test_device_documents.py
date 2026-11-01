@@ -28,11 +28,42 @@ def test_a_empty_configuration_does_not_release_the_lock(tmp_path):
     assert _store(tmp_path).empfangen("konfiguration", _konfiguration(version=5, verteilsystem="Fussbodenheizung")).ok
 
 
+def _rastung_zu(**changes):
+    """Die Rastung, die der Speicher aus dieser Konfiguration schreibt."""
+    return rastung.aus_konfiguration(_konfiguration(**changes))
+
+
 def test_the_first_set_up_configuration_creates_the_lock(tmp_path):
     assert not (tmp_path / "sicherheitssatz.json").exists()
     _store(tmp_path).empfangen("konfiguration", _konfiguration())
     gespeichert = json.loads((tmp_path / "sicherheitssatz.json").read_text())
-    assert (gespeichert["hebelsatz"], gespeichert["verteilsystem"]) == ("viessmann_vicare", "Heizkoerper")
+    [eintrag] = gespeichert["kreise"]
+    assert (eintrag["kreis"], eintrag["hebelsatz"], eintrag["verteilsystem"], eintrag["soll_entity"]) \
+        == (1, "viessmann_vicare", "Heizkoerper", None)
+    assert "treiber=simulation" in eintrag["ziele"] and "hebelsatz" not in gespeichert
+    assert rastung.lesen(tmp_path / "sicherheitssatz.json") == _rastung_zu()
+
+
+def test_the_same_pair_with_other_write_targets_is_rejected_after_the_lock(tmp_path):
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _konfiguration(version=1)).ok
+    bindung = {"treiber": {"id": "simulation", "parameter": {"heizkreis": 1}}, "thermostat": None}
+    ergebnis = store.empfangen("konfiguration", _konfiguration(version=2, bindung=bindung))
+    assert (ergebnis.ok, ergebnis.grund) == (False, "hebelsatz_eingerastet")
+    assert store.version("konfiguration") == 1
+    assert store.empfangen("konfiguration", _leer(version=3)).uebernommen   # leer lockert nichts
+    assert store.empfangen("konfiguration", _konfiguration(version=4, bindung=bindung)).grund == "hebelsatz_eingerastet"
+    assert store.empfangen("konfiguration", _konfiguration(version=5)).ok
+
+
+def test_a_lock_in_the_old_format_rejects_every_set_up_configuration_and_stays_untouched(tmp_path):
+    alt = '{"hebelsatz": "viessmann_vicare", "seit": "2026-10-01T00:00:00", "verteilsystem": "Heizkoerper"}'
+    (tmp_path / "sicherheitssatz.json").write_text(alt)
+    store = _store(tmp_path)
+    assert store.rastung == rastung.UNBEKANNT and store.rastung.sperre == "altes_format"
+    assert store.empfangen("konfiguration", _konfiguration()).grund == "hebelsatz_eingerastet"
+    assert store.empfangen("konfiguration", _leer(version=2)).ok
+    assert (tmp_path / "sicherheitssatz.json").read_text() == alt
 
 
 def _scheitert_fuer(monkeypatch, name: str) -> None:
@@ -55,7 +86,7 @@ def test_an_abort_after_the_lock_leaves_the_lock_without_the_document(tmp_path, 
     with pytest.raises(OSError):
         _store(tmp_path).empfangen("konfiguration", _konfiguration())
     monkeypatch.undo()
-    assert rastung.lesen(tmp_path / "sicherheitssatz.json") == rastung.Rastung("viessmann_vicare", "Heizkoerper")
+    assert rastung.lesen(tmp_path / "sicherheitssatz.json") == _rastung_zu()
     assert not (tmp_path / "konfiguration.json").exists() and _store(tmp_path).version("konfiguration") == 0
 
 
@@ -100,7 +131,7 @@ def test_a_failed_folder_sync_after_the_lock_replace_still_locks_the_pair_in_thi
     with pytest.raises(OSError, match="Datentraeger"):
         store.empfangen("konfiguration", _konfiguration(version=1, verteilsystem="Fussbodenheizung"))
     monkeypatch.undo()
-    assert store.rastung == rastung.Rastung("viessmann_vicare", "Fussbodenheizung")
+    assert store.rastung == _rastung_zu(verteilsystem="Fussbodenheizung")
     assert store.empfangen("konfiguration", _konfiguration(version=2, verteilsystem="Heizkoerper")).grund \
         == "hebelsatz_eingerastet"
     assert store.empfangen("konfiguration", _konfiguration(version=3, verteilsystem="Fussbodenheizung")).ok
@@ -126,7 +157,9 @@ def test_a_read_only_store_refuses_a_configuration_that_would_lock(tmp_path):
     assert nur_lesen.version("konfiguration") == 0 and nur_lesen.rastung is None
 
 
-def test_a_read_only_store_survives_a_folder_that_refuses_the_lock(tmp_path, monkeypatch):
+def test_no_store_writes_the_lock_on_start_not_even_a_normal_one(tmp_path, monkeypatch):
+    """Die Rastung wird nie beim Start nachgeholt (das tut die Migration im Wartungsfenster): auch ein Ordner, der
+    das Schreiben verweigert, stoert weder den Nur-Lese-Store noch den normalen."""
     _store(tmp_path).empfangen("konfiguration", _konfiguration())
     (tmp_path / "sicherheitssatz.json").unlink()
 
@@ -135,8 +168,8 @@ def test_a_read_only_store_survives_a_folder_that_refuses_the_lock(tmp_path, mon
 
     monkeypatch.setattr(rastung.dateien, "schreiben_json", verweigert)
     assert docs.DocumentStore(tmp_path, host="gateway", software_version="0.6.0", rasten=False).eingerichtet()
-    with pytest.raises(OSError, match="schreibgeschuetzt"):  # Gegenprobe: der Normalfall rastet und scheitert hier
-        _store(tmp_path)
+    assert _store(tmp_path).eingerichtet()
+    assert not (tmp_path / "sicherheitssatz.json").exists()
 
 
 def test_an_empty_configuration_never_creates_a_lock(tmp_path):
@@ -144,26 +177,15 @@ def test_an_empty_configuration_never_creates_a_lock(tmp_path):
     assert not (tmp_path / "sicherheitssatz.json").exists()
 
 
-def test_a_stored_configuration_without_lock_locks_on_start(tmp_path):
-    _store(tmp_path).empfangen("konfiguration", _konfiguration())
-    (tmp_path / "sicherheitssatz.json").unlink()  # Stand vor dieser Version (client1)
-    store = _store(tmp_path)
-    assert store.rastung == rastung.Rastung("viessmann_vicare", "Heizkoerper")
-    assert (tmp_path / "sicherheitssatz.json").exists()
-
-
-@pytest.mark.parametrize("feld", ["hebelsatz", "verteilsystem"])
-def test_a_stored_configuration_without_a_text_pair_does_not_lock_on_start(tmp_path, feld):
-    """Rastung aus einer gespeicherten Konfiguration nur mit Hebelsatz UND Verteilsystem als Text (z. B. eine von Hand
-    veraenderte Datei); sonst keine Rastung und keine Datei."""
+def test_a_stored_configuration_without_lock_does_not_lock_on_start(tmp_path):
+    """Stand vor der Rastung je Kreis (client1): der Start rastet nicht nach, die Migration holt es nach. Bis dahin
+    gilt keine Rastung, das naechste angenommene Dokument rastet wie bei der ersten Einrichtung."""
     _store(tmp_path).empfangen("konfiguration", _konfiguration())
     (tmp_path / "sicherheitssatz.json").unlink()
-    datei = tmp_path / docs.DATEIEN["konfiguration"]
-    gespeichert = json.loads(datei.read_text())
-    gespeichert["inhalt"]["kreise"][0][feld] = None
-    datei.write_text(json.dumps(gespeichert))
     store = _store(tmp_path)
     assert store.rastung is None and not (tmp_path / "sicherheitssatz.json").exists()
+    assert store.empfangen("konfiguration", _konfiguration(version=2)).ok
+    assert store.rastung == _rastung_zu() and (tmp_path / "sicherheitssatz.json").exists()
 
 
 def test_a_broken_lock_file_rejects_every_set_up_configuration(tmp_path):

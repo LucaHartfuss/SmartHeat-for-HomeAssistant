@@ -13,6 +13,7 @@ from configs import SENSOR, THERMOSTAT, bedienung, dokumente_schreiben, konfigur
 from fake_vicare.server import GOOD_CODE, FakeVicare
 from fakes import FakeBus
 from geraet_fakes import geraet_fuer
+from rastung_beispiele import rastung_aus
 from world import GatewayWorld
 
 from smartheat_core import dateien, rastung
@@ -162,7 +163,8 @@ def test_empty_configuration_with_pending_reset_boots_signed_off_with_the_old_on
 
 def test_load_refuses_a_configuration_that_does_not_fit_the_lock(data_dir, clock):
     paths = Paths(data_dir)
-    rastung.schreiben(paths.rastung, rastung.Rastung("viessmann_vicare", "Fussbodenheizung"), "2026-10-14T00:00:00+00:00")
+    rastung.schreiben(paths.rastung, rastung_aus(konfiguration(), verteilsystem="Fussbodenheizung"),
+                      "2026-10-14T00:00:00+00:00")
     with pytest.raises(StartFailure, match="festgelegt") as error:
         _host(paths, konfiguration(), clock).load()
     assert error.value.key == "konfiguration"

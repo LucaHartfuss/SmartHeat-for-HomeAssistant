@@ -3,7 +3,8 @@ Standardbibliothek und smartheat_core. Das Dokument fuehrt anlagenweit Anlage, W
 je Kreis (hoechstens KREISE_MAX) Bindung, Hebelsatz, Verteilsystem, Abo und Raeume; alle Kreise einer Anlage haben
 denselben Hebelsatz. Regeln in dieser Reihenfolge: (1) Aufbau und Wertebereiche, (2) Hebelsatz und
 Verteilsystem haben lokale Sicherheitswerte (safety.py), (3) eingerastet: Hebelsatz und Verteilsystem muessen zur Rastung
-des Geraets passen (smartheat_core.rastung); eine leere Konfiguration loest sie nicht, (3a) Bindungsparameter gegen die
+des Geraets passen (smartheat_core.rastung), nach der Pruefung der Bindungen auch die Schreibziele und die Soll-Entity
+je Kreis; eine leere Konfiguration loest sie nicht, (3a) Bindungsparameter gegen die
 lokalen Grenzen (smartheat_core.bindungsparameter), (4) erlaubte Referenzen je Rolle, (4a) der Weg der Anlage ist ein
 bekannter und der aller Kreise (weg_unbekannt, weg_mehrfach), (5) keine Doppelbelegung (innerhalb eines Kreises und
 Schreibziele wie Fuehler getrennt ueber die Kreise), (6) Treiberparameter prueft
@@ -26,7 +27,7 @@ from smartheat_core import kreisansicht
 from smartheat_core.bindungsparameter import Fehler as BindungsparameterFehler
 from smartheat_core.bindungsparameter import beschreibung
 from smartheat_core.levers import LEVER_SETS
-from smartheat_core.rastung import Rastung, passt
+from smartheat_core.rastung import Rastung, hebel_passt, passt
 from smartheat_core.safety import resolve_local_safety
 from smartheat_core.verfahren import WegUnbekannt, verfahren_fuer
 from smartheat_core.zahlen import ist_endliche_zahl
@@ -410,7 +411,7 @@ def _pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
         except ValueError:
             feld = "hebelsatz" if sicht["hebelsatz"] not in LEVER_SETS else "verteilsystem"
             return Ablehnung(SICHERHEITSWERTE_FEHLEN, befund(feld, "unbekannt"))
-        if not passt(rastung, sicht):
+        if not hebel_passt(rastung, sicht["hebelsatz"], sicht["verteilsystem"]):
             return Ablehnung(HEBELSATZ_EINGERASTET)
     # Die lokale Zeile (Weg, Hebelsatz) bestimmt Obergrenzen und Positivlisten. Ein Hebelsatz ohne Zeile am Weg hat
     # keine lokalen Sicherheitswerte. Bei unbekanntem Weg gibt es keine Zeile: die Bindung wird unten zuerst geprueft
@@ -433,6 +434,11 @@ def _pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
     for pruefsicht in pruefsichten:
         if ablehnung := _host_bindung(pruefsicht, host):
             return ablehnung
+    # Die Rastung je Kreis: Hebelsatz und Verteilsystem standen oben schon an, Schreibziele und Soll-Entity lassen sich
+    # erst bei wohlgeformter Bindung lesen. Das ganze Dokument zaehlt (mehr Kreise als Eintraege, ein Kreis ohne
+    # Eintrag).
+    if not passt(rastung, neu):
+        return Ablehnung(HEBELSATZ_EINGERASTET)
     wege = [_weg_des_kreises(sicht["bindung"], host) for sicht in sichten]
     if neu["weg"] not in WEGE or None in wege:
         return Ablehnung(WEG_UNBEKANNT, befund("weg", "unbekannt"))

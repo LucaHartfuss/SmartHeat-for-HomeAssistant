@@ -1,16 +1,17 @@
 """Lokale Pruefung einer HA-Konfiguration (Aufbau rein, HA-Teil ueber den Rueckruf)."""
 import pytest
 from geraet_helpers import ha_konfiguration
+from rastung_beispiele import fuer
 
 from smartheat_core import config_check as cc
 from smartheat_core import kreisansicht
-from smartheat_core.rastung import Rastung
 from smartheat_device import fehler, wire
 
 
 def _geprueft(*args, **kwargs):
     """cc.pruefen; jede Ablehnung hat die Form des Vertrags (Grund und details, kein Text)."""
-    ablehnung = cc.pruefen(*args, **kwargs)
+    neu, festlegung, *rest = args
+    ablehnung = cc.pruefen(neu, fuer(festlegung, neu), *rest, **kwargs)
     if ablehnung is not None:
         assert not hasattr(ablehnung, "text") and fehler.gueltig(ablehnung.details), ablehnung
     return ablehnung
@@ -198,7 +199,7 @@ def test_an_unknown_host_is_rejected():
 
 def test_lever_set_lock_applies_to_home_assistant_too():
     kreis = ha_konfiguration()["kreise"][0]
-    rastung = Rastung(kreis["hebelsatz"], kreis["verteilsystem"])
+    rastung = (kreis["hebelsatz"], kreis["verteilsystem"])
     ablehnung = _geprueft(ha_konfiguration(hebelsatz="viessmann_vicare"), rastung, host=cc.HOST_HA)
     assert ablehnung.grund == cc.HEBELSATZ_EINGERASTET
 

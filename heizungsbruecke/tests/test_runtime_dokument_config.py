@@ -8,6 +8,7 @@ from pathlib import Path
 import konfig_form
 import pytest
 from bindung_beispiele import parameter
+from rastung_beispiele import rastung_aus
 
 from smartheat_core import rastung
 from smartheat_core.config_check import INTERVALLE
@@ -283,8 +284,27 @@ def test_a_sign_off_marker_removed_meanwhile_is_not_lifted_and_not_logged(tmp_pa
 
 def test_runtime_refuses_a_configuration_that_does_not_fit_the_lock(tmp_path):
     pfad = tmp_path / "sicherheitssatz.json"
-    rastung.schreiben(pfad, rastung.Rastung("viessmann_vicare", "Fussbodenheizung"), "2026-10-14T00:00:00+00:00")
+    rastung.schreiben(pfad, rastung_aus(konfig_form.nach_form(KONF), verteilsystem="Fussbodenheizung"),
+                      "2026-10-14T00:00:00+00:00")
     with pytest.raises(ConfigError, match="festgelegt"):
+        dc.runtime_config(KONF, rastung_pfad=pfad, entitlement_path=tmp_path / "e.json", abo_source=lambda: "active")
+
+
+def test_runtime_refuses_the_same_pair_with_other_write_targets(tmp_path):
+    pfad = tmp_path / "sicherheitssatz.json"
+    anders = {**KONF, "bindung": {"treiber": {"id": "simulation", "parameter": {"heizkreis": 3}}, "thermostat": None}}
+    rastung.schreiben(pfad, rastung_aus(konfig_form.nach_form(anders)), "2026-10-14T00:00:00+00:00")
+    with pytest.raises(ConfigError, match="festgelegt"):
+        dc.runtime_config(KONF, rastung_pfad=pfad, entitlement_path=tmp_path / "e.json", abo_source=lambda: "active")
+    rastung.schreiben(pfad, rastung_aus(konfig_form.nach_form(KONF)), "2026-10-14T00:00:00+00:00")
+    assert dc.runtime_config(KONF, rastung_pfad=pfad, entitlement_path=tmp_path / "e.json",
+                             abo_source=lambda: "active").tenant_id == "kunde3"  # Gegenprobe: dieselben Ziele passen
+
+
+def test_runtime_names_the_migration_for_a_lock_in_the_old_format(tmp_path):
+    pfad = tmp_path / "sicherheitssatz.json"
+    pfad.write_text('{"hebelsatz": "viessmann_vicare", "verteilsystem": "Heizkoerper", "seit": "2026-10-01"}')
+    with pytest.raises(ConfigError, match="Migration"):
         dc.runtime_config(KONF, rastung_pfad=pfad, entitlement_path=tmp_path / "e.json", abo_source=lambda: "active")
 
 
@@ -297,7 +317,7 @@ def test_runtime_refuses_everything_with_a_broken_lock(tmp_path):
 
 def test_runtime_refuses_everything_with_a_lock_that_is_a_symlink(tmp_path):
     ziel = tmp_path / "ziel.json"
-    rastung.schreiben(ziel, rastung.Rastung("viessmann_vicare", "Heizkoerper"), "2026-10-14T00:00:00+00:00")
+    rastung.schreiben(ziel, rastung_aus(konfig_form.nach_form(KONF)), "2026-10-14T00:00:00+00:00")
     (tmp_path / "sicherheitssatz.json").symlink_to(ziel)
     with pytest.raises(ConfigError, match="festgelegt"):
         dc.runtime_config(KONF, rastung_pfad=tmp_path / "sicherheitssatz.json", entitlement_path=tmp_path / "e.json",
@@ -308,14 +328,14 @@ def test_runtime_starts_without_lock_file_and_with_the_same_pair(tmp_path):
     assert dc.runtime_config(KONF, rastung_pfad=tmp_path / "fehlt.json", entitlement_path=tmp_path / "e.json",
                              abo_source=lambda: "active").tenant_id == "kunde3"
     pfad = tmp_path / "sicherheitssatz.json"
-    rastung.schreiben(pfad, rastung.Rastung("viessmann_vicare", "Heizkoerper"), "2026-10-14T00:00:00+00:00")
+    rastung.schreiben(pfad, rastung_aus(konfig_form.nach_form(KONF)), "2026-10-14T00:00:00+00:00")
     assert dc.runtime_config(KONF, rastung_pfad=pfad, entitlement_path=tmp_path / "e.json",
                              abo_source=lambda: "active").tenant_id == "kunde3"
 
 
 def test_the_lock_check_never_throws_anything_but_config_error(tmp_path):
     pfad = tmp_path / "sicherheitssatz.json"
-    rastung.schreiben(pfad, rastung.Rastung("viessmann_vicare", "Heizkoerper"), "2026-10-14T00:00:00+00:00")
+    rastung.schreiben(pfad, rastung_aus(konfig_form.nach_form(KONF)), "2026-10-14T00:00:00+00:00")
     with pytest.raises(ConfigError):
         dc.rastung_pruefen(None, pfad)
     dc.rastung_pruefen(None, tmp_path / "fehlt.json")  # ohne Rastung nichts zu pruefen
