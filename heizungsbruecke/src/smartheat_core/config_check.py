@@ -28,6 +28,7 @@ from smartheat_core.bindungsparameter import beschreibung
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.rastung import Rastung, passt
 from smartheat_core.safety import resolve_local_safety
+from smartheat_core.verfahren import WegUnbekannt, verfahren_fuer
 from smartheat_core.zahlen import ist_endliche_zahl
 
 logger = logging.getLogger(__name__)
@@ -411,10 +412,20 @@ def _pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
             return Ablehnung(SICHERHEITSWERTE_FEHLEN, befund(feld, "unbekannt"))
         if not passt(rastung, sicht):
             return Ablehnung(HEBELSATZ_EINGERASTET)
+    # Die lokale Zeile (Weg, Hebelsatz) bestimmt Obergrenzen und Positivlisten. Ein Hebelsatz ohne Zeile am Weg hat
+    # keine lokalen Sicherheitswerte. Bei unbekanntem Weg gibt es keine Zeile: die Bindung wird unten zuerst geprueft
+    # (Rang der Bindungsfehler), danach scheitert der Weg laut.
     try:
-        beschreibung(sichten[0]["hebelsatz"], neu.get("bindungsparameter"))
-    except BindungsparameterFehler as error:
-        return Ablehnung(UNGUELTIG, error.details)
+        zeilen = [verfahren_fuer(neu["weg"], sicht["hebelsatz"]) for sicht in sichten]
+    except WegUnbekannt:
+        zeilen = None
+    if zeilen is not None:
+        if None in zeilen:
+            return Ablehnung(SICHERHEITSWERTE_FEHLEN, befund("hebelsatz", "unbekannt"))
+        try:
+            beschreibung(neu["weg"], sichten[0]["hebelsatz"], neu.get("bindungsparameter"))
+        except BindungsparameterFehler as error:
+            return Ablehnung(UNGUELTIG, error.details)
     # Die Host-Pruefung sieht die Fuehler aller Raeume (auch der Kontrollraeume); die Regelung liest nur die der
     # Referenzraeume (`sichten`).
     pruefsichten = [{**sicht, "raumfuehler": kreisansicht.alle_fuehler(eintrag)}

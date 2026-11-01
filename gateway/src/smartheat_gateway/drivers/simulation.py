@@ -284,7 +284,7 @@ class SimulationDriver:
     # --- Treiber ---
 
     def signals(self) -> Mapping[str, str]:
-        roles = [LEVER_ROLES[lever] for lever in self._levers()] + list(VERFAHREN[self._p["lever_set"]].aux_originals)
+        roles = [LEVER_ROLES[lever] for lever in self._levers()] + list(VERFAHREN[("simulation", self._p["lever_set"])].aux_originals)
         roles += ["outdoor_temp", "flow_setpoint", "flow_temperature", "room_temperature", "generator_hours"]
         return {role: f"treiber:{role}" for role in roles}
 

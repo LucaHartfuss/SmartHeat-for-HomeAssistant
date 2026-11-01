@@ -3,6 +3,7 @@ import copy
 
 import konfig_form
 import pytest
+from bindung_beispiele import parameter
 from geraet_helpers import gateway_konfiguration, ha_konfiguration
 
 from smartheat_core import config_check as cc
@@ -198,8 +199,39 @@ def test_kreise_mit_verschiedenen_wegen_werden_abgelehnt():
 
 
 def test_der_weg_der_anlage_stimmt_mit_dem_der_bindung_ueberein():
-    ablehnung = _geprueft(gateway_konfiguration(weg="vaillant_myvaillant"), LOCK)
+    neu = gateway_konfiguration(weg="vaillant_myvaillant", hebelsatz="vaillant_vrc720",
+                                bindungsparameter=parameter("vaillant_vrc720"))
+    ablehnung = _geprueft(neu, None)
     assert ablehnung == cc.Ablehnung(cc.WEG_MEHRFACH, cc.befund("weg", "doppelt"))
+
+
+def test_der_weg_wird_vor_den_bindungsparametern_geprueft():
+    ablehnung = _geprueft(gateway_konfiguration(weg="vaillant_ebus", bindungsparameter=None), LOCK)
+    assert ablehnung == cc.Ablehnung(cc.WEG_UNBEKANNT, cc.befund("weg", "unbekannt"))
+
+
+@pytest.mark.parametrize("hebelsatz", ["vaillant_vrc720", "weishaupt_wwp", "weishaupt_wwp_basis"])
+def test_ein_hebelsatz_ohne_zeile_am_weg_der_bindung_wird_abgelehnt(hebelsatz):
+    neu = gateway_konfiguration(hebelsatz=hebelsatz, bindungsparameter=parameter(hebelsatz))
+    neu["kreise"][0]["bindung"]["treiber"]["id"] = "vicare_cloud"
+    neu["weg"] = "viessmann_vicare"
+    ablehnung = _geprueft(neu, None)
+    assert ablehnung == cc.Ablehnung(cc.SICHERHEITSWERTE_FEHLEN, cc.befund("hebelsatz", "unbekannt"))
+
+
+def test_ein_hebelsatz_am_eigenen_weg_wird_angenommen():
+    neu = ha_konfiguration(hebelsatz="viessmann_vicare", bindungsparameter=parameter("viessmann_vicare"))
+    neu["kreise"][0]["bindung"]["kreis"]["plattform"] = "vicare"
+    neu["weg"] = "viessmann_vicare"
+    assert _geprueft(neu, None, host=cc.HOST_HA) is None
+
+
+def test_ein_ha_hebelsatz_ohne_zeile_am_weg_der_plattform_wird_abgelehnt():
+    neu = ha_konfiguration()  # vaillant_vrc720
+    neu["kreise"][0]["bindung"]["kreis"]["plattform"] = "vicare"
+    neu["weg"] = "viessmann_vicare"
+    ablehnung = _geprueft(neu, None, host=cc.HOST_HA)
+    assert ablehnung == cc.Ablehnung(cc.SICHERHEITSWERTE_FEHLEN, cc.befund("hebelsatz", "unbekannt"))
 
 
 def test_beide_gruende_gehoeren_zu_den_gruenden_des_vertrags():

@@ -220,7 +220,8 @@ def test_rastung_wird_vor_den_bindungsparametern_geprueft():
 
 
 def test_bindungsparameter_werden_vor_den_rollen_geprueft():
-    neu = gateway_konfiguration(bindungsparameter=None, bindung={"thermostat": None})
+    neu = gateway_konfiguration(bindungsparameter=None, bindung={
+        "treiber": {"id": "simulation", "parameter": {"heizkreis": 0}}, "thermostat": None})
     assert _pruefen(neu).grund == cc.UNGUELTIG
 
 

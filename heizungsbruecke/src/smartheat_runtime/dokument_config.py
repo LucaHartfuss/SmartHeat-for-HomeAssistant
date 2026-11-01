@@ -56,7 +56,8 @@ def beschreibung(konfiguration) -> BindingDescription:
     """Wirksame Binding-Beschreibung aus Hebelsatz und Bindungsparametern; keine Ersatztabelle."""
     hebelsatz = _hebelsatz(konfiguration)
     try:
-        return _beschreibung(hebelsatz, kreisansicht.erste(konfiguration).get("bindungsparameter"))
+        sicht = kreisansicht.erste(konfiguration)
+        return _beschreibung(sicht.get("weg"), hebelsatz, sicht.get("bindungsparameter"))
     except ValueError as error:
         raise ConfigError(f"Konfiguration: {error}") from None
 

@@ -441,20 +441,29 @@ def test_an_unknown_verteilsystem_has_no_safety_values(verteilsystem):
 
 
 def test_beschreibung_uebernimmt_die_bindungsparameter():
-    vaillant = {**VAILLANT, "bindungsparameter": parameter("vaillant_vrc720")}
+    vaillant = {**VAILLANT, "weg": "vaillant_myvaillant", "bindungsparameter": parameter("vaillant_vrc720")}
     assert dc.beschreibung(vaillant).settle_seconds == 2100
-    weishaupt = {"hebelsatz": "weishaupt_wwp", "bindungsparameter": parameter("weishaupt_wwp")}
+    weishaupt = {"hebelsatz": "weishaupt_wwp", "weg": "weishaupt_modbus", "bindungsparameter": parameter("weishaupt_wwp")}
     assert dc.beschreibung(weishaupt).settle_seconds == 120
     langsam = {**weishaupt, "bindungsparameter": parameter("weishaupt_wwp", wartezeit_s=240)}
     assert dc.beschreibung(langsam).settle_seconds == 240
 
 
 @pytest.mark.parametrize("konfiguration", [
-    {"hebelsatz": "vaillant_vrc720"}, {"hebelsatz": "vaillant_vrc720", "bindungsparameter": {}},
-    {"hebelsatz": "weishaupt_wwp", "bindungsparameter": None},
-    {"hebelsatz": "vaillant_vrc720", "bindungsparameter": parameter("vaillant_vrc720", wartezeit_s=10 ** 6)},
-    {"hebelsatz": "viessmann_vicare", "bindungsparameter": parameter("vaillant_vrc720")},
+    {"hebelsatz": "vaillant_vrc720", "weg": "vaillant_myvaillant"},
+    {"hebelsatz": "vaillant_vrc720", "weg": "vaillant_myvaillant", "bindungsparameter": {}},
+    {"hebelsatz": "weishaupt_wwp", "weg": "weishaupt_modbus", "bindungsparameter": None},
+    {"hebelsatz": "vaillant_vrc720", "weg": "vaillant_myvaillant",
+     "bindungsparameter": parameter("vaillant_vrc720", wartezeit_s=10 ** 6)},
+    {"hebelsatz": "viessmann_vicare", "weg": "viessmann_vicare", "bindungsparameter": parameter("vaillant_vrc720")},
 ])
 def test_beschreibung_ohne_passende_bindungsparameter_ist_ein_konfigurationsfehler(konfiguration):
     with pytest.raises(ConfigError, match="Konfiguration"):
+        dc.beschreibung(konfiguration)
+
+
+@pytest.mark.parametrize("weg", [None, "", "vaillant_ebus", "Simulation"])
+def test_beschreibung_mit_unbekanntem_weg_ist_ein_konfigurationsfehler(weg):
+    konfiguration = {"hebelsatz": "vaillant_vrc720", "weg": weg, "bindungsparameter": parameter("vaillant_vrc720")}
+    with pytest.raises(ConfigError, match="Weg"):
         dc.beschreibung(konfiguration)

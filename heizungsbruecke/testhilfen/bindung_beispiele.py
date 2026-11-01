@@ -44,12 +44,17 @@ PARAMETER: dict[str, dict] = {
 }
 
 
+#: Der Weg, auf dem jeder Hebelsatz heute laeuft (die Simulation traegt jeden).
+WEG = {"vaillant_vrc720": "vaillant_myvaillant", "weishaupt_wwp": "weishaupt_modbus",
+       "weishaupt_wwp_basis": "weishaupt_modbus", "viessmann_vicare": "viessmann_vicare"}
+
+
 def parameter(hebelsatz: str, **aenderungen) -> dict:
     """Tiefe Kopie der Parameter eines Hebelsatzes mit geaenderten Feldern (fuer Pruef-Tests)."""
     return {**copy.deepcopy(PARAMETER[hebelsatz]), **aenderungen}
 
 
-BINDINGS = {hebelsatz: beschreibung(hebelsatz, werte) for hebelsatz, werte in PARAMETER.items()}
+BINDINGS = {hebelsatz: beschreibung(WEG[hebelsatz], hebelsatz, werte) for hebelsatz, werte in PARAMETER.items()}
 VAILLANT_MYPYLLANT = BINDINGS["vaillant_vrc720"]
 WEISHAUPT_MODBUS = BINDINGS["weishaupt_wwp"]
 WEISHAUPT_MODBUS_BASIS = BINDINGS["weishaupt_wwp_basis"]

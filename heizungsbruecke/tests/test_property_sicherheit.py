@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from bindung_beispiele import BINDINGS, parameter
+from bindung_beispiele import WEG as WEG_DES_HEBELSATZES
 from fakes import FakeClock
 from geraet_helpers import gateway_konfiguration, ha_konfiguration
 from hypothesis import example, given
@@ -181,8 +182,8 @@ WERT = (st.floats(allow_nan=True, allow_infinity=True) | st.floats(-60, 60) | st
 
 def _mit_schritten(hebelsatz: str, schritte: dict):
     """Beschreibung aus den Bindungsparametern des Servers mit diesen Schrittweiten (Toleranz ein halber Schritt)."""
-    return beschreibung(hebelsatz, parameter(hebelsatz, schritte=schritte,
-                                             toleranzen={lever: s / 2 for lever, s in schritte.items()}))
+    return beschreibung(WEG_DES_HEBELSATZES[hebelsatz], hebelsatz,
+                        parameter(hebelsatz, schritte=schritte, toleranzen={lever: s / 2 for lever, s in schritte.items()}))
 
 
 def _satz_mit(werte_strategie):

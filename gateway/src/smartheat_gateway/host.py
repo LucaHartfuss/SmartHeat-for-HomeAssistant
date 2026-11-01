@@ -121,7 +121,8 @@ class GatewayHost:
             if not isinstance(hebelsatz, str):
                 raise ConfigError("Konfiguration ohne Hebelsatz")
             safety = resolve_local_safety(hebelsatz, sicht.get("verteilsystem"))
-            beschreibung = bindungsparameter.beschreibung(hebelsatz, self.konfiguration.get("bindungsparameter"))
+            beschreibung = bindungsparameter.beschreibung(
+                self.konfiguration.get("weg"), hebelsatz, self.konfiguration.get("bindungsparameter"))
             driver = self._create_driver(gateway_config.bindung(self.konfiguration).driver_spec(), beschreibung)
             check_lever_set(driver, hebelsatz)
         except (ConfigError, KeyError, TypeError, ValueError) as error:
@@ -137,7 +138,7 @@ class GatewayHost:
             raise StartFailure(str(error), KEY_CONFIG) from error
         try:
             beschreibung = bindungsparameter.beschreibung(
-                runtime.lever_set_id, self.konfiguration.get("bindungsparameter"))
+                self.konfiguration.get("weg"), runtime.lever_set_id, self.konfiguration.get("bindungsparameter"))
         except ValueError as error:
             raise StartFailure(f"Konfiguration: {error}", KEY_CONFIG) from error
         self._geraete_abwarten(self._zigbee_ieees(bindung))
