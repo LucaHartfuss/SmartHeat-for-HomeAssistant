@@ -293,3 +293,122 @@ def test_die_alte_flache_form_wird_laut_abgelehnt():
            "raumfuehler": [_sensor(1)], "tagestick": "12:12", "abo": "aktiv"}
     ablehnung = _geprueft(alt, LOCK)
     assert ablehnung is not None and ablehnung.grund == cc.UNGUELTIG
+
+
+# --- Grenzen und genaue Befunde des Aufbaus ----------------------------------------------------------------------
+
+def _ungueltig(feld, regel="ungueltig", **zahlen):
+    return cc.Ablehnung(cc.UNGUELTIG, cc.befund(feld, regel, **zahlen))
+
+
+def test_namen_gelten_bis_80_zeichen():
+    kreis = _gw_kreis(1)
+    kreis["name"] = "k" * 80
+    assert _geprueft(_gw(kreis, anlage_name="a" * 80), LOCK) is None
+    kreis["name"] = "k" * 81
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("name")
+    assert _geprueft(_gw(_gw_kreis(1), anlage_name="a" * 81), LOCK) == _ungueltig("anlage_name")
+
+
+def test_die_hoechste_kreis_und_raumnummer_ist_zulaessig():
+    kreis = _gw_kreis(1)
+    kreis["kreis"] = 2**31 - 1
+    kreis["raeume"][0]["raum"] = 2**31 - 1
+    assert _geprueft(_gw(kreis), LOCK) is None
+
+
+def test_kreisnummern_nennen_doppelt_und_ungueltig_genau():
+    gleich = [_gw_kreis(1), _gw_kreis(2)]
+    gleich[1]["kreis"] = 1
+    assert _geprueft(_gw(*gleich), LOCK) == _ungueltig("kreis", "doppelt")
+    rueckwaerts = [_gw_kreis(2), _gw_kreis(3)]
+    rueckwaerts[1]["kreis"] = 1
+    assert _geprueft(_gw(*rueckwaerts), LOCK) == _ungueltig("kreis", "ungueltig")
+
+
+def test_ein_kreiseintrag_der_kein_objekt_ist_wird_abgelehnt():
+    assert _geprueft(_gw("kreis"), LOCK) == _ungueltig("kreise", "ungueltig")
+
+
+def test_ein_fehlendes_kreisfeld_wird_mit_seinem_namen_gemeldet():
+    kreis = _gw_kreis(1)
+    del kreis["verteilsystem"]
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("verteilsystem", "fehlt")
+
+
+def test_ein_leerer_kreisname_wird_abgelehnt():
+    kreis = _gw_kreis(1)
+    kreis["name"] = ""
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("name")
+
+
+def test_die_abfrage_nennt_ihren_bereich():
+    kreis = _gw_kreis(1)
+    kreis["bindung"]["abfrage_s"] = 9
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("abfrage_s", "bereich", min=10, max=3600)
+
+
+def test_raeume_eines_kreises_grenzen_und_befunde():
+    kreis = _gw_kreis(1)
+    kreis["raeume"] = "keine Liste"
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("raeume", "ungueltig")
+    kreis["raeume"] = []
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("raeume", "anzahl", min=1, max=16, anzahl=0)
+    kreis["raeume"] = [konfig_form.raum([_sensor(1)])] + [
+        konfig_form.raum([], nummer=n, name=f"R{n}", rolle="kontroll") for n in range(2, 17)]
+    assert _geprueft(_gw(kreis), LOCK) is None  # sechzehn Raeume
+    kreis["raeume"].append(konfig_form.raum([], nummer=17, name="R17", rolle="kontroll"))
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("raeume", "anzahl", min=1, max=16, anzahl=17)
+
+
+def test_acht_referenzfuehler_sind_zulaessig_gegenprobe():
+    kreis = _gw_kreis(1)
+    kreis["raeume"] = [konfig_form.raum([_sensor(10 * n + i) for i in range(2)], nummer=n, name=f"R{n}")
+                       for n in range(1, 5)]
+    assert _geprueft(_gw(kreis), LOCK) is None
+
+
+def test_acht_fuehler_in_einem_raum_sind_zulaessig_und_neun_nennen_die_grenze():
+    kreis = _kreis_ohne_raum(_gw_kreis(1), fuehler=[_sensor(10 + i) for i in range(8)])
+    assert _geprueft(_gw(kreis), LOCK) is None
+    kreis = _kreis_ohne_raum(_gw_kreis(1), fuehler=[_sensor(10 + i) for i in range(9)])
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("fuehler", "anzahl", min=0, max=8, anzahl=9)
+
+
+@pytest.mark.parametrize("fuehler", ["sensor", 5, [1], [""], [None]])
+def test_fuehler_muessen_eine_liste_von_texten_sein(fuehler):
+    kreis = _kreis_ohne_raum(_gw_kreis(1), fuehler=fuehler)
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("fuehler")
+
+
+@pytest.mark.parametrize("soll_quelle", [1, "ja", None])
+def test_soll_quelle_muss_ein_wahrheitswert_sein(soll_quelle):
+    kreis = _kreis_ohne_raum(_gw_kreis(1), soll_quelle=soll_quelle)
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("soll_quelle")
+
+
+def test_ziel_fest_eines_kontrollraums_ist_eine_endliche_zahl():
+    kreis = _gw_kreis(1)
+    kreis["raeume"].append(konfig_form.raum([_sensor(50)], nummer=2, name="Bad", rolle="kontroll", ziel_fest=21.0))
+    assert _geprueft(_gw(kreis), LOCK) is None
+    for falsch in ("warm", float("inf"), True):
+        kreis["raeume"][1]["ziel_fest"] = falsch
+        assert _geprueft(_gw(kreis), LOCK) == _ungueltig("ziel_fest"), falsch
+
+
+def test_der_weg_der_anlage_muss_ein_text_sein():
+    assert _geprueft(_gw(_gw_kreis(1), weg=None), LOCK) == _ungueltig("weg")
+
+
+def test_die_mindest_integration_ist_leer_oder_ein_text():
+    assert _geprueft(_gw(_gw_kreis(1), mindest_integration="1.2.3"), LOCK) is None
+    for falsch in ("", 5):
+        assert _geprueft(_gw(_gw_kreis(1), mindest_integration=falsch), LOCK) == _ungueltig("mindest_integration")
+
+
+def test_dieselben_treiberparameter_in_anderer_schluesselfolge_sind_dasselbe_schreibziel():
+    erster, zweiter = _gw_kreis(1), _gw_kreis(2)
+    erster["bindung"]["treiber"]["parameter"] = {"heizkreis": 1, "zone": 2}
+    zweiter["bindung"]["treiber"]["parameter"] = {"zone": 2, "heizkreis": 1}
+    ablehnung = _geprueft(_gw(erster, zweiter), LOCK)
+    assert ablehnung == cc.Ablehnung(cc.DOPPELT_BELEGT, cc.befund("bindung", "doppelt"))
