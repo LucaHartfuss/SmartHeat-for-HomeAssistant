@@ -7,7 +7,7 @@ import stat
 
 import pytest
 from bindung_beispiele import parameter
-from device_helpers import SENSOR, _bedienung, _konfiguration, _leer, _store
+from device_helpers import SENSOR, _anzeige, _bedienung, _konfiguration, _leer, _store
 
 from smartheat_core import config_check, dateien, rastung
 from smartheat_device import documents as docs
@@ -199,7 +199,7 @@ def test_a_new_configuration_is_taken_and_survives_a_restart(tmp_path):
     store = _store(tmp_path)
     ergebnis = store.empfangen("konfiguration", _konfiguration())
     assert ergebnis == docs.Ergebnis("konfiguration", 1, True, uebernommen=True)
-    assert ergebnis.payload() == {"schema": 1, "dokument": "konfiguration", "version": 1, "ok": True}
+    assert ergebnis.payload() == {"schema": 2, "dokument": "konfiguration", "version": 1, "ok": True}
     again = _store(tmp_path)
     assert again.version("konfiguration") == 1 and again.inhalt("konfiguration")["anlage"] == "kunde3"
     assert "schema" not in again.inhalt("konfiguration") and "version" not in again.inhalt("konfiguration")
@@ -270,7 +270,7 @@ def test_invalid_binding_parameters_are_rejected_as_invalid_and_keep_the_previou
 
 def test_an_unknown_schema_is_refused_and_means_update_needed(tmp_path):
     store = _store(tmp_path)
-    ergebnis = store.empfangen("konfiguration", {**_konfiguration(), "schema": 2})
+    ergebnis = store.empfangen("konfiguration", {**_konfiguration(), "schema": 3})
     assert (ergebnis.ok, ergebnis.grund) == (False, "schema_unbekannt") and store.update_noetig
 
 
@@ -561,7 +561,7 @@ def test_update_needed_ends_once_the_device_reaches_the_rejected_minimum(tmp_pat
 
 def test_update_needed_after_an_unknown_schema_ends_with_a_new_software(tmp_path):
     store = _store(tmp_path, version="0.6.0")
-    store.empfangen("konfiguration", {**_konfiguration(), "schema": 2})
+    store.empfangen("konfiguration", {**_konfiguration(), "schema": 3})
     assert _store(tmp_path, version="0.6.0").update_noetig
     assert not _store(tmp_path, version="0.6.1").update_noetig
 
@@ -622,7 +622,7 @@ def test_dirty_operation_takes_the_same_version_again(tmp_path):
     assert store.aktuell("bedienung").dirty and _store(tmp_path).aktuell("bedienung").dirty
     ergebnis = store.empfangen("bedienung", _bedienung(version=3, raum_soll=20.0))
     assert ergebnis.uebernommen and not store.aktuell("bedienung").dirty
-    assert store.inhalt("bedienung")["raum_soll"] == 20.0
+    assert store.inhalt("bedienung")["kreise"][0]["raum_soll"] == 20.0
 
 
 def test_dirty_without_an_operation_does_nothing(tmp_path):
@@ -639,7 +639,7 @@ def test_configuration_and_operation_do_not_influence_each_other(tmp_path):
 
 
 def test_documents_are_the_contract_documents():
-    assert (docs.KONFIGURATION, docs.BEDIENUNG) == wire.DOKUMENTE
+    assert (docs.KONFIGURATION, docs.BEDIENUNG, docs.ANZEIGE) == wire.DOKUMENTE
 
 
 @pytest.mark.parametrize("art, inhalt", [("konfiguration", _konfiguration(anlage="a\ud800b")),
@@ -795,3 +795,88 @@ def test_a_host_that_changes_its_arguments_does_not_change_the_documents(tmp_pat
     assert store.inhalt("konfiguration") == _ohne_huelle(_konfiguration(tagestick="13:00"))
     assert json.loads((tmp_path / "konfiguration.json").read_text())["inhalt"] == store.inhalt("konfiguration")
     assert _store(tmp_path).inhalt("konfiguration") == _ohne_huelle(_konfiguration(tagestick="13:00"))
+
+
+# --- Bedienung und Anzeige je Kreis ---
+
+def test_eine_bedienung_je_kreis_prueft_jeden_eintrag(tmp_path):
+    store = _store(tmp_path)
+    zwei = [{"kreis": 1, "modus": "manuell", "raum_soll": 21.0}, {"kreis": 2, "modus": "manuell", "raum_soll": 19.5}]
+    assert store.empfangen("bedienung", _bedienung(kreise=zwei)).uebernommen
+    zwei[1]["raum_soll"] = 25.5  # Randwert: ausserhalb des Bedienbereichs im zweiten Kreis
+    ergebnis = store.empfangen("bedienung", _bedienung(version=2, kreise=zwei))
+    assert (ergebnis.grund, ergebnis.details) == (
+        "ausserhalb_bereich", {"feld": "raum_soll", "regel": "bereich", "min": 15.0, "max": 25.0})
+    assert store.version("bedienung") == 1  # die vorige Version bleibt
+
+
+@pytest.mark.parametrize("kreise", [
+    [],  # kein Kreis
+    [{"kreis": 0, "modus": "manuell", "raum_soll": 21.0}],  # unter KREIS_MIN
+    [{"kreis": True, "modus": "manuell", "raum_soll": 21.0}],  # bool ist keine Nummer
+    [{"kreis": 1.0, "modus": "manuell", "raum_soll": 21.0}],
+    [{"kreis": wire.KREIS_MAX + 1, "modus": "manuell", "raum_soll": 21.0}],  # ueber KREIS_MAX
+    [{"kreis": 10**400, "modus": "manuell", "raum_soll": 21.0}],  # Riesenzahl
+    [{"kreis": 1, "modus": "manuell", "raum_soll": 21.0}, {"kreis": 1, "modus": "manuell", "raum_soll": 21.0}],
+    [{"kreis": 2, "modus": "manuell", "raum_soll": 21.0}, {"kreis": 1, "modus": "manuell", "raum_soll": 21.0}],
+    [{"kreis": 1, "modus": "manuell"}],  # Feld fehlt
+    [{"kreis": 1, "modus": "manuell", "raum_soll": 21.0, "name": "Bad"}],  # fremdes Feld
+    [{"kreis": 1, "modus": "programm", "raum_soll": 21.0}],
+    "kreis1",
+])
+def test_eine_bedienung_mit_falschen_kreisen_wird_abgelehnt(tmp_path, kreise):
+    store = _store(tmp_path)
+    assert store.empfangen("bedienung", _bedienung(kreise=kreise)).grund == "ungueltig"
+    assert store.inhalt("bedienung") is None
+
+
+def test_die_groesste_kreisnummer_wird_angenommen(tmp_path):
+    store = _store(tmp_path)
+    kreise = [{"kreis": wire.KREIS_MAX, "modus": "manuell", "raum_soll": 21.0}]
+    assert store.empfangen("bedienung", _bedienung(kreise=kreise)).uebernommen
+
+
+def test_eine_bedienung_im_alten_aufbau_scheitert_laut(tmp_path):
+    alt = {"schema": 2, "version": 1, "modus": "manuell", "raum_soll": 21.0, "quelle": "portal", "ts": "t"}
+    ergebnis = _store(tmp_path).empfangen("bedienung", alt)
+    assert (ergebnis.ok, ergebnis.grund) == (False, "ungueltig")
+
+
+def test_ein_geraet_mit_dem_alten_schema_lehnt_ab(tmp_path):
+    assert _store(tmp_path).empfangen("bedienung", _bedienung(schema=1)).grund == "schema_unbekannt"
+
+
+def test_die_anzeige_wird_mit_eigener_version_gespeichert_und_ueberlebt_den_neustart(tmp_path):
+    store = _store(tmp_path)
+    assert store.version("anzeige") == 0
+    assert store.empfangen("anzeige", _anzeige(version=4, kreise=(1, 2))).uebernommen
+    assert store.version("anzeige") == 4 and store.version("bedienung") == 0
+    assert [eintrag["kreis"] for eintrag in _store(tmp_path).inhalt("anzeige")["kreise"]] == [1, 2]
+    assert store.empfangen("anzeige", _anzeige(version=4, kreise=(1, 2))).uebernommen is False  # Duplikat
+
+
+@pytest.mark.parametrize("aenderung", [
+    {"kreise": []},
+    {"kreise": [{"kreis": 1}]},  # Feldsatz unvollstaendig
+    {"extra": 1},  # fremdes Feld im Dokument
+    {"kreise": "alle"},
+])
+def test_eine_anzeige_ohne_den_vollen_feldsatz_wird_abgelehnt(tmp_path, aenderung):
+    store = _store(tmp_path)
+    assert store.empfangen("anzeige", _anzeige(**aenderung)).grund == "ungueltig"
+    assert store.inhalt("anzeige") is None
+
+
+@pytest.mark.parametrize("feld, wert", [
+    ("kreis", 0), ("kreis", "1"), ("einlernphase_tag", "3"), ("einlernphase_tag", True), ("testphase_bis", 5),
+    ("befunde", None), ("aufgaben", {}), ("kennzahlen", []), ("raumziele", None), ("fremd", 1),
+])
+def test_eine_anzeige_mit_falschem_typ_im_kreis_wird_abgelehnt(tmp_path, feld, wert):
+    anzeige = _anzeige()
+    anzeige["kreise"][0][feld] = wert
+    assert _store(tmp_path).empfangen("anzeige", anzeige).grund == "ungueltig"
+
+
+def test_eine_anzeige_mit_doppelter_oder_absteigender_kreisnummer_wird_abgelehnt(tmp_path):
+    assert _store(tmp_path).empfangen("anzeige", _anzeige(kreise=(1, 1))).grund == "ungueltig"
+    assert _store(tmp_path).empfangen("anzeige", _anzeige(kreise=(2, 1))).grund == "ungueltig"

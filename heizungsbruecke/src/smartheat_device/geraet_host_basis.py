@@ -20,7 +20,7 @@ from smartheat_device.hintergrund import Hintergrund
 from smartheat_device.host import Anzeige, MeldungSink
 from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
-from smartheat_runtime.soll_speicher import SOURCE_PORTAL
+from smartheat_runtime.soll_speicher import SOURCE_PORTAL, raum_soll_von
 from smartheat_runtime.status import STATUS_ABGEMELDET
 from smartheat_runtime.worker import Event, RegulationWorker
 
@@ -120,9 +120,9 @@ class GeraetHostBasis:
             if self._worker is not None:
                 self._worker.post(Event(EV_RELOAD))
 
-    def _melden(self, key: str, text: str, *, offen: bool, kritisch: bool) -> None:
+    def _melden(self, key: str, text: str, *, offen: bool, stufe: str) -> None:
         if self.device is not None:
-            self.device.meldung(key, text, offen=offen, kritisch=kritisch)
+            self.device.meldung(key, text, offen=offen, stufe=stufe)
 
     # --- Sicht der Laufzeit ---
 
@@ -190,7 +190,7 @@ class GeraetHostBasis:
             self.neustart_anfordern()
 
     def bedienung_uebernommen(self, inhalt: dict) -> None:
-        value = inhalt.get("raum_soll")
+        value = raum_soll_von(inhalt)
         if not isinstance(value, int | float) or isinstance(value, bool):
             return
         with self._lock:

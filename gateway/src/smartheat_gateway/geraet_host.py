@@ -54,6 +54,9 @@ from smartheat_runtime.status import STATUS_ABGEMELDET
 
 logger = logging.getLogger(__name__)
 
+#: Weg-ID des Server-Katalogs je Treiber-ID des Gateways; ein neuer Treiber ohne Eintrag faellt im Test auf.
+WEG_JE_TREIBER = {"simulation": "simulation", "vicare_cloud": "viessmann_vicare"}
+
 UHR_MAX_ALTER_SECONDS = 300
 SOFTWARE_SECONDS = 10
 HOST_FIELDS = ("netz", "dns", "zeit_synchron")
@@ -233,6 +236,10 @@ class GatewayDeviceHost(GeraetHostBasis):
     def faehigkeiten(self) -> dict:
         return nachrichten.pruefen("faehigkeiten", {"drivers": list(registry.driver_ids()), "zigbee": True,
                                                     "updater": True}, wire.CAPABILITY_FIELDS, wire.CAPABILITY_OPTIONAL)
+
+    def wege(self) -> list[str]:
+        """Wege des Katalogs, die dieses Gateway ueber seine Treiber bedient (Treiber-ID -> Weg-ID)."""
+        return sorted({WEG_JE_TREIBER[treiber] for treiber in registry.driver_ids()})
 
     def uhr_synchron(self) -> bool | None:
         """Zeitdienst des Hosts (host/status.json, Dienst hoststatus); aelter als 5 min oder unlesbar = unbekannt."""

@@ -106,7 +106,7 @@ def test_event_wish_by_an_automation_aligns_the_thermostat(tmp_path):
     a = Aufbau(tmp_path)
     a.ereignis(22.0, {"user_id": None, "parent_id": "p1"})
     a.run()
-    assert a.wuensche == [(22.0, "smartheat_entity", "automation")]
+    assert a.wuensche == [(22.0, "ha", "automation")]
     assert (SOLL, 22.0) in a.ha.writes
 
 
@@ -182,7 +182,7 @@ def test_event_wish_accepts_a_number_given_as_text(tmp_path, raw, value):
     a = Aufbau(tmp_path)
     a.ereignis(raw, {"user_id": "u1"})
     a.run()
-    assert a.wuensche == [(value, "smartheat_entity", "nutzer")]
+    assert a.wuensche == [(value, "ha", "nutzer")]
 
 
 def test_portal_operation_aligns_the_entity_without_a_wish(tmp_path):
@@ -207,7 +207,7 @@ def test_the_write_back_after_an_event_wish_is_no_second_wish(tmp_path):
     a.run()
     a.clock.advance(70)
     a.run()  # auch das Nachlesen nach dem Fenster ergibt nichts
-    assert a.wuensche == [(22.0, "smartheat_entity", "nutzer")] and a.store.value == 22.0
+    assert a.wuensche == [(22.0, "ha", "nutzer")] and a.store.value == 22.0
 
 
 def test_a_stale_entity_report_after_a_portal_operation_is_no_wish(tmp_path):
@@ -224,7 +224,7 @@ def test_event_wish_acts_at_once_and_goes_to_the_device(tmp_path):
     a.ereignis(23.0, {"user_id": "u1"})
     a.run()
     assert a.store.value == 23.0 and a.checks[-1] == {"room_target_fired": True}
-    assert a.wuensche == [(23.0, "smartheat_entity", "nutzer")]
+    assert a.wuensche == [(23.0, "ha", "nutzer")]
 
 
 def test_event_wish_reaches_the_device_core_buffer_without_a_connection(tmp_path):
@@ -234,7 +234,7 @@ def test_event_wish_reaches_the_device_core_buffer_without_a_connection(tmp_path
 
     def wunsch(wert, herkunft, durch):
         begrenzt, roh = wish.begrenzen(wert)
-        puffer.setzen(wish.neu(begrenzt, roh, basis_version=1, uhr_synchron=True, herkunft=herkunft, durch=durch,
+        puffer.setzen(wish.neu(begrenzt, roh, kreis=1, basis_version=1, uhr_synchron=True, herkunft=herkunft, durch=durch,
                                wall=1_800_000_000.0))
         return begrenzt
 
@@ -247,7 +247,7 @@ def test_event_wish_reaches_the_device_core_buffer_without_a_connection(tmp_path
     a.run()
     assert puffer.offen()
     payload = puffer.wunsch.payload()
-    assert payload["werte"] == {"raum_soll": 23.0} and payload["herkunft"] == "smartheat_entity"
+    assert payload["werte"] == {"raum_soll": 23.0} and payload["herkunft"] == "ha"
     assert payload["durch"] == "nutzer"
 
 
@@ -256,7 +256,7 @@ def test_event_wish_is_clamped_by_the_device_and_the_entity_shows_the_clamp(tmp_
     a.ereignis(30.0, {"user_id": "u1"})
     a.run()
     assert a.store.value == 25.0 and (SOLL, 25.0) in a.ha.writes
-    assert a.wuensche == [(30.0, "smartheat_entity", "nutzer")]
+    assert a.wuensche == [(30.0, "ha", "nutzer")]
 
 
 def test_room_actual_change_is_a_local_check(tmp_path):
@@ -296,7 +296,7 @@ def test_a_failing_write_does_not_break_the_wish(tmp_path):
     ha.write_error = RuntimeError("HA down")
     a.ereignis(22.0, {"user_id": "u1"})
     a.run()
-    assert a.store.value == 22.0 and a.wuensche == [(22.0, "smartheat_entity", "nutzer")]
+    assert a.store.value == 22.0 and a.wuensche == [(22.0, "ha", "nutzer")]
 
 
 def test_ha_soll_quelle_writes_only_climate_and_reads_the_shown_value():
@@ -637,12 +637,12 @@ def test_a_failed_write_back_of_a_clamped_wish_is_written_again_not_wished_back(
     a.ha.write_error = RuntimeError("HA Core startet")
     a.ereignis(30.0, {"user_id": "u1"})  # lokal 30 -> begrenzt 25; das Zurueckschreiben scheitert
     a.run()
-    assert a.store.value == 25.0 and a.wuensche == [(30.0, "smartheat_entity", "nutzer")]
+    assert a.store.value == 25.0 and a.wuensche == [(30.0, "ha", "nutzer")]
     a.ha.write_error = None
     a.client._on_connected()  # die Entity zeigt noch 21
     a.run()
     assert a.ha.writes == [(SOLL, 25.0)] and a.store.value == 25.0
-    assert a.wuensche == [(30.0, "smartheat_entity", "nutzer")]
+    assert a.wuensche == [(30.0, "ha", "nutzer")]
 
 
 def test_an_owed_alignment_is_not_written_to_a_thermostat_that_is_off_and_follows_when_it_is_on_again(tmp_path):

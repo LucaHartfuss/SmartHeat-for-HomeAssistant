@@ -2,7 +2,7 @@
 die Soll-Entity (mit for: 10 s), ihren HVAC-Modus (Climate), das Raumfuehler-Mittel, das Ereignis
 smartheat_wunsch der Integration und den Tagestick. Der WS-Thread stellt nur Ereignisse in den Worker ein; dort
 entscheidet der Soll-Eingang (smartheat_runtime.soll_eingang, entprellen 0 s): Wunsch mit Herkunft (soll_entity bzw.
-smartheat_entity) und durch (nutzer/automation aus dem HA-Kontext), Thermostat aus/Frostschutz, Angleichen der
+ha) und durch (nutzer/automation aus dem HA-Kontext), Thermostat aus/Frostschutz, Angleichen der
 Soll-Entity (nur Climate ist schreibbar) ohne Echo."""
 import logging
 import math
@@ -37,7 +37,7 @@ OHNE_ZAHL_LOG_SECONDS = 3600.0
 
 EREIGNIS_WUNSCH = "smartheat_wunsch"
 HERKUNFT_SOLL = "soll_entity"
-HERKUNFT_SMARTHEAT = "smartheat_entity"
+HERKUNFT_SMARTHEAT = "ha"
 
 
 def durch_aus_kontext(context) -> str | None:

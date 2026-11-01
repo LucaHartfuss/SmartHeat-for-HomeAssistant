@@ -65,9 +65,8 @@ class Anlage:
         # Einrichtung: der erste Prozess nimmt Konfiguration und Bedienung an (der Host fordert dafuer einen Neustart an)
         einrichtung = World(daten, main_module.HaDeviceHost(env.ha, supervisor, clock=env.clock))
         einrichtung.verbinden()
-        einrichtung.empfangen("down/config", {"schema": 1, "version": 1, **self.konfiguration})
-        einrichtung.empfangen("down/operation", {"schema": 1, "version": 1, "modus": "manuell", "raum_soll": 21.0,
-                                                 "quelle": "portal", "ts": "2027-01-15T07:00:00+00:00"})
+        einrichtung.empfangen("down/config", {"schema": 2, "version": 1, **self.konfiguration})
+        einrichtung.empfangen("down/operation", _bedienung(1))
         assert einrichtung.device.documents.eingerichtet()
         # Betrieb: neuer Prozess auf denselben Dateien
         self.geraet = main_module.HaDeviceHost(env.ha, supervisor, clock=env.clock)
@@ -139,7 +138,7 @@ JE_RUNDE = FLUT_ANZAHL // RUNDEN
 
 
 def _befehl(command_id, kind, payload, **extra):
-    return {"schema": 1, "command_id": command_id, "kind": kind, "payload": payload,
+    return {"schema": 2, "command_id": command_id, "kind": kind, "payload": payload,
             "expires_at": "2027-01-15T09:00:00+00:00", **extra}
 
 
@@ -290,7 +289,7 @@ def _grosser_text() -> str:
 def _kaputte_konfigurationen(konfiguration: dict) -> list:
     """Je Eintrag (Name, Koerper oder Bytes): kaputte down/config; Version setzt der Aufrufer ein."""
     def mit(**aenderung):
-        return lambda version: {"schema": 1, "version": version, **konfiguration, **aenderung}
+        return lambda version: {"schema": 2, "version": version, **konfiguration, **aenderung}
 
     lockerer_schutz = json.loads(json.dumps(konfiguration["bindungsparameter"]))
     lockerer_schutz["schreibschutz"] = {**lockerer_schutz["schreibschutz"], "durchsetzen_tag": 7}
@@ -304,17 +303,26 @@ def _kaputte_konfigurationen(konfiguration: dict) -> list:
         ("anderes Verteilsystem", mit(verteilsystem="Fussbodenheizung")),
         ("Tagestick keine Uhrzeit", mit(tagestick=5)),
         ("Riesenzahl", mit(tagestick=10**400)),
-        ("Feld fehlt", lambda version: {k: v for k, v in {"schema": 1, "version": version, **konfiguration}.items()
+        ("Feld fehlt", lambda version: {k: v for k, v in {"schema": 2, "version": version, **konfiguration}.items()
                                          if k != "bindung"}),
         ("kein JSON", lambda version: b"{kaputt"),
         ("Liste", lambda version: b"[1, 2]"),
     ]
 
 
+def _bedienung(version: int, *, eintrag: dict | None = None, **huelle) -> dict:
+    """Gueltige Bedienung mit dem Kreis 1; `eintrag` aendert den Kreiseintrag, `huelle` die Felder darum."""
+    kreis = {"kreis": 1, "modus": "manuell", "raum_soll": 21.0, **(eintrag or {})}
+    return {"schema": 2, "version": version, "kreise": [kreis], "quelle": "portal",
+            "ts": "2027-01-15T07:00:00+00:00", **huelle}
+
+
 def _kaputte_bedienungen() -> list:
     def mit(**aenderung):
-        return lambda version: {"schema": 1, "version": version, "modus": "manuell", "raum_soll": 21.0,
-                                "quelle": "portal", "ts": "2027-01-15T07:00:00+00:00", **aenderung}
+        return lambda version: _bedienung(version, eintrag=aenderung)
+
+    def mit_huelle(**aenderung):
+        return lambda version: _bedienung(version, **aenderung)
 
     return [
         ("NaN", mit(raum_soll=float("nan"))),
@@ -323,9 +331,9 @@ def _kaputte_bedienungen() -> list:
         ("unter dem Bereich", mit(raum_soll=14.5)),
         ("falscher Schritt", mit(raum_soll=21.3)),
         ("Text", mit(raum_soll="21")),
-        ("fremdes Feld", mit(gift=1)),
-        ("Surrogat", mit(quelle="a\udfffb")),
-        ("Uebergroesse", mit(quelle=_grosser_text())),
+        ("fremdes Feld", mit_huelle(gift=1)),
+        ("Surrogat", mit_huelle(quelle="a\udfffb")),
+        ("Uebergroesse", mit_huelle(quelle=_grosser_text())),
         ("Riesenzahl", mit(raum_soll=10**400)),
         ("unbekannter Modus", mit(modus="gift")),
     ]
@@ -413,7 +421,7 @@ def test_100_kaputte_dokumente_und_antworten_im_wechsel_mit_ticks_aendern_die_ko
         ("bedienung", "ungueltig"), ("bedienung", "ausserhalb_bereich")}
     # die gespeicherte Konfiguration und Bedienung sind unveraendert die gueltigen, auch von der Platte gelesen
     assert store.inhalt("konfiguration") == konfiguration
-    assert store.inhalt("bedienung")["raum_soll"] == 21.0
+    assert store.inhalt("bedienung")["kreise"][0]["raum_soll"] == 21.0
     assert (store.version("konfiguration"), store.version("bedienung")) == (1, 1)
     neu = DocumentStore(anlage.world.dir, host="ha", software_version="1.0.0")
     assert (neu.inhalt("konfiguration"), neu.version("konfiguration")) == (konfiguration, 1)
@@ -438,10 +446,9 @@ def test_100_kaputte_dokumente_und_antworten_im_wechsel_mit_ticks_aendern_die_ko
         assert (entity, BEREICHE[hebel][0]) in env.ha.writes, hebel
     assert anlage.bridge.store.state.learned == {}  # die gueltigen Antworten lernen nichts, die kaputten bleiben ohne Wirkung
     # Gegenprobe: das Geraet nimmt nach der Flut ein gueltiges Dokument an
-    anlage.senden("down/operation", {"schema": 1, "version": 500, "modus": "manuell", "raum_soll": 22.0,
-                                     "quelle": "portal", "ts": "2027-01-15T07:00:00+00:00"})
+    anlage.senden("down/operation", _bedienung(500, eintrag={"raum_soll": 22.0}))
     anlage.runde(30)
-    assert (store.version("bedienung"), store.inhalt("bedienung")["raum_soll"]) == (500, 22.0)
+    assert (store.version("bedienung"), store.inhalt("bedienung")["kreise"][0]["raum_soll"]) == (500, 22.0)
     fehler = _fehler_im_log(caplog)
     assert [r.getMessage() for r in fehler if r.exc_info] == []
     assert [r.getMessage() for r in fehler] == []

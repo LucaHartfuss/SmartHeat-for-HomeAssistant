@@ -9,7 +9,7 @@ import pytest
 import requests
 from befehle_sicht import registrierte_befehle
 from fakes import FakeHa, HttpAntwort, nachricht_bytes
-from geraet_helpers import Device, Supervisor, _host, _register, konfiguration_aus_optionen
+from geraet_helpers import Device, Supervisor, _host, _register, bedienung_inhalt, konfiguration_aus_optionen
 from runtime_helpers import OPTIONS
 
 from heizungsbruecke import config, discovery, geraet_host, stdin_befehl
@@ -56,6 +56,18 @@ def test_capabilities_and_clock(tmp_path, monkeypatch):
     assert host.uhr_synchron() is None  # kein bool: unbekannt
     host, _, _ = _host(tmp_path, monkeypatch, Supervisor(info={"dt_synchronized": False}))
     assert host.uhr_synchron() is False
+
+
+def test_the_ha_host_reports_the_ways_of_its_write_platforms(tmp_path, monkeypatch):
+    """Jede Schreib-Plattform hat einen Weg; die Liste ist sortiert und ohne Doppelte (zwei Hebelsaetze teilen sich eine
+    Plattform)."""
+    from heizungsbruecke import dokument
+    host, _, _ = _host(tmp_path, monkeypatch)
+    assert set(dokument.SCHREIB_PLATTFORM.values()) <= set(geraet_host.WEG_JE_PLATTFORM)
+    assert host.wege() == ["vaillant_myvaillant", "viessmann_vicare", "weishaupt_modbus"]
+    assert nachrichten.hello(konfiguration_version=1, bedienung_version=1, anzeige_version=0, software_version="1.0.0",
+                             host="ha", faehigkeiten=host.faehigkeiten(), wege=host.wege(), boot_id="b" * 16,
+                             uhr_synchron=True)["wege"] == host.wege()
 
 
 def test_capabilities_are_built_against_the_contract(tmp_path, monkeypatch):
@@ -153,7 +165,7 @@ def test_inventory_is_repeatable_after_a_restart(tmp_path, monkeypatch):
     register = CommandRegister(tmp_path, lambda body: sent.append(body) or True, clock=clock,
                                send_inventory=lambda command_id, daten: teile.append(daten) or [1])
     host.befehle_eintragen(register)
-    befehl = {"schema": 1, "command_id": "c1", "kind": "inventory",
+    befehl = {"schema": 2, "command_id": "c1", "kind": "inventory",
               "payload": {"stunden": 0, "filter": {"plattformen": ["mypyllant"]}},
               "expires_at": "2027-01-01T00:00:00+00:00"}
     register.empfangen(befehl)
@@ -235,7 +247,7 @@ def test_an_inventory_that_breaks_the_contract_ends_with_intern_and_no_values_in
     register = CommandRegister(tmp_path, lambda body: ergebnisse.append(body) or True, clock=clock)
     host.befehle_eintragen(register)
     try:
-        register.empfangen({"schema": 1, "command_id": "c1", "kind": "inventory",
+        register.empfangen({"schema": 2, "command_id": "c1", "kind": "inventory",
                             "expires_at": "2027-01-01T00:00:00+00:00",
                             "payload": {"stunden": 0, "filter": {"domaenen": ["climate"]}}})
 
@@ -293,11 +305,11 @@ def test_portal_operation_reaches_the_worker(tmp_path, monkeypatch):
     worker = RegulationWorker(clock)
     seen = []
     worker.register(EV_TARGET_INPUT, lambda event: seen.append(event.data))
-    host.bedienung_uebernommen({"raum_soll": 22.0})  # vor dem Binden: nachgestellt
+    host.bedienung_uebernommen(bedienung_inhalt(22.0))  # vor dem Binden: nachgestellt
     host.worker_binden(worker)
     worker.run_pending()
-    host.bedienung_uebernommen({"raum_soll": 22.5})
-    host.bedienung_uebernommen({"raum_soll": True})  # kein Wert
+    host.bedienung_uebernommen(bedienung_inhalt(22.5))
+    host.bedienung_uebernommen(bedienung_inhalt(True))  # kein Wert
     worker.run_pending()
     assert seen == [{"value": 22.0, "source": "portal"}, {"value": 22.5, "source": "portal"}]
 
@@ -305,9 +317,9 @@ def test_portal_operation_reaches_the_worker(tmp_path, monkeypatch):
 def test_in_the_idle_state_operations_do_not_reach_the_worker(tmp_path, monkeypatch, caplog):
     host, _, clock = _host(tmp_path, monkeypatch)
     worker = RegulationWorker(clock)
-    host.bedienung_uebernommen({"raum_soll": 22.0})
+    host.bedienung_uebernommen(bedienung_inhalt(22.0))
     host.worker_binden(worker, soll_eingang=False)
-    host.bedienung_uebernommen({"raum_soll": 22.5})
+    host.bedienung_uebernommen(bedienung_inhalt(22.5))
     worker.run_pending()
     assert "Kein Handler" not in caplog.text
 
@@ -352,16 +364,16 @@ def test_an_irrelevant_configuration_change_keeps_running(tmp_path, monkeypatch)
 def test_wish_goes_to_the_device_with_origin(tmp_path, monkeypatch):
     host, device, _ = _host(tmp_path, monkeypatch)
     assert host.wunsch(30.0, "soll_entity", "nutzer") == 25.0
-    host.wunsch(22.5, herkunft="smartheat_entity")
+    host.wunsch(22.5, herkunft="ha")
     host.soll_quelle_aus(True, 21.0)
-    assert device.wuensche == [(30.0, "soll_entity", "nutzer"), (22.5, "smartheat_entity", None)]
+    assert device.wuensche == [(30.0, "soll_entity", "nutzer"), (22.5, "ha", None)]
     assert device.aus == [(True, 21.0)]
 
 
 def test_document_view_for_the_runtime(tmp_path, monkeypatch):
     konf = konfiguration_aus_optionen(OPTIONS)
-    host, _, _ = _host(tmp_path, monkeypatch, device=Device(konf, {"raum_soll": 21.0}, dirty=True))
-    assert host.konfiguration() == konf and host.bedienung() == ({"raum_soll": 21.0}, True)
+    host, _, _ = _host(tmp_path, monkeypatch, device=Device(konf, bedienung_inhalt(21.0), dirty=True))
+    assert host.konfiguration() == konf and host.bedienung() == (bedienung_inhalt(21.0), True)
     assert host.abo_status() == "aktiv"
     unverbunden = geraet_host.HaDeviceHost(FakeHa(), Supervisor())
     assert unverbunden.konfiguration() is None and unverbunden.bedienung() == (None, False)
@@ -419,7 +431,7 @@ def test_sign_off_ends_after_its_deadline_of_a_day(tmp_path, monkeypatch):
     ergebnisse = []
     register = CommandRegister(tmp_path, lambda body: ergebnisse.append(body) or True, clock=clock)
     host.befehle_eintragen(register)
-    register.empfangen({"schema": 1, "command_id": "c-abmelden", "kind": "sign_off", "payload": {},
+    register.empfangen({"schema": 2, "command_id": "c-abmelden", "kind": "sign_off", "payload": {},
                         "expires_at": "2027-01-15T09:00:00+00:00"})
     clock.advance(86_400)
     register.pruefen()
@@ -623,8 +635,8 @@ def test_runtime_messages_go_to_ha_and_to_the_device_core(tmp_path, monkeypatch)
     sink.push("batterie:sensor.x", "Batterie schwach")
     sink.withdraw("notbetrieb")
     assert device.meldungen == [
-        ("notbetrieb", "Notbetrieb aktiv", True, True), ("notbetrieb", "Notbetrieb aktiv", True, True),
-        ("batterie:sensor.x", "Batterie schwach", False, False), ("notbetrieb", "Notbetrieb aktiv", False, True)]
+        ("notbetrieb", "Notbetrieb aktiv", True, "rot"), ("notbetrieb", "Notbetrieb aktiv", True, "rot"),
+        ("batterie:sensor.x", "Batterie schwach", False, "orange"), ("notbetrieb", "Notbetrieb aktiv", False, "rot")]
     assert ha.pushes == ["Notbetrieb aktiv", "Batterie schwach"]
     assert ha.persistent == [("smartheat_notbetrieb", "Notbetrieb aktiv")]
     assert ha.dismissed == ["smartheat_notbetrieb"]
@@ -644,8 +656,8 @@ def test_a_failing_ha_notification_still_reaches_the_device_core(tmp_path, monke
         sink.show("schreibbudget", "Budget erschoepft")
     with pytest.raises(ConnectionError):
         sink.withdraw("schreibbudget")
-    assert device.meldungen == [("schreibbudget", "Budget erschoepft", True, True),
-                                ("schreibbudget", "Budget erschoepft", False, True)]
+    assert device.meldungen == [("schreibbudget", "Budget erschoepft", True, "rot"),
+                                ("schreibbudget", "Budget erschoepft", False, "rot")]
 
 
 def test_the_notifier_reports_a_critical_runtime_message_to_the_device_core(tmp_path, monkeypatch):
@@ -659,10 +671,10 @@ def test_the_notifier_reports_a_critical_runtime_message_to_the_device_core(tmp_
     notifier.notify("notbetrieb", "aktiv", "Notbetrieb aktiv", critical=True)
     notifier.notify("notbetrieb", "ok", "Notbetrieb beendet", critical=True)
     # Regeln des Gateways (MeldungSink): der Geraetekern sendet je key nur den letzten Stand (Upsert), am Ende geschlossen
-    assert device.meldungen == [("notbetrieb", "Notbetrieb aktiv", False, False),  # Push vor der offenen Meldung
-                                ("notbetrieb", "Notbetrieb aktiv", True, True),
-                                ("notbetrieb", "Notbetrieb beendet", True, True),
-                                ("notbetrieb", "Notbetrieb aktiv", False, True)]
+    assert device.meldungen == [("notbetrieb", "Notbetrieb aktiv", False, "orange"),  # Push vor der offenen Meldung
+                                ("notbetrieb", "Notbetrieb aktiv", True, "rot"),
+                                ("notbetrieb", "Notbetrieb beendet", True, "rot"),
+                                ("notbetrieb", "Notbetrieb aktiv", False, "rot")]
     assert ha.persistent == [("smartheat_notbetrieb", "Notbetrieb aktiv")] and ha.dismissed == ["smartheat_notbetrieb"]
 
 
@@ -681,7 +693,7 @@ def _laufzeit(env, *, bed=None, dirty=False, **overrides):
 
 
 def test_the_room_carries_actual_target_and_source(env):
-    geraet, host, worker, _ = _laufzeit(env, bed={"raum_soll": 21.0})
+    geraet, host, worker, _ = _laufzeit(env, bed=bedienung_inhalt(21.0))
     assert geraet.raum() is None  # erst der Worker veroeffentlicht
     worker.run_pending()
     raum = geraet.raum()
@@ -694,16 +706,16 @@ def test_the_room_carries_actual_target_and_source(env):
 
 
 def test_a_target_change_publishes_the_room_at_once(env):
-    geraet, host, worker, _ = _laufzeit(env, bed={"raum_soll": 21.0})
+    geraet, host, worker, _ = _laufzeit(env, bed=bedienung_inhalt(21.0))
     worker.run_pending()
-    geraet.bedienung_uebernommen({"raum_soll": 22.0})
+    geraet.bedienung_uebernommen(bedienung_inhalt(22.0))
     worker.run_pending()
     assert (geraet.raum()["soll"], geraet.raum()["soll_quelle"]) == (22.0, "portal")
     assert host.store.value == 22.0
 
 
 def test_an_unreadable_room_actual_is_none_and_the_tick_continues(env):
-    geraet, host, worker, _ = _laufzeit(env, bed={"raum_soll": 21.0})
+    geraet, host, worker, _ = _laufzeit(env, bed=bedienung_inhalt(21.0))
     env.ha.states["sensor.room_actual"] = ValueError("unavailable")
     worker.run_pending()
     assert geraet.raum()["ist"] is None and geraet.raum()["soll"] == 21.0
@@ -717,10 +729,10 @@ def test_an_unreadable_room_actual_is_none_and_the_tick_continues(env):
 def test_a_new_operation_during_operation_is_applied_and_written_to_the_entity(env):
     """Controller-Entscheid 3c: Bedienung -> Soll-Eingang (portal) -> Soll-Speicher und Soll-Entity, ohne Wunsch."""
     env.ha.states.update({"climate.wz": "heat", "climate.wz::temperature": 21.0})
-    geraet, host, worker, device = _laufzeit(env, bed={"raum_soll": 21.0}, entity_room_target="climate.wz::temperature")
+    geraet, host, worker, device = _laufzeit(env, bed=bedienung_inhalt(21.0), entity_room_target="climate.wz::temperature")
     worker.run_pending()
     assert env.ha.writes == []  # zeigt schon den Wert
-    geraet.bedienung_uebernommen({"raum_soll": 23.0})
+    geraet.bedienung_uebernommen(bedienung_inhalt(23.0))
     worker.run_pending()
     assert host.store.value == 23.0 and ("climate.wz::temperature", 23.0) in env.ha.writes
     assert host.store.echo_rest() > 0 and device.wuensche == []

@@ -40,15 +40,15 @@ class KonformDevice:
     def abo_status(self):
         return dokument_config.abo_status(self.konf)
 
-    def wunsch(self, wert, *, herkunft, durch=None):
+    def wunsch(self, wert, *, herkunft, durch=None, kreis=1):
         self.wuensche.append((wert, herkunft, durch))
         return min(max(float(wert), 15.0), 25.0)
 
     def soll_quelle_aus(self, aus, wirksam=None):
         self.aus.append((aus, wirksam))
 
-    def meldung(self, key, text, *, offen, kritisch=True):
-        self.meldungen.append((key, text, offen, kritisch))
+    def meldung(self, key, text, *, offen, stufe):
+        self.meldungen.append((key, text, offen, stufe))
 
 
 @dataclass
@@ -86,17 +86,22 @@ def ohne_geraet_gelten_feste_leerwerte(w: Welt) -> None:
     h.soll_quelle_aus(True, None)  # wirft nicht
 
 
+def _bed(raum_soll) -> dict:
+    """Inhalt einer Bedienung mit einem Kreis (Kreis 1)."""
+    return {"kreise": [{"kreis": 1, "modus": "manuell", "raum_soll": raum_soll}]}
+
+
 def dokumentsicht_fuer_die_laufzeit(w: Welt) -> None:
     device = w.verbunden()
-    device.bed, device.dirty = {"raum_soll": 21.5}, True
-    assert w.host.bedienung() == ({"raum_soll": 21.5}, True)
+    device.bed, device.dirty = _bed(21.5), True
+    assert w.host.bedienung() == (_bed(21.5), True)
     assert w.host.konfiguration() == w.konfiguration
     assert w.host.abo_status() == dokument_config.abo_status(w.konfiguration)
 
 
 def bedienung_vor_dem_binden_wird_nachgestellt(w: Welt) -> None:
     w.verbunden()
-    w.host.bedienung_uebernommen({"raum_soll": 22})  # aus JSON kommt eine ganze Zahl als int
+    w.host.bedienung_uebernommen(_bed(22))  # aus JSON kommt eine ganze Zahl als int
     worker, seen = w.worker()
     w.host.worker_binden(worker)
     worker.run_pending()
@@ -106,8 +111,8 @@ def bedienung_vor_dem_binden_wird_nachgestellt(w: Welt) -> None:
 
 def nur_die_letzte_bedienung_vor_dem_binden_zaehlt(w: Welt) -> None:
     w.verbunden()
-    w.host.bedienung_uebernommen({"raum_soll": 21.0})
-    w.host.bedienung_uebernommen({"raum_soll": 23.5})
+    w.host.bedienung_uebernommen(_bed(21.0))
+    w.host.bedienung_uebernommen(_bed(23.5))
     worker, seen = w.worker()
     w.host.worker_binden(worker)
     worker.run_pending()
@@ -118,18 +123,18 @@ def bedienung_nach_dem_binden_geht_sofort_an_den_worker(w: Welt) -> None:
     w.verbunden()
     worker, seen = w.worker()
     w.host.worker_binden(worker)
-    w.host.bedienung_uebernommen({"raum_soll": 22.5})
+    w.host.bedienung_uebernommen(_bed(22.5))
     worker.run_pending()
     assert seen == [(EV_TARGET_INPUT, {"value": 22.5, "source": SOURCE_PORTAL})]
 
 
 def ungueltige_bedienung_wird_still_ignoriert(w: Welt) -> None:
     w.verbunden()
-    for inhalt in ({}, {"raum_soll": None}, {"raum_soll": True}, {"raum_soll": "22"}, {"raum_soll": [22]}):
+    for inhalt in ({}, _bed(None), _bed(True), _bed("22"), _bed([22]), {"kreise": []}):
         w.host.bedienung_uebernommen(inhalt)  # vor dem Binden
     worker, seen = w.worker()
     w.host.worker_binden(worker)
-    for inhalt in ({}, {"raum_soll": False}, {"raum_soll": {"x": 1}}):
+    for inhalt in ({}, _bed(False), _bed({"x": 1}), {"kreise": [{"kreis": 2, "modus": "manuell", "raum_soll": 22.0}]}):
         w.host.bedienung_uebernommen(inhalt)  # nach dem Binden
     worker.run_pending()
     assert seen == []
@@ -137,10 +142,10 @@ def ungueltige_bedienung_wird_still_ignoriert(w: Welt) -> None:
 
 def im_ruhezustand_geht_keine_bedienung_an_den_worker(w: Welt) -> None:
     w.verbunden()
-    w.host.bedienung_uebernommen({"raum_soll": 22.0})
+    w.host.bedienung_uebernommen(_bed(22.0))
     worker, seen = w.worker()
     w.host.worker_binden(worker, soll_eingang=False)
-    w.host.bedienung_uebernommen({"raum_soll": 22.5})
+    w.host.bedienung_uebernommen(_bed(22.5))
     worker.run_pending()
     assert seen == []
 
@@ -302,7 +307,7 @@ def ein_sign_off_nach_der_neuen_konfiguration_meldet_wieder_ab(w: Welt) -> None:
     register = CommandRegister(w.abgemeldet_pfad.parent / "befehle", lambda body: gesendet.append(body) or True,
                                clock=w.clock)
     w.host.befehle_eintragen(register)
-    register.empfangen({"schema": 1, "command_id": "c1", "kind": "sign_off", "payload": {},
+    register.empfangen({"schema": 2, "command_id": "c1", "kind": "sign_off", "payload": {},
                         "expires_at": "2027-01-01T00:00:00+00:00"})  # down/command wie vom Server
     assert gesendet == []  # wartet auf den Status "abgemeldet" (Waiting), kein Fehlerergebnis
     assert dateien.lesen_json(w.abgemeldet_pfad) == {"anlage": alt["anlage"]}

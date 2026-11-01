@@ -64,7 +64,8 @@ def test_every_command_error_list_ends_with_the_common_errors():
 
 
 def test_documents_have_their_down_topics():
-    assert wire.DOKUMENT_TOPICS == {"konfiguration": "down/config", "bedienung": "down/operation"}
+    assert wire.DOKUMENT_TOPICS == {"konfiguration": "down/config", "bedienung": "down/operation",
+                                     "anzeige": "down/display"}
     assert set(wire.DOKUMENT_TOPICS.values()) <= set(wire.DOWN_TOPICS)
 
 

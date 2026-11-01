@@ -26,7 +26,7 @@ def _server_merge(parts):
 
 def test_a_small_inventory_is_one_part():
     assert inventory.nachrichten("c1", {"k": [1]}) == [
-        {"schema": 1, "command_id": "c1", "teil": 1, "teile": 1, "daten": {"k": [1]}}]
+        {"schema": 2, "command_id": "c1", "teil": 1, "teile": 1, "daten": {"k": [1]}}]
 
 
 def test_every_part_has_exactly_the_contract_fields():

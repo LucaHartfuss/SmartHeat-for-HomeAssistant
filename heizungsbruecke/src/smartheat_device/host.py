@@ -18,7 +18,8 @@ class MeldungSink:
     """NotifySink der Laufzeit (smartheat_runtime.ports) auf den Geraetekern (up/notifications), fuer jeden Host
     (Gateway allein, HA-Add-on neben HA-Benachrichtigungen). Regeln: show = offene
     kritische Meldung, withdraw = geschlossen, push = Ereignis (offen und kritisch nur, solange der key offen ist).
-    `melden(key, text, *, offen, kritisch)` ist Device.meldung (oder ein Host-Rueckruf darauf)."""
+    `melden(key, text, *, offen, stufe)` ist Device.meldung (oder ein Host-Rueckruf darauf). Stufe rot: offene oder
+    geschlossene Meldung (show, withdraw, push solange der key offen ist); orange: Ereignis ohne offenen key."""
 
     def __init__(self, melden: Callable[..., None]) -> None:
         self._melden = melden
@@ -28,17 +29,17 @@ class MeldungSink:
     def push(self, key: str, message: str) -> None:
         with self._lock:
             offen = key in self._offen
-        self._melden(key, message, offen=offen, kritisch=offen)
+        self._melden(key, message, offen=offen, stufe="rot" if offen else "orange")
 
     def show(self, key: str, message: str) -> None:
         with self._lock:
             self._offen[key] = message
-        self._melden(key, message, offen=True, kritisch=True)
+        self._melden(key, message, offen=True, stufe="rot")
 
     def withdraw(self, key: str) -> None:
         with self._lock:
             text = self._offen.pop(key, "")
-        self._melden(key, text, offen=False, kritisch=True)
+        self._melden(key, text, offen=False, stufe="rot")
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,10 @@ class DeviceHost(Protocol):
 
     def faehigkeiten(self) -> dict:
         """hello.faehigkeiten bzw. register.capabilities: drivers, zigbee, optional updater, programm."""
+        ...
+
+    def wege(self) -> list[str]:
+        """hello.wege: die Weg-IDs (Katalog des Servers), ueber die dieser Host Anlagen anbinden kann."""
         ...
 
     def uhr_synchron(self) -> bool | None:

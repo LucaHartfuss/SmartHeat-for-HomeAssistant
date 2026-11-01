@@ -1,5 +1,5 @@
 """Vertrag Geraet <-> Server: HTTPS-Bootstrap und MQTT. Woertliche Kopie des Vertragsteils von
-heizungsserver/geraete/device_protocol.py (alles ab `SCHEMA = 1` bis einschliesslich `command_errors`; die Importe stehen je
+heizungsserver/geraete/device_protocol.py (alles ab `SCHEMA = 2` bis einschliesslich `command_errors`; die Importe stehen je
 Seite selbst); tools/contract_check.py im Dev-Root vergleicht beide mit tools/contracts/geraet_v1.json.
 Aenderungen nur an allen drei Stellen zugleich. Die Server-Regeln unter dem Vertragsteil (Aushandeln, Ablauf,
 Mindestversion je Host) gibt es nur auf dem Server; unter der Marke stehen hier statt dessen die Konstanten, die nur
@@ -15,8 +15,8 @@ import hashlib
 import re
 from dataclasses import dataclass
 
-SCHEMA = 1
-SCHEMATA = (1,)
+SCHEMA = 2
+SCHEMATA = (2,)
 
 # --- HTTPS-Bootstrap (Spec 1), signiert wie der Vertrag G3 ---
 SIGNATURE_SCHEME = "SHG1"
@@ -57,14 +57,15 @@ DEVICE_SUBSCRIPTION = "down/#"  # AN-6: die Policy erlaubt nur diesen Filter
 UP_TOPICS = (
     "up/hello", "up/snapshot", "up/status", "up/notifications", "up/inventory", "up/result", "up/wish", "telemetry",
 )
-DOWN_TOPICS = ("down/config", "down/operation", "down/command", "down/setpoints")
+DOWN_TOPICS = ("down/config", "down/operation", "down/display", "down/command", "down/setpoints")
 
 HELLO_FIELDS = (
-    "schema", "schemata", "konfiguration_version", "bedienung_version", "software_version", "host", "faehigkeiten",
-    "boot_id", "uhr_synchron",
+    "schema", "schemata", "konfiguration_version", "bedienung_version", "anzeige_version", "software_version", "host",
+    "faehigkeiten", "wege", "boot_id", "uhr_synchron",
 )
 HELLO_OPTIONAL = ("device_state",)  # fehlt = Uebernahmestand des Geraets unbekannt, kein Abgleich (Spec 5c F1)
-STATUS_FIELDS = ("schema", "zustand", "runtime_status", "raum", "ts")
+STATUS_FIELDS = ("schema", "zustand", "runtime_status", "kreise", "ts")
+STATUS_KREIS_FIELDS = ("kreis", "raum")  # ein Eintrag je Kreis der Konfiguration, Nummern aufsteigend und einmalig
 STATUS_OPTIONAL = ("ursprungswerte",)  # fehlt = keine neuen Ursprungswerte (G-4: Hebel -> Wert vor dem ersten Schreiben)
 ZUSTAENDE = (
     "startet", "nicht_uebernommen", "keine_verbindung", "wartet_auf_einrichtung", "regelt", "stoerung", "gesperrt",
@@ -72,7 +73,8 @@ ZUSTAENDE = (
 )
 RAUM_FIELDS = ("ist", "soll", "soll_quelle", "ts")
 NOTIFICATIONS_FIELDS = ("schema", "items")
-NOTIFICATION_FIELDS = ("key", "kategorie", "kritisch", "text", "offen", "ts")
+NOTIFICATION_FIELDS = ("key", "kategorie", "stufe", "text", "offen", "ts")
+STUFEN = ("rot", "orange", "gelb")  # Dringlichkeit einer Meldung; rot und orange gehen als Push hinaus, gelb nie
 INVENTORY_FIELDS = ("schema", "command_id", "teil", "teile", "daten")
 INVENTUR_FILTER_FIELDS = ("plattformen", "domaenen", "geraeteklassen", "dienste")
 INVENTUR_HA_FIELDS = ("entities", "geraete", "dienste", "einheit_temperatur", "zeitzone")
@@ -97,15 +99,15 @@ RESULT_TARGETS = ("command_id", "dokument", "version")  # entweder command_id od
 RESULT_PFLICHT_DOKUMENT = ("schema", "ok")
 RESULT_OPTIONAL_DOKUMENT = ("error",)
 ERROR_FIELDS = ("grund", "details")
-WISH_FIELDS = ("schema", "wish_id", "basis_version", "ts", "uhr_synchron", "werte")
+WISH_FIELDS = ("schema", "wish_id", "kreis", "basis_version", "ts", "uhr_synchron", "werte")
 WISH_OPTIONAL = ("roh", "herkunft", "durch")  # fehlt = nicht begrenzt bzw. unbekannt
 WISH_WERTE = ("raum_soll",)
-HERKUNFT = ("thermostat", "soll_entity", "smartheat_entity")
+HERKUNFT = ("thermostat", "soll_entity", "ha")
 DURCH = ("nutzer", "automation")
 
-DOKUMENTE = ("konfiguration", "bedienung")
+DOKUMENTE = ("konfiguration", "bedienung", "anzeige")
 DOKUMENT_SOFTWARE = "software"  # nur in up/result: Ergebnis eines Updates, version = Software-Version (Text)
-DOKUMENT_TOPICS = {"konfiguration": "down/config", "bedienung": "down/operation"}
+DOKUMENT_TOPICS = {"konfiguration": "down/config", "bedienung": "down/operation", "anzeige": "down/display"}
 KONFIGURATION_FIELDS = (
     "schema", "version", "anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo",
     "mindest_software", "software", "bindungsparameter",
@@ -136,8 +138,18 @@ HA_HINWEISE = ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", 
 TREIBER_FIELDS = ("id", "parameter")
 SOFTWARE_FIELDS = ("version", "manifest_url", "manifest_sha256", "signature")
 ABO = ("aktiv", "inaktiv")
-BEDIENUNG_FIELDS = ("schema", "version", "modus", "raum_soll", "quelle", "ts")
+BEDIENUNG_FIELDS = ("schema", "version", "kreise", "quelle", "ts")
+BEDIENUNG_KREIS_FIELDS = ("kreis", "modus", "raum_soll")  # ein Eintrag je Kreis, Nummern aufsteigend und einmalig
 MODI = ("manuell",)
+# Anzeige: ein Eintrag je Kreis der Konfiguration, nur Host ha; der Server schreibt, das Geraet zeigt und prueft den
+# vollen Feldsatz (einlernphase_tag, testphase_bis null = nicht aktiv; befunde, aufgaben, raumziele leere Listen;
+# kennzahlen leeres Objekt)
+ANZEIGE_FIELDS = ("schema", "version", "kreise")
+ANZEIGE_KREIS_FIELDS = (
+    "kreis", "einlernphase_tag", "testphase_bis", "befunde", "aufgaben", "kennzahlen", "raumziele",
+)
+KREIS_MIN = 1  # kleinste Kreisnummer in Nachrichten und Dokumenten
+KREIS_MAX = 2**31 - 1  # groesste: die Nummer passt in eine Datenbankspalte vom Typ integer
 QUELLEN = ("portal", "geraet", "auftrag")
 RAUM_SOLL_MIN, RAUM_SOLL_MAX, RAUM_SOLL_STEP = 15.0, 25.0, 0.5
 URSPRUNG_MAX_HEBEL, URSPRUNG_HEBEL_MAX_CHARS = 16, 64  # Ursprungswerte: hoechstens so viele Hebel, Namen so lang
@@ -202,7 +214,8 @@ PRUEF_FELDER = tuple(dict.fromkeys((
     *KONFIGURATION_FIELDS, *KONFIGURATION_OPTIONAL, *BINDUNGSPARAMETER_FIELDS, *SCHREIBSCHUTZ_FIELDS,
     *BINDUNG_GATEWAY_FIELDS, *TREIBER_FIELDS, *BINDUNG_HA_FIELDS, *BINDUNG_HA_OPTIONAL, *KREIS_FIELDS, *KREIS_OPTIONAL,
     *HA_ROLLEN,
-    *BEDIENUNG_FIELDS, *COMMAND_FIELDS, *INVENTUR_FILTER_FIELDS, *INVENTUR_FILTER_GATEWAY_FIELDS,
+    *BEDIENUNG_FIELDS, *BEDIENUNG_KREIS_FIELDS, *ANZEIGE_FIELDS, *ANZEIGE_KREIS_FIELDS, *COMMAND_FIELDS,
+    *INVENTUR_FILTER_FIELDS, *INVENTUR_FILTER_GATEWAY_FIELDS,
     *(feld for command in COMMANDS.values() for feld in (*command.payload, *command.payload_optional)),
 )))
 _SEGMENT_RE = re.compile(r"[A-Za-z0-9_-]+")

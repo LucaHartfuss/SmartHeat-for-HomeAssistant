@@ -120,10 +120,10 @@ class GatewayWorld:
         self.run()
 
     def konfiguration_senden(self, inhalt: dict, version: int) -> None:
-        self.server("down/config", {"schema": 1, "version": version, **inhalt})
+        self.server("down/config", {"schema": 2, "version": version, **inhalt})
 
     def bedienung_senden(self, inhalt: dict, version: int) -> None:
-        self.server("down/operation", {"schema": 1, "version": version, **inhalt})
+        self.server("down/operation", {"schema": 2, "version": version, **inhalt})
 
     def answer(self, levers: dict, status: str = "ok", reason=None) -> None:
         seq = self.link.of("up/snapshot")[-1]["seq"]

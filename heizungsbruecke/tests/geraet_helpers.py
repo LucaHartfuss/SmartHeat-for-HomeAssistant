@@ -30,6 +30,11 @@ KREIS_PLATTFORM = {"vaillant_vrc720": "mypyllant", "weishaupt_wwp": "weishaupt_m
 GERAET_ID = "shg-0000000000000001"
 
 
+def bedienung_inhalt(raum_soll, *, kreis=1) -> dict:
+    """Inhalt des Dokuments Bedienung mit einem Kreis (so uebergibt ihn das Geraet dem Host)."""
+    return {"kreise": [{"kreis": kreis, "modus": "manuell", "raum_soll": raum_soll}]}
+
+
 def konfiguration_aus_optionen(options: dict) -> dict:
     """Alte Test-Optionen als Konfigurationsdokument (Bindung wie dokument.bindung sie liest); entity_room_target wird
     rollen.room_target."""
@@ -296,7 +301,7 @@ class Device:
         self.meldungen = []
         self.documents = self
 
-    def wunsch(self, wert, *, herkunft, durch=None):
+    def wunsch(self, wert, *, herkunft, durch=None, kreis=1):
         self.wuensche.append((wert, herkunft, durch))
         return min(max(float(wert), 15.0), 25.0)
 
@@ -315,8 +320,8 @@ class Device:
     def abo_status(self):
         return "aktiv"
 
-    def meldung(self, key, text, *, offen, kritisch=True):
-        self.meldungen.append((key, text, offen, kritisch))
+    def meldung(self, key, text, *, offen, stufe):
+        self.meldungen.append((key, text, offen, stufe))
 
 
 def _paths(tmp_path, monkeypatch):

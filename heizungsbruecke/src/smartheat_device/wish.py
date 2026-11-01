@@ -22,7 +22,7 @@ WUNSCH_FILE = "wunsch.json"
 WUNSCH_NACH_ABLEHNUNG_SECONDS = 60.0
 BEGRENZT_KEY = "wunsch_begrenzt"
 SOLL_QUELLE_AUS_KEY = "soll_quelle_aus"
-_QUELLE = {"thermostat": "Thermostat", "soll_entity": "Wunschtemperatur", "smartheat_entity": "Wunschtemperatur"}
+_QUELLE = {"thermostat": "Thermostat", "soll_entity": "Wunschtemperatur", "ha": "Wunschtemperatur"}
 
 
 def begrenzen(wert) -> tuple[float, float | None]:
@@ -56,6 +56,7 @@ def soll_quelle_aus_text(wirksam: float | None) -> str:
 @dataclass(frozen=True)
 class Wunsch:
     wish_id: str
+    kreis: int
     basis_version: int
     ts: str
     uhr_synchron: bool
@@ -66,7 +67,8 @@ class Wunsch:
 
     def payload(self) -> dict:
         werte = nachrichten.pruefen("wunsch.werte", {"raum_soll": self.raum_soll}, wire.WISH_WERTE)
-        body = {"schema": wire.SCHEMA, "wish_id": self.wish_id, "basis_version": self.basis_version, "ts": self.ts,
+        body = {"schema": wire.SCHEMA, "wish_id": self.wish_id, "kreis": self.kreis,
+                "basis_version": self.basis_version, "ts": self.ts,
                 "uhr_synchron": self.uhr_synchron, "werte": werte}
         for key in wire.WISH_OPTIONAL:
             value = getattr(self, key)
@@ -84,11 +86,18 @@ def pruefen_herkunft(herkunft: str | None, durch: str | None) -> None:
         raise ValueError("durch unbekannt")
 
 
-def neu(raum_soll: float, roh: float | None, *, basis_version: int, uhr_synchron: bool, herkunft: str | None,
+def pruefen_kreis(kreis) -> None:
+    """ValueError, wenn kreis keine Kreisnummer ist (ganze Zahl von wire.KREIS_MIN bis KREIS_MAX, kein bool)."""
+    if isinstance(kreis, bool) or not isinstance(kreis, int) or not wire.KREIS_MIN <= kreis <= wire.KREIS_MAX:
+        raise ValueError("kreis ist keine Kreisnummer")
+
+
+def neu(raum_soll: float, roh: float | None, *, kreis: int, basis_version: int, uhr_synchron: bool, herkunft: str | None,
         durch: str | None, wall: float) -> Wunsch:
     pruefen_herkunft(herkunft, durch)
+    pruefen_kreis(kreis)
     ts = datetime.fromtimestamp(wall, UTC).isoformat(timespec="seconds")
-    return Wunsch(uuid.uuid4().hex, basis_version, ts, uhr_synchron, raum_soll, roh, herkunft, durch)
+    return Wunsch(uuid.uuid4().hex, kreis, basis_version, ts, uhr_synchron, raum_soll, roh, herkunft, durch)
 
 
 def _laden(path: Path) -> Wunsch | None:
@@ -99,7 +108,8 @@ def _laden(path: Path) -> Wunsch | None:
         wunsch = Wunsch(**raw)
     except TypeError:
         return None
-    gueltig = (isinstance(wunsch.wish_id, str) and isinstance(wunsch.basis_version, int)
+    gueltig = (isinstance(wunsch.wish_id, str) and isinstance(wunsch.kreis, int) and not isinstance(wunsch.kreis, bool)
+               and wire.KREIS_MIN <= wunsch.kreis <= wire.KREIS_MAX and isinstance(wunsch.basis_version, int)
                and isinstance(wunsch.ts, str) and isinstance(wunsch.uhr_synchron, bool)
                and isinstance(wunsch.raum_soll, int | float))
     return wunsch if gueltig else None

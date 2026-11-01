@@ -10,7 +10,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from geraet_helpers import CLAIM_CODE, DEVICE_ID, FakeDevice, FakeSupervisor, FakeThread, konfiguration_aus_optionen
+from geraet_helpers import (
+    CLAIM_CODE,
+    DEVICE_ID,
+    FakeDevice,
+    FakeSupervisor,
+    FakeThread,
+    bedienung_inhalt,
+    konfiguration_aus_optionen,
+)
 from runtime_helpers import OPTIONS, _quiet_backup
 
 import heizungsbruecke.__main__ as main_module
@@ -210,13 +218,13 @@ def test_an_operation_while_idle_is_not_posted_to_the_worker(geraet_env, caplog)
     geraet, status = _verdrahtet(geraet_env, device)
     result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
     with caplog.at_level(logging.WARNING):
-        geraet.bedienung_uebernommen({"raum_soll": 22.0})
+        geraet.bedienung_uebernommen(bedienung_inhalt(22.0))
         result.worker.run_pending()
     assert "Kein Handler" not in caplog.text
 
 
 def test_start_with_document_regulates_and_wires_status_and_operations(geraet_env):
-    device = FakeDevice(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 21.0})
+    device = FakeDevice(konfiguration_aus_optionen(OPTIONS), bedienung=bedienung_inhalt(21.0))
     geraet, status = _verdrahtet(geraet_env, device)
     result, host = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
     result.worker.run_pending()
@@ -224,7 +232,7 @@ def test_start_with_document_regulates_and_wires_status_and_operations(geraet_en
     # laufzeit_merken: das unveraenderte Laufzeit-Ereignis liegt fuer up/status und sign_off beim Geraete-Host
     assert geraet.runtime_status_event["tenant_id"] == OPTIONS["tenant_id"]
 
-    geraet.bedienung_uebernommen({"raum_soll": 22.5})
+    geraet.bedienung_uebernommen(bedienung_inhalt(22.5))
     result.worker.run_pending()
     assert host.store.value == 22.5
     geraet.anzeigen(_anzeige("regelt", eingerichtet=True))
@@ -761,7 +769,7 @@ def test_a_marker_that_does_not_fit_the_lock_stays_on_reset_and_nothing_is_delet
 
 
 def _dokument(inhalt: dict, version: int) -> dict:
-    return {"schema": 1, "version": version, **inhalt}
+    return {"schema": 2, "version": version, **inhalt}
 
 
 @pytest.mark.parametrize("anders", [{"verteilsystem": "Fussbodenheizung"}, {"hebelsatz": "viessmann_vicare"}])

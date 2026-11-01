@@ -26,10 +26,10 @@ def test_begrenzen_refuses_what_is_no_finite_number(wert):
 
 
 def test_payload_has_the_contract_fields_and_omits_unknown_extras():
-    plain = wish.neu(21.5, None, basis_version=3, uhr_synchron=True, herkunft=None, durch=None, wall=WALL)
+    plain = wish.neu(21.5, None, kreis=1, basis_version=3, uhr_synchron=True, herkunft=None, durch=None, wall=WALL)
     assert set(plain.payload()) == set(wire.WISH_FIELDS)
     assert plain.payload()["ts"] == "2027-01-15T08:00:00+00:00" and plain.payload()["werte"] == {"raum_soll": 21.5}
-    limited = wish.neu(15.0, 14.0, basis_version=3, uhr_synchron=False, herkunft="thermostat", durch="nutzer",
+    limited = wish.neu(15.0, 14.0, kreis=2, basis_version=3, uhr_synchron=False, herkunft="thermostat", durch="nutzer",
                        wall=WALL)
     assert set(limited.payload()) == set(wire.WISH_FIELDS) | set(wire.WISH_OPTIONAL)
     assert (limited.payload()["roh"], limited.payload()["uhr_synchron"]) == (14.0, False)
@@ -57,19 +57,19 @@ def test_the_local_messages_of_the_wish_are_contract_keys():
 @pytest.mark.parametrize("herkunft, durch", [("app", None), (None, "katze")])
 def test_origin_and_actor_are_contract_values(herkunft, durch):
     with pytest.raises(ValueError):
-        wish.neu(21.0, None, basis_version=0, uhr_synchron=True, herkunft=herkunft, durch=durch, wall=WALL)
+        wish.neu(21.0, None, kreis=1, basis_version=0, uhr_synchron=True, herkunft=herkunft, durch=durch, wall=WALL)
     with pytest.raises(ValueError):
         wish.pruefen_herkunft(herkunft, durch)
 
 
-@pytest.mark.parametrize("herkunft", [None, "thermostat", "soll_entity", "smartheat_entity"])
+@pytest.mark.parametrize("herkunft", [None, "thermostat", "soll_entity", "ha"])
 @pytest.mark.parametrize("durch", [None, "nutzer", "automation"])
 def test_every_contract_origin_and_actor_passes_the_check(herkunft, durch):
     assert wish.pruefen_herkunft(herkunft, durch) is None
 
 
 def _wunsch(value=21.0):
-    return wish.neu(value, None, basis_version=1, uhr_synchron=True, herkunft="thermostat", durch=None, wall=WALL)
+    return wish.neu(value, None, kreis=1, basis_version=1, uhr_synchron=True, herkunft="thermostat", durch=None, wall=WALL)
 
 
 def test_the_buffer_keeps_only_the_latest_and_survives_a_restart(tmp_path):
@@ -163,3 +163,30 @@ def test_texts():
     assert wish.soll_quelle_aus_text(None) == (
         "Thermostat ist aus, SmartHeat regelt weiter; Heizung aus über die Sommersperre bzw. im Portal")
     assert {wish.BEGRENZT_KEY, wish.SOLL_QUELLE_AUS_KEY} <= set(wire.MELDUNGEN)
+
+
+def test_the_wish_carries_its_circuit():
+    assert _wunsch().payload()["kreis"] == 1
+    zweiter = wish.neu(21.0, None, kreis=2, basis_version=1, uhr_synchron=True, herkunft=None, durch=None, wall=WALL)
+    assert zweiter.payload()["kreis"] == 2
+    grenze = wish.neu(21.0, None, kreis=2**31 - 1, basis_version=1, uhr_synchron=True, herkunft=None, durch=None,
+                      wall=WALL)
+    assert grenze.payload()["kreis"] == 2**31 - 1
+
+
+@pytest.mark.parametrize("kreis", [0, -1, True, 1.0, "1", None, 2**31, 10**400])
+def test_a_wrong_circuit_is_refused(kreis):
+    with pytest.raises(ValueError):
+        wish.pruefen_kreis(kreis)
+    with pytest.raises(ValueError):
+        wish.neu(21.0, None, kreis=kreis, basis_version=1, uhr_synchron=True, herkunft=None, durch=None, wall=WALL)
+
+
+def test_a_buffered_wish_without_circuit_from_before_is_dropped(tmp_path):
+    alt = {"wish_id": "w", "basis_version": 1, "ts": "t", "uhr_synchron": True, "raum_soll": 21.0}
+    (tmp_path / wish.WUNSCH_FILE).write_text(json.dumps(alt))
+    assert wish.WunschPuffer(tmp_path).wunsch is None
+    (tmp_path / wish.WUNSCH_FILE).write_text(json.dumps({**alt, "kreis": 0}))
+    assert wish.WunschPuffer(tmp_path).wunsch is None
+    (tmp_path / wish.WUNSCH_FILE).write_text(json.dumps({**alt, "kreis": 2}))
+    assert wish.WunschPuffer(tmp_path).wunsch.kreis == 2

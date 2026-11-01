@@ -30,6 +30,10 @@ from smartheat_runtime import dokument_config
 
 logger = logging.getLogger(__name__)
 
+#: Weg-ID des Server-Katalogs je Schreib-Plattform der Home-Assistant-Integration; eine neue Plattform ohne Eintrag
+#: faellt im Test auf.
+WEG_JE_PLATTFORM = {"mypyllant": "vaillant_myvaillant", "vicare": "viessmann_vicare",
+                    "weishaupt_modbus": "weishaupt_modbus"}
 UHR_CACHE_SECONDS = 60
 INVENTUR_SECONDS = 120
 _FREMD = ("zigbee_permit_join", "zigbee_devices", "driver_login")
@@ -76,6 +80,10 @@ class HaDeviceHost(GeraetHostBasis):
     def faehigkeiten(self) -> dict:
         return nachrichten.pruefen("faehigkeiten", {"drivers": [], "zigbee": False}, wire.CAPABILITY_FIELDS,
                                    wire.CAPABILITY_OPTIONAL)
+
+    def wege(self) -> list[str]:
+        """Wege des Katalogs, die dieser Host ueber seine Schreib-Plattformen bedient (Plattform -> Weg-ID)."""
+        return sorted({WEG_JE_PLATTFORM[plattform] for plattform in dokument.SCHREIB_PLATTFORM.values()})
 
     def uhr_synchron(self) -> bool | None:
         """dt_synchronized aus GET /host/info; kein bool oder Fehler = unbekannt (gilt als nicht synchron). Der Aufruf

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from befehle_sicht import registrierte_befehle
-from configs import dokumente_schreiben, konfiguration
+from configs import bedienung, dokumente_schreiben, konfiguration
 from fakes import FakeBus
 from geraet_welt import WALL, FakeDevice, Welt
 from world import GatewayWorld
@@ -85,8 +85,16 @@ def test_runtime_messages_become_notifications(welt):
     sink.push("batterie:0x1", "Batterie schwach")
     sink.withdraw("notbetrieb")
     assert welt.device.meldungen == [
-        ("notbetrieb", "Notbetrieb aktiv", True, True), ("notbetrieb", "Notbetrieb aktiv", True, True),
-        ("batterie:0x1", "Batterie schwach", False, False), ("notbetrieb", "Notbetrieb aktiv", False, True)]
+        ("notbetrieb", "Notbetrieb aktiv", True, "rot"), ("notbetrieb", "Notbetrieb aktiv", True, "rot"),
+        ("batterie:0x1", "Batterie schwach", False, "orange"), ("notbetrieb", "Notbetrieb aktiv", False, "rot")]
+
+
+def test_the_gateway_reports_the_ways_of_its_drivers(welt):
+    """Jeder Treiber der Registry hat einen Weg; gemeldet werden die Weg-IDs des Servers, sortiert und einmalig."""
+    assert set(registry.driver_ids()) <= set(gh.WEG_JE_TREIBER)
+    assert welt.host.wege() == sorted({gh.WEG_JE_TREIBER[t] for t in registry.driver_ids()})
+    assert all(isinstance(weg, str) and weg for weg in welt.host.wege())
+    assert welt.host.wege() == ["simulation", "viessmann_vicare"]
 
 
 def test_a_runtime_relevant_configuration_requests_a_restart(welt):
@@ -145,7 +153,7 @@ def test_vergessen_removes_the_plant_state_but_keeps_device_and_simulation(welt)
 
 
 def _dokument(inhalt: dict, version: int) -> dict:
-    return {"schema": 1, "version": version, **inhalt}
+    return {"schema": 2, "version": version, **inhalt}
 
 
 @pytest.mark.parametrize("anders", [{"verteilsystem": "Fussbodenheizung"}, {"hebelsatz": "vaillant_vrc720"}])
@@ -330,7 +338,7 @@ def test_the_sign_off_ends_only_with_a_new_version_of_the_same_plant(world):
 
 def test_an_operation_goes_to_the_worker_as_target_input(welt):
     welt.host.worker_binden(welt.worker)
-    welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 22.5})
+    welt.host.bedienung_uebernommen(bedienung(22.5))
     welt.worker.run_pending()
     (event,) = welt.events
     assert (event.kind, event.data) == (EV_TARGET_INPUT, {"value": 22.5, "source": SOURCE_PORTAL})
@@ -338,8 +346,8 @@ def test_an_operation_goes_to_the_worker_as_target_input(welt):
 
 def test_an_operation_before_the_worker_exists_is_posted_on_binding(welt):
     # main(): der Geraete-Thread laeuft vor dem Worker; eine Bedienung gleich nach hello geht nicht verloren
-    welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 21.0})
-    welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 22.5})
+    welt.host.bedienung_uebernommen(bedienung(21.0))
+    welt.host.bedienung_uebernommen(bedienung(22.5))
     welt.host.worker_binden(welt.worker)
     welt.worker.run_pending()
     (event,) = welt.events  # nur die letzte
@@ -348,8 +356,8 @@ def test_an_operation_before_the_worker_exists_is_posted_on_binding(welt):
 
 def test_operation_and_abo_for_the_runtime_host(welt):
     assert welt.host.bedienung() == (None, False)
-    welt.device.bed, welt.device.dirty = {"raum_soll": 21.0}, True
-    assert welt.host.bedienung() == ({"raum_soll": 21.0}, True)
+    welt.device.bed, welt.device.dirty = bedienung(21.0), True
+    assert welt.host.bedienung() == (bedienung(21.0), True)
     assert welt.host.abo_status() == "active" and welt.host.konfiguration()["anlage"] == "test-tenant"
 
 
@@ -559,9 +567,9 @@ def test_an_operation_in_the_idle_state_is_not_posted_to_the_worker(welt, caplog
     """Ruhezustand (IdleBridge): der Worker hat keinen Soll-Eingang; die Bedienung bleibt im Geraetekern gespeichert
     und gilt beim naechsten Start mit Regelung. Kein "Kein Handler ... verworfen" je Dokument."""
     leerlauf = RegulationWorker(clock=welt.clock)
-    welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 21.0})  # vor dem Binden
+    welt.host.bedienung_uebernommen(bedienung(21.0))  # vor dem Binden
     with caplog.at_level("WARNING"):
         welt.host.worker_binden(leerlauf, soll_eingang=False)
-        welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 22.5})
+        welt.host.bedienung_uebernommen(bedienung(22.5))
         leerlauf.run_pending()
     assert "Kein Handler" not in caplog.text

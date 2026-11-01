@@ -269,10 +269,10 @@ class Anlage(Handgriffe):
         self._zugang()
         self._prozess()
         self._verbinden()
-        self.link.empfangen("down/config", {"schema": 1, "version": 1, **self.konfiguration})
+        self.link.empfangen("down/config", {"schema": 2, "version": 1, **self.konfiguration})
         self.link.empfangen("down/operation", {
-            "schema": 1, "version": 1, "modus": "manuell", "raum_soll": 21.0, "quelle": "portal",
-            "ts": "2027-01-15T07:00:00+00:00"})
+            "schema": 2, "version": 1, "kreise": [{"kreis": 1, "modus": "manuell", "raum_soll": 21.0}],
+            "quelle": "portal", "ts": "2027-01-15T07:00:00+00:00"})
         self.device.schritt()
         assert self.device.documents.eingerichtet()
         geraet, status = self._prozess()

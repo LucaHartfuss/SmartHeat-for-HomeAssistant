@@ -105,8 +105,8 @@ def test_ha_source_echo_is_not_a_wish(tmp_path):
 
 def test_local_event_wish_aligns_the_entity(tmp_path):
     a = Aufbau(tmp_path)
-    a.post(22.0, SOURCE_LOKAL, herkunft="smartheat_entity", durch="automation")
-    assert a.wuensche == [(22.0, "smartheat_entity", "automation")]
+    a.post(22.0, SOURCE_LOKAL, herkunft="ha", durch="automation")
+    assert a.wuensche == [(22.0, "ha", "automation")]
     assert a.store.value == 22.0 and a.store.source == SOURCE_LOKAL and a.quelle.geschrieben == [22.0]
 
 
@@ -128,8 +128,8 @@ def test_gateway_debounce_still_waits(tmp_path):
 
 def test_clamped_local_wish_keeps_source_lokal_and_writes_back(tmp_path):
     a = Aufbau(tmp_path)
-    a.post(30.0, SOURCE_LOKAL, herkunft="smartheat_entity")
-    assert a.wuensche == [(30.0, "smartheat_entity", None)]
+    a.post(30.0, SOURCE_LOKAL, herkunft="ha")
+    assert a.wuensche == [(30.0, "ha", None)]
     assert a.store.value == 25.0 and a.store.source == SOURCE_LOKAL and a.quelle.geschrieben == [25.0]
 
 
@@ -161,7 +161,7 @@ def test_local_wish_while_source_is_off_is_discarded(tmp_path):
     a = Aufbau(tmp_path)
     a.worker.post(Event(EV_SOLL_MODUS, {"mode": "off"}))
     a.worker.run_pending()
-    a.post(22.0, SOURCE_LOKAL, herkunft="smartheat_entity", durch="automation")
+    a.post(22.0, SOURCE_LOKAL, herkunft="ha", durch="automation")
     assert a.wuensche == [] and a.store.value == 21.0 and a.quelle.geschrieben == []
     assert a.aus == [(True, 21.0)] and a.checks == []
     a.quelle.wert = 21.0
@@ -172,9 +172,9 @@ def test_local_wish_while_source_is_off_is_discarded(tmp_path):
 
 def test_repeated_identical_local_wish_is_not_repeated(tmp_path):
     a = Aufbau(tmp_path)
-    a.post(22.0, SOURCE_LOKAL, herkunft="smartheat_entity")
+    a.post(22.0, SOURCE_LOKAL, herkunft="ha")
     assert len(a.wuensche) == 1 and len(a.checks) == 1
-    a.post(22.0, SOURCE_LOKAL, herkunft="smartheat_entity")
+    a.post(22.0, SOURCE_LOKAL, herkunft="ha")
     assert len(a.wuensche) == 1 and len(a.checks) == 1 and a.quelle.geschrieben == [22.0]
 
 
@@ -204,7 +204,7 @@ def test_switching_off_during_an_open_local_wish_keeps_the_local_value_without_a
     """Ein lokaler Wunsch merkt kein Soll davor: Modus off vor dem Entprellen verwirft ihn als Wunsch, der lokale Wert
     bleibt stehen (wie heute)."""
     a = Aufbau(tmp_path, entprellen_s=10.0)
-    a.post(23.0, SOURCE_LOKAL, herkunft="smartheat_entity")
+    a.post(23.0, SOURCE_LOKAL, herkunft="ha")
     assert a.store.value == 23.0 and a.wuensche == []
     _modus(a, "off")
     assert a.store.value == 23.0 and a.store.source == SOURCE_LOKAL and a.aus == [(True, 23.0)]

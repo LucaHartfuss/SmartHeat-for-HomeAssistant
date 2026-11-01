@@ -102,7 +102,7 @@ class FakeDeviceSicht:
     def soll_quelle_aus(self, aus, wirksam=None):
         pass
 
-    def meldung(self, key, text, *, offen, kritisch=True):
+    def meldung(self, key, text, *, offen, stufe):
         pass
 
     def stop(self):

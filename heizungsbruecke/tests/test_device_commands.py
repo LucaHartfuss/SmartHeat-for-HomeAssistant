@@ -19,11 +19,11 @@ class Clock:
 
 
 def _ok(command_id="c1", result=None):
-    return {"schema": 1, "command_id": command_id, "ok": True, "result": result or {}, "error": None}
+    return {"schema": 2, "command_id": command_id, "ok": True, "result": result or {}, "error": None}
 
 
 def _fail(grund, details=None, command_id="c1"):
-    return {"schema": 1, "command_id": command_id, "ok": False, "result": None, "error": fehler.body(grund, details)}
+    return {"schema": 2, "command_id": command_id, "ok": False, "result": None, "error": fehler.body(grund, details)}
 
 
 def test_a_command_runs_once_and_its_result_goes_up(tmp_path):

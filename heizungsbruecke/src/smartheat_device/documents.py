@@ -1,6 +1,6 @@
 """Dokumentspeicher des Geraets; geschrieben wird ueber smartheat_core.dateien.
 
-Konfiguration und Bedienung liegen je in einer Datei mit Version und Inhalt (ohne schema/version des Vertrags).
+Konfiguration, Bedienung und Anzeige liegen je in einer Datei mit Version und Inhalt (ohne schema/version des Vertrags).
 Uebernommen wird jede Version, die von der eigenen abweicht, auch eine kleinere (ein aus dem Backup zurueckgespielter
 Server); dieselbe Version nur, solange die Bedienung "dirty" ist (lokaler Bedienwunsch seit der letzten
 uebernommenen Bedienung: der Server schickt eine verlierende Bedienung mit gleicher Version zurueck).
@@ -53,8 +53,8 @@ from smartheat_runtime import soll_speicher
 
 logger = logging.getLogger(__name__)
 
-KONFIGURATION, BEDIENUNG = wire.DOKUMENTE
-DATEIEN = {KONFIGURATION: "konfiguration.json", BEDIENUNG: "bedienung.json"}
+KONFIGURATION, BEDIENUNG, ANZEIGE = wire.DOKUMENTE
+DATEIEN = {KONFIGURATION: "konfiguration.json", BEDIENUNG: "bedienung.json", ANZEIGE: "anzeige.json"}
 ZUSTAND_DATEI = "dokumente.json"
 SCHEMA_UNBEKANNT = "schema_unbekannt"
 UNGUELTIG = "ungueltig"
@@ -137,16 +137,62 @@ def angebot_aus(art: str, payload: dict) -> Angebot | None:
     return Angebot(copy.deepcopy(payload["software"]))
 
 
+def _kreise_pruefen(inhalt: dict, felder: tuple[str, ...]) -> config_check.Ablehnung | None:
+    """Die Liste `kreise` eines Dokuments: nicht leer, je Eintrag genau `felder`, die Nummern ganze Zahlen von
+    KREIS_MIN bis KREIS_MAX, aufsteigend und einmalig (wie der Server sie schreibt)."""
+    eintraege = inhalt["kreise"]
+    if not isinstance(eintraege, list) or not eintraege:
+        return config_check.Ablehnung(UNGUELTIG, fehler.details("kreise", "ungueltig"))
+    letzte = wire.KREIS_MIN - 1
+    for eintrag in eintraege:
+        if not isinstance(eintrag, dict):
+            return config_check.Ablehnung(UNGUELTIG, fehler.details("kreise", "ungueltig"))
+        if ablehnung := _form(eintrag, felder):
+            return ablehnung
+        nummer = eintrag["kreis"]
+        if not _is_version(nummer) or not wire.KREIS_MIN <= nummer <= wire.KREIS_MAX:
+            return config_check.Ablehnung(UNGUELTIG, fehler.details("kreis", "ungueltig"))
+        if nummer <= letzte:
+            return config_check.Ablehnung(UNGUELTIG, fehler.details("kreis", "doppelt" if nummer == letzte else "ungueltig"))
+        letzte = nummer
+    return None
+
+
 def _bedienung_pruefen(inhalt: dict) -> config_check.Ablehnung | None:
     if ablehnung := _form(inhalt, _ohne_huelle(wire.BEDIENUNG_FIELDS)):
         return ablehnung
-    if inhalt.get("modus") not in wire.MODI:
-        return config_check.Ablehnung(UNGUELTIG, fehler.details("modus", "unbekannt"))
     if inhalt.get("quelle") not in wire.QUELLEN:
         return config_check.Ablehnung(UNGUELTIG, fehler.details("quelle", "unbekannt"))
-    if not soll_speicher.im_bedienbereich(inhalt.get("raum_soll")):
-        return config_check.Ablehnung(AUSSERHALB_BEREICH, fehler.details(
-            "raum_soll", "bereich", min=wire.RAUM_SOLL_MIN, max=wire.RAUM_SOLL_MAX))
+    if ablehnung := _kreise_pruefen(inhalt, wire.BEDIENUNG_KREIS_FIELDS):
+        return ablehnung
+    for eintrag in inhalt["kreise"]:
+        if eintrag["modus"] not in wire.MODI:
+            return config_check.Ablehnung(UNGUELTIG, fehler.details("modus", "unbekannt"))
+        if not soll_speicher.im_bedienbereich(eintrag["raum_soll"]):
+            return config_check.Ablehnung(AUSSERHALB_BEREICH, fehler.details(
+                "raum_soll", "bereich", min=wire.RAUM_SOLL_MIN, max=wire.RAUM_SOLL_MAX))
+    return None
+
+
+#: Art und Typ der Werte eines Anzeige-Eintrags; null steht nur dort, wo der Vertrag es nennt
+_ANZEIGE_TYPEN = {
+    "einlernphase_tag": (int, type(None)), "testphase_bis": (str, type(None)), "befunde": (list,), "aufgaben": (list,),
+    "kennzahlen": (dict,), "raumziele": (list,),
+}
+
+
+def _anzeige_pruefen(inhalt: dict) -> config_check.Ablehnung | None:
+    """Der volle Feldsatz je Kreis mit den Typen des Vertrags. Das Geraet zeigt nur; ein falscher Aufbau wird
+    abgelehnt, statt halb angezeigt zu werden."""
+    if ablehnung := _form(inhalt, _ohne_huelle(wire.ANZEIGE_FIELDS)):
+        return ablehnung
+    if ablehnung := _kreise_pruefen(inhalt, wire.ANZEIGE_KREIS_FIELDS):
+        return ablehnung
+    for eintrag in inhalt["kreise"]:
+        for feld, typen in _ANZEIGE_TYPEN.items():
+            wert = eintrag[feld]
+            if not isinstance(wert, typen) or isinstance(wert, bool):
+                return config_check.Ablehnung(UNGUELTIG, fehler.details(feld, "ungueltig"))
     return None
 
 
@@ -395,6 +441,8 @@ class DocumentStore:
             return config_check.Ablehnung(UNGUELTIG)
         if art == BEDIENUNG:
             return _bedienung_pruefen(inhalt)
+        if art == ANZEIGE:
+            return _anzeige_pruefen(inhalt)
         ablehnung = (_form(inhalt, _ohne_huelle(wire.KONFIGURATION_FIELDS), wire.KONFIGURATION_OPTIONAL)
                      or software_pruefen(inhalt["software"]))
         if ablehnung is not None:

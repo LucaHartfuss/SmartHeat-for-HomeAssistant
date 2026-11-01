@@ -50,7 +50,7 @@ def test_an_operation_while_not_configured_is_not_posted_to_the_idle_worker(worl
     world.connect()
     with caplog.at_level("WARNING"):
         world.bedienung_senden(bedienung(21.0), 1)
-    assert world.device.bedienung()["raum_soll"] == 21.0  # gespeichert; gilt beim naechsten Start mit Regelung
+    assert world.device.bedienung()["kreise"][0]["raum_soll"] == 21.0  # gespeichert; gilt beim naechsten Start mit Regelung
     assert "Kein Handler" not in caplog.text
 
 
@@ -660,7 +660,7 @@ def test_sigterm_ends_with_exit_0():
 def test_an_operation_without_a_valid_target_does_not_align_the_thermostat_at_start(world):
     """Wie der HA-Host gleicht das Gateway nur mit einem gueltigen raum_soll an; sonst gilt
     der Standard, und das Thermostat bleibt unberuehrt."""
-    dokumente_schreiben(world.paths, konfiguration(), {**bedienung(), "raum_soll": 30.0})
+    dokumente_schreiben(world.paths, konfiguration(), bedienung(30.0))
     world.start_runtime()
     world.run()
     assert world.host._store.value == 20.0 and _thermostat_writes(world) == []

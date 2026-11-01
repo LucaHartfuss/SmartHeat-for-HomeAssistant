@@ -30,7 +30,8 @@ def leer() -> dict:
 
 
 def bedienung(raum_soll: float = 20.0) -> dict:
-    return {"modus": "manuell", "raum_soll": raum_soll, "quelle": "portal", "ts": "2026-01-15T07:00:00+00:00"}
+    return {"kreise": [{"kreis": 1, "modus": "manuell", "raum_soll": raum_soll}], "quelle": "portal",
+            "ts": "2026-01-15T07:00:00+00:00"}
 
 
 def dokumente_schreiben(paths, konfiguration=None, bedienung=None, *, version: int = 1) -> None:

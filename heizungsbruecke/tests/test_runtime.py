@@ -2997,7 +2997,7 @@ def test_unreadable_room_target_entity_at_start_does_not_hold_the_due_daily_tick
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     _quiet_backup(env, last_daily_trigger_date=yesterday)
     env.ha.states["sensor.room_target"] = ValueError("could not convert string to float: 'unavailable'")
-    bridge = _start(env, daily_trigger_time="00:00", bedienung={"raum_soll": 21.0})
+    bridge = _start(env, daily_trigger_time="00:00", bedienung=geraet_helpers.bedienung_inhalt(21.0))
 
     _trigger(env, bridge, "sensor.room_actual")
 

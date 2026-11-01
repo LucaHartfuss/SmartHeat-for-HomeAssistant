@@ -3,7 +3,7 @@ import json
 
 import pytest
 from fakes import FakeHa
-from geraet_helpers import FakeGeraet, konfiguration_aus_optionen
+from geraet_helpers import FakeGeraet, bedienung_inhalt, konfiguration_aus_optionen
 from runtime_helpers import OPTIONS
 
 from heizungsbruecke import config
@@ -28,7 +28,7 @@ def test_load_builds_the_runtime_from_the_document(env):
 
 
 def test_room_target_reads_the_store_not_the_entity(env):
-    geraet = FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 21.5})
+    geraet = FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung=bedienung_inhalt(21.5))
     host = HaHost(geraet, env.ha, clock=env.clock)
     host.load()
     env.ha.states[OPTIONS["entity_room_target"]] = 18.0
@@ -95,7 +95,7 @@ def test_the_target_signal_is_unavailable_until_the_store_is_loaded(env):
 def test_the_stored_target_wins_over_the_server_start_value_while_a_local_wish_is_open(env):
     config.ROOM_TARGET_PATH.parent.mkdir(parents=True, exist_ok=True)
     config.ROOM_TARGET_PATH.write_text('{"value": 19.5, "source": "lokal", "ts": "x"}')
-    host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 22.0}, dirty=True), env.ha,
+    host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung=bedienung_inhalt(22.0), dirty=True), env.ha,
                   clock=env.clock)
     host.load()
     assert host.signals.get_state(SOLL_REF) == 19.5
@@ -103,7 +103,7 @@ def test_the_stored_target_wins_over_the_server_start_value_while_a_local_wish_i
 
 def test_without_a_valid_start_value_the_target_defaults(env):
     env.ha.states[OPTIONS["entity_room_target"]] = 30.0  # ausserhalb des Bedienbereichs
-    host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 30.0}), env.ha,
+    host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung=bedienung_inhalt(30.0)), env.ha,
                   clock=env.clock)
     host.load()
     assert host.signals.get_state(SOLL_REF) == 20.0
@@ -148,7 +148,7 @@ def _erstes_lesen(env, worker, client, *, angezeigt):
 
 
 def test_the_operation_is_written_to_the_entity_at_start_and_not_turned_into_a_wish(env):
-    host, geraet, worker, client = _climate_start(env, angezeigt=19.0, bedienung={"raum_soll": 21.5})
+    host, geraet, worker, client = _climate_start(env, angezeigt=19.0, bedienung=bedienung_inhalt(21.5))
     assert (CLIMATE_SOLL, 21.5) in env.ha.writes and host.store.echo_rest() > 0
     _erstes_lesen(env, worker, client, angezeigt=19.0)
     assert geraet.wuensche == [] and host.store.value == 21.5
@@ -158,7 +158,7 @@ def test_a_thermostat_change_during_the_addon_pause_is_overwritten_at_start(env)
     """Heutiges Verhalten (offene-punkte.md 5c-D-8 (c)): waehrend das Add-on stand, drehte der Nutzer das Thermostat auf 23;
     gespeichert und Bedienung sind gleich (21,5, nicht dirty): der Start schreibt 21,5 an die Entity, das erste Lesen
     (noch 23) wird kein Wunsch."""
-    host, geraet, worker, client = _climate_start(env, angezeigt=23.0, bedienung={"raum_soll": 21.5},
+    host, geraet, worker, client = _climate_start(env, angezeigt=23.0, bedienung=bedienung_inhalt(21.5),
                                                   gespeichert={"value": 21.5, "source": "portal", "ts": "x"})
     assert env.ha.writes == [(CLIMATE_SOLL, 21.5)]
     _erstes_lesen(env, worker, client, angezeigt=23.0)
@@ -169,7 +169,7 @@ def test_a_failed_start_alignment_is_done_again_on_connect(env):
     """Scheitert das Angleichen beim Start (HA lehnt ab), holt das erste Verbinden es nach, statt den
     alten Wert der Entity als Wunsch zu nehmen."""
     env.ha.write_error = RuntimeError("HA lehnt ab")
-    host, geraet, worker, client = _climate_start(env, angezeigt=19.0, bedienung={"raum_soll": 21.5})
+    host, geraet, worker, client = _climate_start(env, angezeigt=19.0, bedienung=bedienung_inhalt(21.5))
     assert env.ha.writes == [] and host.store.echo_rest() == 0
     env.ha.write_error = None
     _erstes_lesen(env, worker, client, angezeigt=19.0)
@@ -179,7 +179,7 @@ def test_a_failed_start_alignment_is_done_again_on_connect(env):
 
 def test_an_operation_that_arrived_during_a_restart_wins_over_the_stored_value(env):
     host, geraet, worker, client = _climate_start(
-        env, angezeigt=19.5, bedienung={"raum_soll": 22.0},
+        env, angezeigt=19.5, bedienung=bedienung_inhalt(22.0),
         gespeichert={"value": 19.5, "source": "portal", "ts": "x"})
     assert (host.store.value, host.store.source) == (22.0, "portal")
     assert (CLIMATE_SOLL, 22.0) in env.ha.writes
@@ -188,19 +188,19 @@ def test_an_operation_that_arrived_during_a_restart_wins_over_the_stored_value(e
 
 
 def test_a_pending_local_wish_keeps_the_stored_value_and_writes_nothing(env):
-    host, _, _, _ = _climate_start(env, angezeigt=19.5, bedienung={"raum_soll": 22.0}, dirty=True,
+    host, _, _, _ = _climate_start(env, angezeigt=19.5, bedienung=bedienung_inhalt(22.0), dirty=True,
                                    gespeichert={"value": 19.5, "source": "lokal", "ts": "x"})
     assert (host.store.value, host.store.source) == (19.5, "lokal") and env.ha.writes == []
 
 
 def test_an_entity_that_already_shows_the_target_is_not_written(env):
-    host, _, _, _ = _climate_start(env, angezeigt=21.5, bedienung={"raum_soll": 21.5})
+    host, _, _, _ = _climate_start(env, angezeigt=21.5, bedienung=bedienung_inhalt(21.5))
     assert env.ha.writes == [] and host.store.echo_rest() == 0
 
 
 def test_a_switched_off_thermostat_is_not_written(env):
     """Soll-Quelle aus: keine Bedienung an die Quelle; beim Wiedereinschalten gleicht der Soll-Eingang an."""
-    host, geraet, worker, client = _climate_start(env, angezeigt=19.0, bedienung={"raum_soll": 21.5}, modus="off")
+    host, geraet, worker, client = _climate_start(env, angezeigt=19.0, bedienung=bedienung_inhalt(21.5), modus="off")
     assert env.ha.writes == [] and host.store.echo_rest() == 0
     _erstes_lesen(env, worker, client, angezeigt=19.0)
     assert geraet.wuensche == [] and host.store.value == 21.5 and geraet.aus[-1] == (True, 21.5)
@@ -209,7 +209,7 @@ def test_a_switched_off_thermostat_is_not_written(env):
 def test_a_thermostat_in_frost_protection_is_not_written(env):
     """Ein Soll bis FROSTSCHUTZ_BIS (7 °C) ist die Frostschutz-Stellung: ein Neustart dreht den bewusst
     auf 5 °C gestellten Heizkoerper nicht wieder hoch."""
-    host, geraet, worker, client = _climate_start(env, angezeigt=5.0, bedienung={"raum_soll": 21.5})
+    host, geraet, worker, client = _climate_start(env, angezeigt=5.0, bedienung=bedienung_inhalt(21.5))
     assert env.ha.writes == [] and host.store.echo_rest() == 0
     _erstes_lesen(env, worker, client, angezeigt=5.0)
     assert geraet.wuensche == [] and host.store.value == 21.5 and geraet.aus[-1] == (True, 21.5)
@@ -217,7 +217,7 @@ def test_a_thermostat_in_frost_protection_is_not_written(env):
 
 def test_a_sensor_target_is_never_written(env):
     env.ha.states[OPTIONS["entity_room_target"]] = 19.0
-    geraet = FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 21.5})
+    geraet = FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung=bedienung_inhalt(21.5))
     host = HaHost(geraet, env.ha, clock=env.clock)
     loaded = host.load()
     host.trigger_source(loaded.manifest, RegulationWorker(env.clock))
@@ -288,7 +288,7 @@ def test_trigger_source_is_built_on_the_real_entity_and_wishes_reach_the_device(
     client.kwargs["on_trigger_event"]({"platform": "event", "event": {
         "event_type": "smartheat_wunsch", "data": {"raum_soll": 22.0}, "context": {"parent_id": "p"}}})
     worker.run_pending()
-    assert geraet.wuensche == [(22.0, "smartheat_entity", "automation")]
+    assert geraet.wuensche == [(22.0, "ha", "automation")]
 
 
 def test_a_climate_target_without_attribute_is_a_start_failure(env):

@@ -52,7 +52,7 @@ def _ergebnis(world: GatewayWorld, **match) -> dict:
 
 
 def _befehl(world: GatewayWorld, command_id: str, kind: str, payload: dict | None = None) -> None:
-    world.server("down/command", {"schema": 1, "command_id": command_id, "kind": kind, "payload": payload or {},
+    world.server("down/command", {"schema": 2, "command_id": command_id, "kind": kind, "payload": payload or {},
                                   "expires_at": "2026-01-16T08:00:00+01:00"})
 
 
@@ -103,7 +103,7 @@ def test_gateway_scenario(world):
     # Der Dienst nimmt den Wunsch an und gibt ihn als Bedienung zurueck (quelle geraet, wire.QUELLEN).
     world.bedienung_senden({**bedienung(15.0), "quelle": "geraet"}, 2)
     assert _ergebnis(world, dokument="bedienung", version=2)["ok"] is True
-    assert world.device.bedienung()["raum_soll"] == 15.0
+    assert world.device.bedienung()["kreise"][0]["raum_soll"] == 15.0
     assert json.loads(world.paths.room_target.read_text())["value"] == 15.0 and _thermostat(world)[-1] == 15.0
 
     # 5. zwei Ack-Timeouts -> Notbetrieb, LED stoerung
