@@ -55,7 +55,7 @@ RAUM_SECONDS = 30
 ENTITY_FEHLT_MESSAGE = ("SmartHeat: {feld}: zugeordnete Entity fehlt in Home Assistant und wird bis zum nächsten Start "
                         "nicht gelesen.")
 ENTITY_DA_MESSAGE = "SmartHeat: {feld}: zugeordnete Entity ist in Home Assistant wieder vorhanden und wird gelesen."
-SOURCE_CHANGE_MESSAGE = "SmartHeat: Die Quelle der Raum- oder Außentemperatur hat sich geändert."
+SOURCE_CHANGE_MESSAGE = "SmartHeat: Die Quelle der Raumtemperatur hat sich geändert."
 NOT_CONFIGURED_HINT = (
     "Add-on ist noch nicht eingerichtet -- bitte in Home Assistant unter Einstellungen -> Geraete & Dienste -> "
     "SmartHeat einrichten. Bis dahin bleibt das Add-on im Ruhezustand."
@@ -382,7 +382,6 @@ def _ensure_derived_sensors_with_retry(ha_api, b: dokument.HaBindung, tenant_id:
             ha_api=ha_api,
             tenant_id=tenant_id,
             room_sensors=list(b.raumfuehler),
-            outdoor_source=b.rollen["outdoor_temp"],
             state_path=config.DERIVED_SENSORS_PATH,
         ),
         lambda error: f"Hilfs-Entities konnten nicht angelegt werden: {error}",

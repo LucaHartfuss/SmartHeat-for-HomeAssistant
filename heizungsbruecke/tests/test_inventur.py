@@ -10,7 +10,7 @@ from fakes import FakeHa, nachricht_bytes
 from heizungsbruecke import inventur
 from smartheat_device import inventory, nachrichten, wire
 
-FILTER = {"plattformen": ["mypyllant"], "domaenen": ["climate", "weather"],
+FILTER = {"plattformen": ["mypyllant"], "domaenen": ["climate"],
           "geraeteklassen": [["sensor", "temperature"], ["sensor", "battery"]], "dienste": ["notify.mobile_app_"]}
 
 
@@ -96,10 +96,21 @@ def test_device_class_from_the_state_when_the_registry_has_none():
 
 def test_entity_without_registry_entry_still_counts_by_domain():
     ha = _ha()
-    ha.states["weather.forecast_home"] = "cloudy"
+    ha.states["climate.ohne_registry"] = "heat"
     daten = inventur.inventur(ha, FILTER)
-    weather = next(e for e in daten["entities"] if e["entity_id"] == "weather.forecast_home")
-    assert weather["plattform"] == inventur.OHNE_REGISTRY and weather["config_entry"] is None
+    climate = next(e for e in daten["entities"] if e["entity_id"] == "climate.ohne_registry")
+    assert climate["plattform"] == inventur.OHNE_REGISTRY and climate["config_entry"] is None
+
+
+def test_eine_weather_entity_besteht_die_positivliste_nicht():
+    """Das Wetter liefert der Server; eine weather-Entity gehoert auch dann nicht in die Inventur, wenn ein Filter die
+    Domaene oder ihre Plattform nennt. Gegenprobe: die climate-Entity derselben Plattform bleibt."""
+    ha = FakeHa()
+    ha.states = {"weather.forecast_home": "cloudy", "climate.x": "heat"}
+    ha.registry = [{"entity_id": "weather.forecast_home", "platform": "wx"}, {"entity_id": "climate.x", "platform": "wx"}]
+    filter_ = {"plattformen": ["wx"], "domaenen": ["climate", "weather"]}
+    ids = {e["entity_id"] for e in inventur.inventur(ha, filter_)["entities"]}
+    assert ids == {"climate.x"}
 
 
 def test_filter_check():
@@ -139,7 +150,7 @@ SERVER_DIENST = re.compile(r"notify\.[a-z0-9_]+")
 SERVER_DIENST_PRAEFIX = "notify.mobile_app_"
 SERVER_MAX_TEXT = 255
 SERVER_MAX_ZAHL = 1e12
-SERVER_FILTER = {"plattformen": ["mypyllant", "vicare", "weishaupt_modbus"], "domaenen": ["climate", "weather"],
+SERVER_FILTER = {"plattformen": ["mypyllant", "vicare", "weishaupt_modbus"], "domaenen": ["climate"],
                  "geraeteklassen": [["sensor", "temperature"], ["sensor", "battery"], ["binary_sensor", "battery"]],
                  "dienste": [SERVER_DIENST_PRAEFIX]}
 SERVER_BEFEHL = {"stunden": 0, "filter": SERVER_FILTER}
@@ -325,9 +336,9 @@ def test_entities_ohne_registry_schalten_sich_nicht_gegenseitig_frei():
     assert ids == {"climate.x"}
 
 
-@pytest.mark.parametrize("domaene, klasse", [("weather", None), ("binary_sensor", "battery")])
-def test_plattform_nur_mit_wetter_oder_binaersensor_ist_nicht_einstellbar(domaene, klasse):
-    """Einstellbar machen nur climate, number und select; weather und binary_sensor schalten klassenlose Sensoren
+@pytest.mark.parametrize("domaene, klasse", [("binary_sensor", "battery")])
+def test_plattform_nur_mit_binaersensor_ist_nicht_einstellbar(domaene, klasse):
+    """Einstellbar machen nur climate, number und select; ein binary_sensor schaltet klassenlose Sensoren
     ihrer Plattform nicht frei."""
     ha = FakeHa()
     ha.states = {f"{domaene}.a": "x", "sensor.b": 1}

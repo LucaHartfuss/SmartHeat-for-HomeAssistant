@@ -11,7 +11,7 @@ from runtime_helpers import _start_bridge
 
 from heizungsbruecke import config, dokument
 from heizungsbruecke.ha_api import HomeAssistantApi
-from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
+from heizungsbruecke.helper_templates import room_temperature_template
 from heizungsbruecke.host import (
     DERIVED_SENSORS_RETRY_DELAYS_SECONDS,
     StartupError,
@@ -336,7 +336,8 @@ def test_helper_creation_failure_after_budget_is_a_start_error(monkeypatch, slee
 
 def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(monkeypatch, sleeps, tmp_path):
     """Die echten Hilfssensoren (derived_sensors.ensure_all) an einer HA-Grenze, die zweimal nicht erreichbar ist: nach
-    5 und 10 s Pause legt der dritte Versuch Raum- und Aussen-Vorlage aus Raumfuehler, Wetter-Entity und Anlage an."""
+    5 und 10 s Pause legt der dritte Versuch die Raum-Vorlage aus Raumfuehler und Anlage an; fuer die Aussentemperatur
+    entsteht keine Hilfs-Entity."""
     monkeypatch.setattr(config, "DERIVED_SENSORS_PATH", tmp_path / "derived_sensors.json")
     ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.is_reachable.return_value = True
@@ -346,19 +347,17 @@ def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(mon
     def _create(name, template):
         if fehlversuche:
             raise fehlversuche.pop()
-        return "sensor.smartheat_t1_aussentemperatur" if "Außentemperatur" in name else "sensor.smartheat_t1_raumtemperatur"
+        return "sensor.smartheat_t1_raumtemperatur"
 
     ha_api.create_template_sensor.side_effect = _create
-    bindung = _bindung(room_sensors=["sensor.rt"], entity_outdoor_temp="weather.home")
+    bindung = _bindung(room_sensors=["sensor.rt"], entity_outdoor_temp="sensor.aussen")
 
     result = _ensure_derived_sensors_with_retry(ha_api, bindung, "t1")
 
-    assert result.entity_ids == {"room_actual": "sensor.smartheat_t1_raumtemperatur",
-                                 "outdoor_temp": "sensor.smartheat_t1_aussentemperatur"}
+    assert result.entity_ids == {"room_actual": "sensor.smartheat_t1_raumtemperatur"}
     assert sleeps == [5, 10]
-    assert ha_api.create_template_sensor.call_args_list[-2:] == [  # Wirkung als Aufruf an der HA-Grenze
+    assert ha_api.create_template_sensor.call_args_list[-1:] == [  # Wirkung als Aufruf an der HA-Grenze
         call(name="SmartHeat t1 Raumtemperatur", template=room_temperature_template(["sensor.rt"])),
-        call(name="SmartHeat t1 Außentemperatur", template=outdoor_temperature_template("weather.home")),
     ]
 
 

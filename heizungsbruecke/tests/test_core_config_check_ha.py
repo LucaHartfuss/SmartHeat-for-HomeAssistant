@@ -168,11 +168,11 @@ def test_a_missing_poll_interval_is_the_default_of_the_lever_set():
 @pytest.mark.parametrize("rollen, raumfuehler", [
     # Referenzformen, die der Server je Rolle annimmt (ha_pruefung._ATTRIBUTE): Raumfuehler sensor bare oder
     # climate::current_temperature, room_target climate::temperature, room_setpoint climate::temperature oder bare,
-    # alle anderen bare (auch weather).
+    # alle anderen bare.
     ({"room_target": "climate.w::temperature"}, ["sensor.a", "climate.b::current_temperature"]),
     ({"room_target": "climate.w::temperature", "room_setpoint": "climate.z::temperature"}, ["sensor.a"]),
     ({"room_target": "climate.w::temperature", "room_setpoint": "number.z"}, ["sensor.a"]),
-    ({"room_target": "climate.w::temperature", "outdoor_temp": "weather.home", "level": "number.l"}, ["sensor.a"]),
+    ({"room_target": "climate.w::temperature", "outdoor_temp": "sensor.home", "level": "number.l"}, ["sensor.a"]),
 ])
 def test_every_reference_form_of_the_server_is_accepted(rollen, raumfuehler):
     assert _pruefen(ha_konfiguration(bindung={"rollen": rollen}, raumfuehler=raumfuehler)) is None

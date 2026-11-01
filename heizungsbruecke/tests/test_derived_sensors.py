@@ -6,26 +6,36 @@ import pytest
 
 from heizungsbruecke.derived_sensors import ensure_all, entfernen
 from heizungsbruecke.ha_api import HomeAssistantApi
-from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
+from heizungsbruecke.helper_templates import room_temperature_template
 from smartheat_runtime.backup_store import load_backup, save_backup
 
 ROOMS = ["sensor.wz", "climate.kz::current_temperature"]
 ROOM_TEMPLATE = room_temperature_template(ROOMS)
 ROOM_ID = "sensor.smartheat_t1_raumtemperatur"
-OUTDOOR_ID = "sensor.smartheat_t1_aussentemperatur"
+OUTDOOR_ID = "sensor.smartheat_t1_aussentemperatur"  # Helfer frueherer Versionen, nicht mehr angelegt
 
 
 def _ha_api(existing=()):
     ha_api = MagicMock(spec=HomeAssistantApi)  # nur Methoden, die es wirklich gibt
     ha_api.entity_exists.side_effect = lambda entity_id: entity_id in existing
-    ha_api.create_template_sensor.side_effect = lambda name, template: (
-        OUTDOOR_ID if "Außentemperatur" in name else ROOM_ID
-    )
+    ha_api.create_template_sensor.side_effect = lambda name, template: ROOM_ID
     return ha_api
 
 
-def _run(ha_api, state_path, room_sensors=ROOMS, outdoor="sensor.aussen"):
-    return ensure_all(ha_api, "t1", room_sensors, outdoor, state_path)
+def _run(ha_api, state_path, room_sensors=ROOMS):
+    return ensure_all(ha_api, "t1", room_sensors, state_path)
+
+
+def test_the_outdoor_temperature_has_no_helper_even_with_an_old_helper_remembered(tmp_path):
+    """Die Aussentemperatur kommt aus einem Sensor und wird ohne Hilfs-Entity gelesen: auch mit dem Template-Helfer einer
+    frueheren Version im Tracking legt ensure_all keinen an und liefert keine Rolle outdoor_temp."""
+    save_backup(tmp_path / "d.json", {"outdoor_temperature": {"entity_id": OUTDOOR_ID, "source": "alt"}})
+    ha_api = _ha_api({OUTDOOR_ID})
+
+    result = _run(ha_api, tmp_path / "d.json")
+
+    assert set(result.entity_ids) == {"room_actual"}
+    assert all("Außentemperatur" not in call.kwargs["name"] for call in ha_api.create_template_sensor.call_args_list)
 
 
 def test_fresh_install_creates_only_the_room_template(tmp_path):
@@ -39,16 +49,6 @@ def test_fresh_install_creates_only_the_room_template(tmp_path):
     ha_api.delete_helper.assert_not_called()
     assert load_backup(tmp_path / "d.json") == {"room_temperature": {"entity_id": ROOM_ID, "source": ROOM_TEMPLATE}}
 
-
-def test_weather_source_gets_an_outdoor_template(tmp_path):
-    ha_api = _ha_api()
-
-    result = _run(ha_api, tmp_path / "d.json", outdoor="weather.forecast_home")
-
-    ha_api.create_template_sensor.assert_any_call(
-        name="SmartHeat t1 Außentemperatur", template=outdoor_temperature_template("weather.forecast_home"),
-    )
-    assert result.entity_ids == {"room_actual": ROOM_ID, "outdoor_temp": OUTDOOR_ID}
 
 
 def _tracking_after_fresh_run(tmp_path, **kwargs):
@@ -82,15 +82,6 @@ def test_changed_room_sensors_recreate_only_the_room_template(tmp_path):
     assert result.replaced == ("room_temperature",)
 
 
-def test_changed_weather_source_recreates_the_outdoor_template(tmp_path):
-    _, existing = _tracking_after_fresh_run(tmp_path, outdoor="weather.forecast_home")
-    ha_api = _ha_api(existing)
-
-    result = _run(ha_api, tmp_path / "d.json", outdoor="weather.other")
-
-    ha_api.delete_helper.assert_called_once_with(OUTDOOR_ID, tenant_id="t1")
-    assert result.replaced == ("outdoor_temperature",)
-
 
 def test_a_helper_without_a_remembered_source_is_recreated_and_reported(tmp_path):
     """Ein Helfer, dessen Eintrag keine Quelle kennt, gilt als Quellwechsel: er wird geloescht und neu angelegt, die
@@ -120,16 +111,6 @@ def test_tracked_helper_deleted_by_the_user_is_recreated_without_counting_as_rep
     assert ha_api.create_template_sensor.call_count == 1
     assert result.replaced == ()
 
-
-def test_switch_from_weather_to_sensor_deletes_the_outdoor_template(tmp_path):
-    _, existing = _tracking_after_fresh_run(tmp_path, outdoor="weather.forecast_home")
-    ha_api = _ha_api(existing)
-
-    result = _run(ha_api, tmp_path / "d.json", outdoor="sensor.aussen")
-
-    ha_api.delete_helper.assert_any_call(OUTDOOR_ID, tenant_id="t1")
-    assert "outdoor_temperature" not in load_backup(tmp_path / "d.json")
-    assert "outdoor_temp" not in result.entity_ids
 
 
 def test_fingerprint_is_stable_and_follows_the_sources(tmp_path):
@@ -177,7 +158,9 @@ def test_source_change_is_still_reported_when_create_failed_after_delete(tmp_pat
 
 
 def _tracking_with_old_helpers(tmp_path):
-    tracking, _ = _tracking_after_fresh_run(tmp_path, outdoor="weather.forecast_home")
+    tracking, _ = _tracking_after_fresh_run(tmp_path)
+    # Template-Helfer einer frueheren Version
+    tracking["outdoor_temperature"] = {"entity_id": OUTDOOR_ID, "source": "alt"}
     tracking["room_day_avg"] = {"entity_id": "input_number.smartheat_t1_tagesmittel"}  # Altrest einer frueheren Version
     save_backup(tmp_path / "d.json", tracking)
     return tracking
@@ -189,6 +172,7 @@ def test_removing_deletes_every_helper_and_the_list(tmp_path):
 
     assert entfernen(ha_api, "t1", tmp_path / "d.json") is True
 
+    # auch der Aussentemperatur-Helfer einer frueheren Version wird mit der Anlage entfernt
     assert sorted(call.args[0] for call in ha_api.delete_helper.call_args_list) == [OUTDOOR_ID, ROOM_ID]
     assert all(call.kwargs == {"tenant_id": "t1"} for call in ha_api.delete_helper.call_args_list)
     assert not (tmp_path / "d.json").exists()
