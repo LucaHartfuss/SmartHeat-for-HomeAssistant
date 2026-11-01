@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import bindung_beispiele
 import pytest
 from bindung_beispiele import VIESSMANN_VICARE_BINDING
-from configs import SENSOR, THERMOSTAT, bedienung, dokumente_schreiben, konfiguration
+from configs import SENSOR, THERMOSTAT, bedienung, dokumente_schreiben, konfiguration, kreis_bindung, leer
 from fake_vicare.server import GOOD_CODE, FakeVicare
 from fakes import FakeBus
 from geraet_fakes import geraet_fuer
@@ -257,7 +257,7 @@ def _host_mit_z2m(data_dir, clock, konf, *, wait=0.1):
 
 def test_a_sensor_as_the_bound_thermostat_stops_the_start_before_any_driver_exists(data_dir, clock, monkeypatch, caplog):
     erzeugt = _erzeugte_treiber(monkeypatch)
-    konf = konfiguration(bindung={**konfiguration()["bindung"], "thermostat": SENSOR})
+    konf = konfiguration(bindung={**kreis_bindung(), "thermostat": SENSOR})
     host, _ = _host_mit_z2m(data_dir, clock, konf)
     with pytest.raises(StartFailure) as fehler:
         host.load()
@@ -279,7 +279,7 @@ def test_the_counter_probe_starts_with_a_real_thermostat_and_creates_one_driver(
 def test_a_thermostat_the_mirror_does_not_know_as_a_defined_device_starts_as_before(data_dir, clock, monkeypatch, ohne):
     erzeugt = _erzeugte_treiber(monkeypatch)
     fern = "0x00124b0000000077"
-    konf = konfiguration(bindung={**konfiguration()["bindung"], "thermostat": fern})
+    konf = konfiguration(bindung={**kreis_bindung(), "thermostat": fern})
     host, z2m = _host_mit_z2m(data_dir, clock, konf)
     if ohne == "ohne_definition":
         z2m.add_ohne_definition(fern)
@@ -289,7 +289,7 @@ def test_a_thermostat_the_mirror_does_not_know_as_a_defined_device_starts_as_bef
 
 def test_a_start_without_a_bound_thermostat_does_not_check_one(data_dir, clock, monkeypatch):
     erzeugt = _erzeugte_treiber(monkeypatch)
-    konf = konfiguration(bindung={**konfiguration()["bindung"], "thermostat": None})
+    konf = konfiguration(bindung={**kreis_bindung(), "thermostat": None})
     host, _ = _host_mit_z2m(data_dir, clock, konf)
     host.load()
     assert erzeugt == ["simulation"]
@@ -386,26 +386,26 @@ def test_gateway_texts_never_name_home_assistant():
 
 def test_ursprungswerte_server_reads_the_current_configuration_fresh(data_dir, clock):
     """Frisch aus dem Dokument; trifft ein, ohne dass die Laufzeit neu startet."""
-    host = _host(Paths(data_dir), {**konfiguration(), "ursprungswerte": {"heat_limit": 16.0}}, clock)
+    host = _host(Paths(data_dir), konfiguration(ursprungswerte={"heat_limit": 16.0}), clock)
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
-    host._geraet.device.konf = {**konfiguration(), "ursprungswerte": {"heat_limit": 15.0}}
+    host._geraet.device.konf = konfiguration(ursprungswerte={"heat_limit": 15.0})
     assert host.ursprungswerte_server() == {"heat_limit": 15.0}
 
 
 def test_ursprungswerte_server_falls_back_to_the_marker_while_the_reset_is_pending(data_dir, clock):
     paths = Paths(data_dir)
-    alt = {**konfiguration(), "ursprungswerte": {"heat_limit": 16.0}}
-    host = _host(paths, {**alt, "anlage": None, "ursprungswerte": {}}, clock,
+    alt = konfiguration(ursprungswerte={"heat_limit": 16.0})
+    host = _host(paths, leer(), clock,
                  start_markierung=_offene_markierung(paths, alt))
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
 
 
 def test_ursprungswerte_server_ignores_a_new_setup_while_the_reset_is_pending(data_dir, clock):
     paths = Paths(data_dir)
-    alt = {**konfiguration(), "ursprungswerte": {"heat_limit": 16.0}}
-    host = _host(paths, {**alt, "anlage": None, "ursprungswerte": {}}, clock,
+    alt = konfiguration(ursprungswerte={"heat_limit": 16.0})
+    host = _host(paths, leer(), clock,
                  start_markierung=_offene_markierung(paths, alt))
-    host._geraet.device.konf = {**alt, "anlage": "andere-anlage", "ursprungswerte": {"heat_limit": 12.0}}
+    host._geraet.device.konf = konfiguration(anlage="andere-anlage", ursprungswerte={"heat_limit": 12.0})
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
 
 
@@ -534,7 +534,7 @@ def test_an_operation_at_start_reaches_a_bound_w100_only_after_it_reports_on(wor
     world.z2m.report(w100, thermostat_mode="OFF", system_mode="heat", occupied_heating_setpoint=20,
                      local_temperature=20.0)
     dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
-    bindung = {**konfiguration()["bindung"], "thermostat": w100}
+    bindung = {**kreis_bindung(), "thermostat": w100}
     dokumente_schreiben(world.paths, konfiguration(bindung=bindung))
     dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
                            {"version": 1, "inhalt": bedienung(22.5), "dirty": False}, modus=dateien.PRIVAT)
@@ -557,7 +557,7 @@ def test_the_start_puts_a_bound_w100_into_thermostat_mode_and_aligns_it_rounded(
     world.z2m.add_w100(w100)
     world.z2m.report(w100, thermostat_mode="ON", system_mode="heat", occupied_heating_setpoint=20, local_temperature=20.0)
     dateien.schreiben_json(world.paths.room_target, {"value": 22.5, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
-    bindung = {**konfiguration()["bindung"], "thermostat": w100}
+    bindung = {**kreis_bindung(), "thermostat": w100}
     dokumente_schreiben(world.paths, konfiguration(bindung=bindung))
     dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
                            {"version": 1, "inhalt": bedienung(22.5), "dirty": False}, modus=dateien.PRIVAT)

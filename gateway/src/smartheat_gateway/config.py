@@ -6,6 +6,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from smartheat_core import kreisansicht
 from smartheat_device import fehler
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.registry import driver_ids
@@ -34,13 +35,14 @@ class GatewayBindung:
 def bindung(konfiguration) -> GatewayBindung:
     """Bindung des Gateways aus dem Konfigurationsdokument: bindung.treiber, bindung.thermostat,
     raumfuehler. Wirft ConfigError (StartFailure beim Start); config_check hat das Dokument beim Uebernehmen geprueft."""
-    raw = konfiguration.get("bindung") if isinstance(konfiguration, Mapping) else None
+    sicht = kreisansicht.erste(konfiguration)  # die Laufzeit fuehrt genau einen Kreis
+    raw = sicht.get("bindung")
     treiber = raw.get("treiber") if isinstance(raw, Mapping) else None
     driver_id = treiber.get("id") if isinstance(treiber, Mapping) else None
     parameter = treiber.get("parameter") if isinstance(treiber, Mapping) else None
     if driver_id not in driver_ids() or not isinstance(parameter, Mapping):
         raise ConfigError(f"Treiber {driver_id!r} unbekannt oder ohne Parameter – {dokument_config.RECONFIGURE_HINT}")
-    sensors = konfiguration.get("raumfuehler")
+    sensors = sicht["raumfuehler"]  # nur die Fuehler der Referenzraeume
     if not isinstance(sensors, list) or not sensors or any(
             not isinstance(ref, str) or not ROOM_SENSOR_REF.fullmatch(ref) for ref in sensors):
         raise ConfigError(f"Raumfühler ({sensors!r}) ungültig – {dokument_config.RECONFIGURE_HINT}")

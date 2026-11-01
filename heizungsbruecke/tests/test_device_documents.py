@@ -9,7 +9,7 @@ import pytest
 from bindung_beispiele import parameter
 from device_helpers import SENSOR, _anzeige, _bedienung, _konfiguration, _leer, _store
 
-from smartheat_core import config_check, dateien, rastung
+from smartheat_core import config_check, dateien, kreisansicht, rastung
 from smartheat_device import documents as docs
 from smartheat_device import wire
 from smartheat_runtime import soll_speicher
@@ -160,7 +160,7 @@ def test_a_stored_configuration_without_a_text_pair_does_not_lock_on_start(tmp_p
     (tmp_path / "sicherheitssatz.json").unlink()
     datei = tmp_path / docs.DATEIEN["konfiguration"]
     gespeichert = json.loads(datei.read_text())
-    gespeichert["inhalt"][feld] = None
+    gespeichert["inhalt"]["kreise"][0][feld] = None
     datei.write_text(json.dumps(gespeichert))
     store = _store(tmp_path)
     assert store.rastung is None and not (tmp_path / "sicherheitssatz.json").exists()
@@ -224,7 +224,7 @@ def test_the_same_version_again_only_repeats_the_result(tmp_path):
     store.empfangen("konfiguration", _konfiguration())
     again = store.empfangen("konfiguration", _konfiguration(raumfuehler=["treiber:room_temperature"]))
     assert again == docs.Ergebnis("konfiguration", 1, True)
-    assert store.inhalt("konfiguration")["raumfuehler"] == [SENSOR]
+    assert kreisansicht.erste(store.inhalt("konfiguration"))["raumfuehler"] == [SENSOR]
 
 
 def test_a_repeated_version_writes_nothing_and_works_on_a_disk_that_refuses_writes(tmp_path, monkeypatch):
@@ -523,7 +523,7 @@ def test_a_reason_outside_the_contract_is_a_programming_error(tmp_path):
 def test_a_configuration_with_origin_values_is_taken(tmp_path):
     store = _store(tmp_path)
     assert store.empfangen("konfiguration", _konfiguration(ursprungswerte={"heat_limit": 18.0})).ok
-    assert store.inhalt("konfiguration")["ursprungswerte"] == {"heat_limit": 18.0}
+    assert store.inhalt("konfiguration")["kreise"][0]["ursprungswerte"] == {"heat_limit": 18.0}
 
 
 @pytest.mark.parametrize("version", [0, -1, "1", True, None, 1.5])
@@ -779,10 +779,10 @@ def test_a_host_that_changes_its_arguments_does_not_change_the_documents(tmp_pat
     def vorbereiten(alt, neu):
         leer = neu.get("anlage") is None
         neu["anlage"] = "fremd"
-        neu["raumfuehler"].append("zigbee:0xdead:temperature")
+        neu["kreise"][0]["raeume"][0]["fuehler"].append("zigbee:0xdead:temperature")
         if alt is not None:
             alt["anlage"] = "fremd"
-            alt["raumfuehler"].clear()
+            alt["kreise"][0]["raeume"][0]["fuehler"].clear()
         if leer:
             raise OSError("Datentraeger")  # zurueckgehalten: das gespeicherte Dokument bleibt im Speicher stehen
 

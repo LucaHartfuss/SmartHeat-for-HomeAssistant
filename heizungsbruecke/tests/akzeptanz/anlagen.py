@@ -119,24 +119,31 @@ def schreibziele(satz: str) -> list[dict]:
          "device_id": "d-thermostat"}]
 
 
-def konfiguration(satz: str, verteilsystem: str) -> dict:
-    """Konfigurationsdokument (ohne schema/version) wie der Server es sendet."""
+#: Anbindungsweg je Plattform der Bindung
+_WEG = {"mypyllant": "vaillant_myvaillant", "vicare": "viessmann_vicare", "weishaupt_modbus": "weishaupt_modbus"}
+
+
+def konfiguration(satz: str, verteilsystem: str, abo: str = "aktiv") -> dict:
+    """Konfigurationsdokument (ohne schema/version) wie der Server es sendet; `abo` ist das des einen Kreises."""
     plattform = PLATTFORM[satz]
     parameter = copy.deepcopy(_PARAMETER[satz])
     parameter["energie"] = {kanal: "kWh" for kanal in _KANAELE}
+    bindung = {"kreis": {"plattform": plattform, "config_entry": KONFIG_EINTRAG[plattform], "anlage": "S",
+                         "nummer": "0"},
+               "rollen": {**_ROLLEN[satz], **_SENSOREN}, "batterien": [], "benachrichtigung": [],
+               "hinweise_aus": []}
+    raum = {"raum": 1, "name": "Wohnzimmer", "rolle": "referenz", "fuehler": [RAUMFUEHLER], "soll_quelle": False,
+            "versatz_k": 0.0, "ziel_fest": None}
     return {
-        "anlage": "akzeptanz", "profil": "vaillant_gastherme_heizkoerper", "hebelsatz": satz,
-        "verteilsystem": verteilsystem,
-        "bindung": {"kreis": {"plattform": plattform, "config_entry": KONFIG_EINTRAG[plattform], "anlage": "S",
-                              "nummer": "0"},
-                    "rollen": {**_ROLLEN[satz], **_SENSOREN}, "batterien": [], "benachrichtigung": [],
-                    "hinweise_aus": []},
-        "raumfuehler": [RAUMFUEHLER], "tagestick": "12:00", "abo": "aktiv", "mindest_software": "1.0.0",
+        "anlage": "akzeptanz", "anlage_name": "Akzeptanzanlage", "weg": _WEG[plattform],
+        "kreise": [{"kreis": 1, "name": "Kreis 1", "bindung": bindung, "raeume": [raum], "hebelsatz": satz,
+                    "verteilsystem": verteilsystem, "abo": abo}],
+        "tagestick": "12:00", "mindest_software": "1.0.0", "mindest_integration": None,
         "software": None, "bindungsparameter": parameter,
     }
 
 
 #: Konfiguration ohne Anlage: das Abmelden vom Dienst (Felder wie die Konfiguration, ohne Inhalt)
-LEERE_KONFIGURATION = {
-    "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None, "bindung": None, "raumfuehler": [],
-    "tagestick": None, "abo": None, "mindest_software": "1.0.0", "software": None, "bindungsparameter": None}
+LEERE_KONFIGURATION = {"anlage": None, "anlage_name": None, "weg": None, "kreise": [], "tagestick": None,
+                       "mindest_software": "1.0.0", "mindest_integration": None, "software": None,
+                       "bindungsparameter": None}

@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 
+import konfig_form
 import pytest
 from bindung_beispiele import parameter
 
@@ -12,13 +13,39 @@ from smartheat_core import rastung
 from smartheat_core.config_check import INTERVALLE
 from smartheat_core.safety import LOCAL_SAFETY, resolve_local_safety
 from smartheat_device import wire
-from smartheat_runtime import dokument_config as dc
+from smartheat_runtime import dokument_config as _dokument_config
 from smartheat_runtime import entitlement
 from smartheat_runtime.dokument_config import ConfigError
 
+#: Welche Argumente der Funktionen ein Dokument sind (die Tests beschreiben ihre Anlage flach, die Funktionen lesen
+#: die Form je Kreis).
+_DOKUMENT_ARGUMENTE = {"boot_info": (0,), "runtime_config": (0,), "abo_status": (0,), "beschreibung": (0,),
+                       "sicherheit": (0,), "rastung_pruefen": (0,), "ursprungswerte": (0,), "eingerichtet": (0,),
+                       "laufzeit_relevant": (0, 1), "abgemeldet": (1,)}
+
+
+def _form(flach):
+    return konfig_form.nach_form(flach) if isinstance(flach, dict) and "kreise" not in flach else flach
+
+
+class _FlacheSicht:
+    """dokument_config, aufgerufen mit flachen Testdokumenten."""
+
+    def __getattr__(self, name):
+        wert = getattr(_dokument_config, name)
+        stellen = _DOKUMENT_ARGUMENTE.get(name)
+        if stellen is None:
+            return wert
+
+        def aufruf(*args, **kwargs):
+            return wert(*(_form(arg) if i in stellen else arg for i, arg in enumerate(args)), **kwargs)
+        return aufruf
+
+
+dc = _FlacheSicht()
 SENSOR = "zigbee:0x00124b0000000001:temperature"
 KONF = {
-    "anlage": "kunde3", "profil": "viessmann_gastherme_heizkoerper", "hebelsatz": "viessmann_vicare",
+    "anlage": "kunde3", "hebelsatz": "viessmann_vicare",
     "verteilsystem": "Heizkoerper", "bindung": {"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None},
     "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
 }
@@ -32,7 +59,7 @@ def _boot(konfiguration, tmp_path, abgemeldet=False):
 
 
 def test_fields_are_contract_fields():
-    assert set(dc.FELDER) <= set(wire.KONFIGURATION_FIELDS) | set(wire.KONFIGURATION_OPTIONAL)
+    assert set(dc.FELDER) <= set(wire.KONFIGURATION_FIELDS)
     assert set(dc.LAUFZEIT_FELDER) <= set(dc.FELDER)
 
 
@@ -133,12 +160,45 @@ def test_unusable_documents_are_config_errors(konfiguration, tmp_path):
                           abo_source=lambda: entitlement.ACTIVE)
 
 
-@pytest.mark.parametrize("raumfuehler", [[], [5], [SENSOR, None], SENSOR, None],
-                         ids=["leer", "zahl", "mit_none", "text_statt_liste", "none"])
-def test_raumfuehler_ohne_liste_von_texten_sind_ein_konfigurationsfehler(raumfuehler, tmp_path):
+@pytest.mark.parametrize("raumfuehler", [[], [5], [None]], ids=["leer", "zahl", "none"])
+def test_ohne_referenzfuehler_ist_ein_konfigurationsfehler(raumfuehler, tmp_path):
     with pytest.raises(ConfigError, match="Konfiguration: keine Raumfühler"):
         dc.runtime_config({**KONF, "raumfuehler": raumfuehler}, rastung_pfad=tmp_path / "keine.json",
                           entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
+
+
+def test_ein_kontrollraum_ist_kein_referenzfuehler(tmp_path):
+    """Die Regelung liest nur die Fuehler der Referenzraeume: ein Kreis nur mit Kontrollraum hat keine."""
+    kontroll = konfig_form.raum([SENSOR], nummer=2, name="Leonie", rolle="kontroll")
+    konfiguration = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF, raeume=[kontroll])])
+    with pytest.raises(ConfigError, match="Konfiguration: keine Raumfühler"):
+        dc.runtime_config(konfiguration, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                          abo_source=lambda: entitlement.ACTIVE)
+
+
+def test_ein_kontrollraum_neben_dem_referenzraum_fliesst_nicht_in_die_regelung(tmp_path):
+    kontroll = konfig_form.raum(["zigbee:0x00124b0000000009:temperature"], nummer=2, name="Leonie", rolle="kontroll")
+    referenz = konfig_form.raum([SENSOR])
+    konfiguration = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF, raeume=[referenz, kontroll])])
+    config = dc.runtime_config(konfiguration, rastung_pfad=tmp_path / "keine.json",
+                               entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
+    assert config.room_sensor_refs == (SENSOR,)
+
+
+def test_mehr_als_ein_kreis_wird_von_der_laufzeit_abgelehnt(tmp_path):
+    """Bis die Laufzeit je Kreis regelt, fuehrt sie genau einen Heizkreis; ein Dokument mit zwei Kreisen (der Server
+    darf es senden, config_check nimmt bis zu vier) startet laut nicht, statt einen Kreis still zu ignorieren."""
+    zwei = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF), konfig_form.kreis(KONF, nummer=2)])
+    with pytest.raises(ConfigError, match="genau einen Heizkreis"):
+        dc.runtime_config(zwei, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                          abo_source=lambda: entitlement.ACTIVE)
+    keiner = konfig_form.nach_form(KONF, kreise=[])
+    with pytest.raises(ConfigError, match="genau einen Heizkreis"):
+        dc.runtime_config(keiner, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                          abo_source=lambda: entitlement.ACTIVE)
+    config = dc.runtime_config(konfig_form.nach_form(KONF), rastung_pfad=tmp_path / "keine.json",
+                               entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
+    assert config.tenant_id == "kunde3"
 
 
 @pytest.mark.parametrize("abo, status", [

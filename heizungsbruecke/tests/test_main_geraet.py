@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+import konfig_form
 import pytest
 from geraet_helpers import (
     CLAIM_CODE,
@@ -778,8 +779,8 @@ def test_the_cleanup_keeps_the_lever_set_lock(geraet_env, anders):
     anlagengebundenen Zustand, aber nicht device/sicherheitssatz.json; ein neuer Dokumentspeicher lehnt ein anderes Paar
     weiter ab, dasselbe Paar nimmt er an."""
     konfiguration = konfiguration_aus_optionen(OPTIONS)  # vaillant_vrc720 x Heizkoerper
-    leer = {**konfiguration, "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None, "bindung": None,
-            "raumfuehler": [], "tagestick": None, "abo": None, "bindungsparameter": None}
+    leer = konfig_form.nach_form({"anlage": None, "mindest_software": konfiguration["mindest_software"],
+                                  "software": konfiguration["software"]})
     device_dir = config.DEVICE_DATA_DIR / "device"
     store = DocumentStore(device_dir, host="ha", software_version=ADDON_VERSION)
     assert store.empfangen("konfiguration", _dokument(konfiguration, 1)).uebernommen
@@ -792,7 +793,8 @@ def test_the_cleanup_keeps_the_lever_set_lock(geraet_env, anders):
     assert _anlage_geloescht() and not config.AUFRAEUMEN_PATH.exists()  # das Aufraeumen lief
 
     store = DocumentStore(device_dir, host="ha", software_version=ADDON_VERSION)
-    ergebnis = store.empfangen("konfiguration", _dokument({**konfiguration, **anders}, 3))
+    abweichend = {**konfiguration, "kreise": [{**konfiguration["kreise"][0], **anders}]}
+    ergebnis = store.empfangen("konfiguration", _dokument(abweichend, 3))
     assert (ergebnis.ok, ergebnis.grund) == (False, "hebelsatz_eingerastet")
     assert store.empfangen("konfiguration", _dokument(konfiguration, 4)).uebernommen
 

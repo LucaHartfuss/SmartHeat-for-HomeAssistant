@@ -1,25 +1,34 @@
 """Lokale Pruefung einer Konfiguration vor dem Uebernehmen (Weichenstellung 1), rein: nur
-Standardbibliothek und smartheat_core. Regeln in dieser Reihenfolge: (1) Aufbau und Wertebereiche, (2) Hebelsatz und
+Standardbibliothek und smartheat_core. Das Dokument fuehrt anlagenweit Anlage, Weg, Tagestick und Bindungsparameter und
+je Kreis (hoechstens KREISE_MAX) Bindung, Hebelsatz, Verteilsystem, Abo und Raeume; alle Kreise einer Anlage haben
+denselben Hebelsatz. Regeln in dieser Reihenfolge: (1) Aufbau und Wertebereiche, (2) Hebelsatz und
 Verteilsystem haben lokale Sicherheitswerte (safety.py), (3) eingerastet: Hebelsatz und Verteilsystem muessen zur Rastung
 des Geraets passen (smartheat_core.rastung); eine leere Konfiguration loest sie nicht, (3a) Bindungsparameter gegen die
-lokalen Grenzen (smartheat_core.bindungsparameter), (4) erlaubte Referenzen je Rolle, (5) keine Doppelbelegung, (6) Treiberparameter prueft
-der Treiber (Rueckruf des Hosts, zuletzt; Gateway: die Bindung, HA: Aufbau der Bindung rein, Entities und Schreibziele ueber den
-Rueckruf des Hosts mit der ganzen Konfiguration). Eine leere Konfiguration (anlage None) heisst "nicht eingerichtet" und ist
+lokalen Grenzen (smartheat_core.bindungsparameter), (4) erlaubte Referenzen je Rolle, (4a) der Weg der Anlage ist ein
+bekannter und der aller Kreise (weg_unbekannt, weg_mehrfach), (5) keine Doppelbelegung (innerhalb eines Kreises und
+Schreibziele wie Fuehler getrennt ueber die Kreise), (6) Treiberparameter prueft
+der Treiber (Rueckruf des Hosts, zuletzt, je Kreis; Gateway: die Bindung, HA: Aufbau der Bindung rein, Entities und
+Schreibziele ueber den Rueckruf des Hosts mit der flachen Sicht des Kreises, `raumfuehler` sind dort die Fuehler aller
+Raeume). Die Regelung liest nur die Fuehler der Referenzraeume (smartheat_core.kreisansicht); Kontrollraeume sind nur
+Anzeige und beeinflussen sie nie. Eine leere Konfiguration (anlage None) heisst "nicht eingerichtet" und ist
 immer gueltig; sie aendert die Rastung nicht. Die Gruende sind Dokument-Fehlergruende des Vertrags (smartheat_device.wire.DOKUMENT_ERRORS). Ablehnungen
 tragen Grund und details (Feld, Regel, Zahlen), den Text bildet der Server. Sicherheitsgrenzen, Boost und Notbetrieb liest diese Pruefung nur
 (G-1, Regel 4). V1 ist strikt (R10): fremde Felder in Bindung, Treiber und Kreis lehnt diese Pruefung ab; die
 oberste Ebene der Konfiguration, die Software und die Bedienung prueft smartheat_device.documents gegen den
 Vertrag."""
+import json
 import logging
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+from smartheat_core import kreisansicht
 from smartheat_core.bindungsparameter import Fehler as BindungsparameterFehler
 from smartheat_core.bindungsparameter import beschreibung
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.rastung import Rastung, passt
 from smartheat_core.safety import resolve_local_safety
+from smartheat_core.zahlen import ist_endliche_zahl
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +38,10 @@ SICHERHEITSWERTE_FEHLEN = "sicherheitswerte_fehlen"
 ROLLE_UNZULAESSIG = "rolle_unzulaessig"
 DOPPELT_BELEGT = "doppelt_belegt"
 TREIBER_PARAMETER = "treiber_parameter"
+WEG_UNBEKANNT = "weg_unbekannt"
+WEG_MEHRFACH = "weg_mehrfach"
 GRUENDE = (UNGUELTIG, HEBELSATZ_EINGERASTET, SICHERHEITSWERTE_FEHLEN, ROLLE_UNZULAESSIG, DOPPELT_BELEGT,
-           TREIBER_PARAMETER)
+           TREIBER_PARAMETER, WEG_UNBEKANNT, WEG_MEHRFACH)
 HOST_GATEWAY = "gateway"
 HOST_HA = "ha"
 ABO_WERTE = ("aktiv", "inaktiv")  # Kopie aus wire.ABO (test_core_vertrag_pin.py)
@@ -46,7 +57,22 @@ TAGESTICK = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 PRUEFUNG_S = (1, 3600)
 TELEMETRIE_S = (10, 600)
 INTERVALLE = {"pruefung_s": PRUEFUNG_S, "telemetrie_s": TELEMETRIE_S}
-RAUMFUEHLER_MAX = 8
+RAUMFUEHLER_MAX = 8  # Fuehler der Referenzraeume je Kreis
+#: Kopie aus smartheat_device.wire (KREISE_MAX, RAEUME_MAX, RAUM_FUEHLER_MAX, RAUM_ROLLEN, KONFIGURATION_KREIS_FIELDS,
+#: KONFIGURATION_KREIS_OPTIONAL, KONFIGURATION_RAUM_FIELDS, WEGE, WEG_DER_PLATTFORM, WEG_DES_TREIBERS), ebenfalls in
+#: test_core_vertrag_pin.py gehalten. Hoechstens vier Kreise je Geraet (Nutzer-Entscheidung, Regel 4).
+KREISE_MAX = 4
+RAEUME_MAX, RAUM_FUEHLER_MAX = 16, 8
+KREIS_NUMMER_MAX = 2**31 - 1  # Kreis- und Raumnummern (wire.KREIS_MAX)
+RAUM_ROLLEN = ("referenz", "kontroll")
+KONFIG_KREIS_FELDER = ("kreis", "name", "bindung", "raeume", "hebelsatz", "verteilsystem", "abo")
+KONFIG_KREIS_OPTIONAL = ("ursprungswerte",)
+RAUM_FELDER = ("raum", "name", "rolle", "fuehler", "soll_quelle", "versatz_k", "ziel_fest")
+#: Anbindungswege, die ein Geraet heute ausfuehrt (`simulation`: Testweg), und ihre Abbildung aus der Bindung.
+WEGE = ("vaillant_myvaillant", "viessmann_vicare", "weishaupt_modbus", "simulation")
+WEG_DER_PLATTFORM = {"mypyllant": "vaillant_myvaillant", "vicare": "viessmann_vicare",
+                     "weishaupt_modbus": "weishaupt_modbus"}
+WEG_DES_TREIBERS = {"vicare_cloud": "viessmann_vicare", "simulation": "simulation"}
 #: Gateway: Kopie aus smartheat_device.wire (BINDUNG_GATEWAY_FIELDS, TREIBER_FIELDS); test_core_vertrag_pin.py haelt sie
 #: gleich, die Pruefung importiert den Geraetekern nicht. Die Bindung hat genau diese Felder (V1 ist strikt, R10).
 GATEWAY_BINDUNG_FELDER = ("treiber", "thermostat")
@@ -76,6 +102,8 @@ HA_DIENST = re.compile(r"notify\.mobile_app_[a-z0-9_]+")
 #: Abfrageintervall der Hersteller-Integration (Sekunden), Grenzen 10-3600 s (Teil von V1).
 ABFRAGE_S = (10, 3600)
 ANLAGE_MAX_CHARS = 64
+NAME_MAX_CHARS = 80  # Anlagenname und Kreisname
+RAUM_NAME_MAX_CHARS = 40
 TEXT_MAX_CHARS = 200
 
 #: Kopie aus smartheat_device.wire (PRUEF_REGELN), test_core_vertrag_pin.py haelt sie gleich; Feldnamen sind Namen aus
@@ -113,29 +141,112 @@ def _text(value, limit: int = TEXT_MAX_CHARS) -> bool:
     return isinstance(value, str) and 0 < len(value) <= limit
 
 
+def _zahl(wert) -> bool:
+    return ist_endliche_zahl(wert)
+
+
+def _nummer(wert) -> bool:
+    return isinstance(wert, int) and not isinstance(wert, bool) and 1 <= wert <= KREIS_NUMMER_MAX
+
+
+def _raum_aufbau(raum, gesehen: set[int]) -> dict | None:
+    if not isinstance(raum, Mapping) or set(raum) != set(RAUM_FELDER):
+        return befund("raeume", "ungueltig")
+    if not _nummer(raum["raum"]):
+        return befund("raum", "ungueltig")
+    if raum["raum"] in gesehen:
+        return befund("raum", "doppelt")
+    gesehen.add(raum["raum"])
+    if not _text(raum["name"], RAUM_NAME_MAX_CHARS):
+        return befund("name", "ungueltig")
+    if raum["rolle"] not in RAUM_ROLLEN:
+        return befund("rolle", "unbekannt")
+    fuehler = raum["fuehler"]
+    if not isinstance(fuehler, list) or not all(map(_text, fuehler)):
+        return befund("fuehler", "ungueltig")
+    if len(fuehler) > RAUM_FUEHLER_MAX:
+        return befund("fuehler", "anzahl", min=0, max=RAUM_FUEHLER_MAX, anzahl=len(fuehler))
+    referenz = raum["rolle"] == kreisansicht.ROLLE_REFERENZ
+    if not isinstance(raum["soll_quelle"], bool):
+        return befund("soll_quelle", "ungueltig")
+    if raum["soll_quelle"] and not referenz:
+        return befund("soll_quelle", "nicht_erlaubt")
+    if not _zahl(raum["versatz_k"]):
+        return befund("versatz_k", "ungueltig")
+    if raum["versatz_k"] != 0 and (not referenz or raum["soll_quelle"]):
+        return befund("versatz_k", "nicht_erlaubt")
+    if raum["ziel_fest"] is not None and not _zahl(raum["ziel_fest"]):
+        return befund("ziel_fest", "ungueltig")
+    if raum["ziel_fest"] is not None and referenz:
+        return befund("ziel_fest", "nicht_erlaubt")
+    return None
+
+
+def _kreis_aufbau(eintrag, vorige: int) -> dict | None:
+    if not isinstance(eintrag, Mapping):
+        return befund("kreise", "ungueltig")
+    if set(eintrag) - set(KONFIG_KREIS_FELDER) - set(KONFIG_KREIS_OPTIONAL):
+        return befund("kreise", "unbekannt")  # der fremde Name geht nicht hoch
+    fehlend = next((key for key in KONFIG_KREIS_FELDER if key not in eintrag), None)
+    if fehlend is not None:
+        return befund(fehlend, "fehlt")
+    if not _nummer(eintrag["kreis"]):
+        return befund("kreis", "ungueltig")
+    if eintrag["kreis"] <= vorige:
+        return befund("kreis", "doppelt" if eintrag["kreis"] == vorige else "ungueltig")
+    if not _text(eintrag["name"], NAME_MAX_CHARS):
+        return befund("name", "ungueltig")
+    for key in ("hebelsatz", "verteilsystem"):
+        if not _text(eintrag[key]):
+            return befund(key, "ungueltig")
+    if not isinstance(eintrag["bindung"], Mapping):
+        return befund("bindung", "fehlt")
+    if eintrag["abo"] not in ABO_WERTE:
+        return befund("abo", "unbekannt")
+    abfrage = eintrag["bindung"].get("abfrage_s")
+    if abfrage is not None and not (isinstance(abfrage, int) and not isinstance(abfrage, bool)
+                                    and ABFRAGE_S[0] <= abfrage <= ABFRAGE_S[1]):
+        return befund("abfrage_s", "bereich", min=ABFRAGE_S[0], max=ABFRAGE_S[1])
+    raeume = eintrag["raeume"]
+    if not isinstance(raeume, list):
+        return befund("raeume", "ungueltig")
+    if not 0 < len(raeume) <= RAEUME_MAX:
+        return befund("raeume", "anzahl", min=1, max=RAEUME_MAX, anzahl=len(raeume))
+    gesehen: set[int] = set()
+    for raum in raeume:
+        if problem := _raum_aufbau(raum, gesehen):
+            return problem
+    anzahl = len(kreisansicht.referenz_fuehler(eintrag))
+    if not 0 < anzahl <= RAUMFUEHLER_MAX:
+        return befund("fuehler", "anzahl", min=1, max=RAUMFUEHLER_MAX, anzahl=anzahl)
+    return None
+
+
 def _aufbau(neu: Mapping) -> dict | None:
     """details des ersten Verstosses gegen Aufbau und Wertebereiche (Grund ungueltig), sonst None."""
     if not _text(neu.get("anlage"), ANLAGE_MAX_CHARS):
         return befund("anlage", "ungueltig")
-    for key in ("profil", "hebelsatz", "verteilsystem"):
-        if not _text(neu.get(key)):
-            return befund(key, "ungueltig")
-    if not isinstance(neu.get("bindung"), Mapping):
-        return befund("bindung", "fehlt")
-    sensors = neu.get("raumfuehler")
-    if not isinstance(sensors, list) or not all(map(_text, sensors)):
-        return befund("raumfuehler", "ungueltig")
-    if not 0 < len(sensors) <= RAUMFUEHLER_MAX:
-        return befund("raumfuehler", "anzahl", min=1, max=RAUMFUEHLER_MAX, anzahl=len(sensors))
+    if not _text(neu.get("anlage_name"), NAME_MAX_CHARS):
+        return befund("anlage_name", "ungueltig")
+    if not _text(neu.get("weg")):
+        return befund("weg", "ungueltig")
     tick = neu.get("tagestick")
     if not isinstance(tick, str) or not TAGESTICK.fullmatch(tick):
         return befund("tagestick", "format")
-    if neu.get("abo") not in ABO_WERTE:
-        return befund("abo", "unbekannt")
-    abfrage = neu["bindung"].get("abfrage_s")
-    if abfrage is not None and not (isinstance(abfrage, int) and not isinstance(abfrage, bool)
-                                    and ABFRAGE_S[0] <= abfrage <= ABFRAGE_S[1]):
-        return befund("abfrage_s", "bereich", min=ABFRAGE_S[0], max=ABFRAGE_S[1])
+    if neu.get("mindest_integration") is not None and not _text(neu["mindest_integration"]):
+        return befund("mindest_integration", "ungueltig")
+    kreise = neu.get("kreise")
+    if not isinstance(kreise, list):
+        return befund("kreise", "ungueltig")
+    if not 0 < len(kreise) <= KREISE_MAX:
+        return befund("kreise", "anzahl", min=1, max=KREISE_MAX, anzahl=len(kreise))
+    vorige = 0
+    for eintrag in kreise:
+        if problem := _kreis_aufbau(eintrag, vorige):
+            return problem
+        vorige = eintrag["kreis"]
+    if len({eintrag["hebelsatz"] for eintrag in kreise}) > 1:  # anlagenweit ein Hebelsatz
+        return befund("hebelsatz", "ungueltig")
     return None
 
 
@@ -165,9 +276,9 @@ def _gateway_bindung(neu: Mapping) -> Ablehnung | None:
     seen: set[str] = set()
     for ref in neu["raumfuehler"]:
         if not GATEWAY_RAUMFUEHLER.fullmatch(ref):
-            return Ablehnung(ROLLE_UNZULAESSIG, befund("raumfuehler", "nicht_erlaubt"))
+            return Ablehnung(ROLLE_UNZULAESSIG, befund("fuehler", "nicht_erlaubt"))
         if ref in seen:
-            return Ablehnung(DOPPELT_BELEGT, befund("raumfuehler", "doppelt"))
+            return Ablehnung(DOPPELT_BELEGT, befund("fuehler", "doppelt"))
         seen.add(ref)
     return None
 
@@ -202,9 +313,9 @@ def ha_bindung_pruefen(neu: Mapping) -> Ablehnung | None:
     seen: set[str] = set()
     for ref in neu["raumfuehler"]:
         if not HA_RAUMFUEHLER.fullmatch(ref):
-            return Ablehnung(ROLLE_UNZULAESSIG, befund("raumfuehler", "format"))
+            return Ablehnung(ROLLE_UNZULAESSIG, befund("fuehler", "format"))
         if ref in seen:
-            return Ablehnung(DOPPELT_BELEGT, befund("raumfuehler", "doppelt"))
+            return Ablehnung(DOPPELT_BELEGT, befund("fuehler", "doppelt"))
         seen.add(ref)
     werte = list(rollen.values())
     if len(set(werte)) != len(werte):
@@ -232,6 +343,53 @@ def pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
     return ablehnung
 
 
+def _weg_des_kreises(bindung: Mapping, host: str) -> str | None:
+    """Der Weg einer (aufgebauten) Bindung; None: Plattform bzw. Treiber ohne bekannten Weg."""
+    if host == HOST_HA:
+        return WEG_DER_PLATTFORM.get(bindung["kreis"]["plattform"])
+    return WEG_DES_TREIBERS.get(bindung["treiber"]["id"])
+
+
+def _ref(wert: str) -> str:
+    """Die Entity hinter einer Referenz (entity_id oder entity_id::attribut): Thermostat-Soll und -Ist sind dieselbe."""
+    return wert.split("::")[0]
+
+
+def _ziele(sicht: Mapping, host: str) -> set:
+    """Die Schreibziele eines Kreises: bei HA die Entities der Rollen und der Herstellerkreis, beim Gateway der Treiber
+    mit seinen Parametern und das Thermostat."""
+    bindung = sicht["bindung"]
+    if host == HOST_HA:
+        kreis = bindung["kreis"]
+        return {*(("entity", _ref(ref)) for ref in bindung["rollen"].values()),
+                ("kreis", *(kreis.get(key) for key in (*KREIS_FELDER, *KREIS_OPTIONAL)))}
+    ziele: set[tuple] = {("treiber", bindung["treiber"]["id"],
+                          json.dumps(bindung["treiber"]["parameter"], sort_keys=True))}
+    if bindung["thermostat"] is not None:
+        ziele.add(("thermostat", bindung["thermostat"]))
+    return ziele
+
+
+def _kreisuebergreifend(sichten: Sequence[Mapping], host: str) -> Ablehnung | None:
+    """Kein Schreibziel und kein Fuehler gehoert zwei Kreisen."""
+    ziele: set = set()
+    fuehler: set = set()
+    for sicht in sichten:
+        eigene = _ziele(sicht, host)
+        if ziele & eigene:
+            return Ablehnung(DOPPELT_BELEGT, befund("bindung", "doppelt"))
+        ziele |= eigene
+        eigene_fuehler = {_ref(ref) if host == HOST_HA else ref for ref in sicht["raumfuehler"]}
+        if fuehler & eigene_fuehler:
+            return Ablehnung(DOPPELT_BELEGT, befund("fuehler", "doppelt"))
+        fuehler |= eigene_fuehler
+    return None
+
+
+def _host_bindung(sicht: dict, host: str) -> Ablehnung | None:
+    return ha_bindung_pruefen(sicht) if host == HOST_HA else _gateway_bindung(sicht)
+
+
 def _pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
              treiber_pruefen: TreiberPruefung | None = None) -> Ablehnung | None:
     if not isinstance(neu, Mapping):
@@ -241,29 +399,44 @@ def _pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
     problem = _aufbau(neu)
     if problem is not None:
         return Ablehnung(UNGUELTIG, problem)
+    if host not in (HOST_GATEWAY, HOST_HA):
+        return Ablehnung(ROLLE_UNZULAESSIG)
+    eintraege = kreisansicht.kreise(neu)
+    sichten = [kreisansicht.ansicht(neu, eintrag) for eintrag in eintraege]
+    for sicht in sichten:
+        try:
+            resolve_local_safety(sicht["hebelsatz"], sicht["verteilsystem"])
+        except ValueError:
+            feld = "hebelsatz" if sicht["hebelsatz"] not in LEVER_SETS else "verteilsystem"
+            return Ablehnung(SICHERHEITSWERTE_FEHLEN, befund(feld, "unbekannt"))
+        if not passt(rastung, sicht):
+            return Ablehnung(HEBELSATZ_EINGERASTET)
     try:
-        resolve_local_safety(neu["hebelsatz"], neu["verteilsystem"])
-    except ValueError:
-        feld = "hebelsatz" if neu["hebelsatz"] not in LEVER_SETS else "verteilsystem"
-        return Ablehnung(SICHERHEITSWERTE_FEHLEN, befund(feld, "unbekannt"))
-    if not passt(rastung, neu):
-        return Ablehnung(HEBELSATZ_EINGERASTET)
-    try:
-        beschreibung(neu["hebelsatz"], neu.get("bindungsparameter"))
+        beschreibung(sichten[0]["hebelsatz"], neu.get("bindungsparameter"))
     except BindungsparameterFehler as error:
         return Ablehnung(UNGUELTIG, error.details)
-    if host == HOST_HA:
-        ablehnung = ha_bindung_pruefen(neu)
-        if ablehnung is None and treiber_pruefen is not None and (details := treiber_pruefen(dict(neu))) is not None:
-            ablehnung = Ablehnung(ROLLE_UNZULAESSIG, details)
+    # Die Host-Pruefung sieht die Fuehler aller Raeume (auch der Kontrollraeume); die Regelung liest nur die der
+    # Referenzraeume (`sichten`).
+    pruefsichten = [{**sicht, "raumfuehler": kreisansicht.alle_fuehler(eintrag)}
+                    for sicht, eintrag in zip(sichten, eintraege, strict=True)]
+    for pruefsicht in pruefsichten:
+        if ablehnung := _host_bindung(pruefsicht, host):
+            return ablehnung
+    wege = [_weg_des_kreises(sicht["bindung"], host) for sicht in sichten]
+    if neu["weg"] not in WEGE or None in wege:
+        return Ablehnung(WEG_UNBEKANNT, befund("weg", "unbekannt"))
+    if any(weg != neu["weg"] for weg in wege):
+        return Ablehnung(WEG_MEHRFACH, befund("weg", "doppelt"))
+    if ablehnung := _kreisuebergreifend(pruefsichten, host):
         return ablehnung
-    if host != HOST_GATEWAY:
-        return Ablehnung(ROLLE_UNZULAESSIG)
-    ablehnung = _gateway_bindung(neu)
-    if ablehnung is not None:
-        return ablehnung
-    if treiber_pruefen is not None and (details := treiber_pruefen(dict(neu["bindung"]))) is not None:
-        # Das gebundene Thermostat ist kein Thermostat: eine Rolle, kein Treiberparameter (sonst liest der Kunde
-        # einen Text ueber den Treiber).
-        return Ablehnung(ROLLE_UNZULAESSIG if details.get("feld") == "thermostat" else TREIBER_PARAMETER, details)
+    if treiber_pruefen is None:
+        return None
+    for pruefsicht in pruefsichten:
+        if host == HOST_HA:
+            if (details := treiber_pruefen(kreisansicht.dokument_aus_sicht(pruefsicht))) is not None:
+                return Ablehnung(ROLLE_UNZULAESSIG, details)
+        elif (details := treiber_pruefen(dict(pruefsicht["bindung"]))) is not None:
+            # Das gebundene Thermostat ist kein Thermostat: eine Rolle, kein Treiberparameter (sonst liest der Kunde
+            # einen Text ueber den Treiber).
+            return Ablehnung(ROLLE_UNZULAESSIG if details.get("feld") == "thermostat" else TREIBER_PARAMETER, details)
     return None

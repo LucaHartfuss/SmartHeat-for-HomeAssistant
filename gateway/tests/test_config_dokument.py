@@ -3,7 +3,7 @@ Konfigurationsdokument."""
 from pathlib import Path
 
 import pytest
-from configs import SENSOR, THERMOSTAT, konfiguration, leer
+from configs import SENSOR, THERMOSTAT, konfiguration, kreis_bindung, leer
 
 from smartheat_core import rastung
 from smartheat_device import wire
@@ -61,7 +61,7 @@ def test_parse_gives_the_runtime_config_without_transport(tmp_path):
 
 def test_the_driver_check_asks_the_driver_without_creating_a_plant(tmp_path):
     paths = Paths(tmp_path)
-    assert config.treiber_pruefen(paths, konfiguration()["bindung"]) is None
+    assert config.treiber_pruefen(paths, kreis_bindung()) is None
     assert config.treiber_pruefen(paths, {"treiber": {"id": "x", "parameter": {}}}) == {"feld": "id", "regel": "unbekannt"}
     assert config.treiber_pruefen(paths, {"treiber": {"id": "vicare_cloud", "parameter": {"installation_id": "x"}}}) == {
         "feld": "parameter", "regel": "ungueltig"}

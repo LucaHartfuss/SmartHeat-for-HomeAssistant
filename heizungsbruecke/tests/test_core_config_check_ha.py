@@ -3,6 +3,7 @@ import pytest
 from geraet_helpers import ha_konfiguration
 
 from smartheat_core import config_check as cc
+from smartheat_core import kreisansicht
 from smartheat_core.rastung import Rastung
 from smartheat_device import fehler, wire
 
@@ -26,7 +27,8 @@ def test_the_poll_interval_bounds():
 def test_valid_ha_configuration_passes_and_the_host_sees_all_of_it():
     seen = []
     assert _geprueft(ha_konfiguration(), None, host=cc.HOST_HA, treiber_pruefen=lambda k: seen.append(k)) is None
-    assert seen[0]["raumfuehler"] == ["sensor.wohnzimmer_thermostat_temperatur"] and "bindung" in seen[0]
+    sicht = kreisansicht.erste(seen[0])  # das Dokument mit dem einen Kreis, der geprueft wird
+    assert sicht["raumfuehler"] == ["sensor.wohnzimmer_thermostat_temperatur"] and "bindung" in sicht
 
 
 def test_host_details_become_role_rejection():
@@ -97,7 +99,7 @@ def test_a_reference_with_a_valid_prefix_and_anything_after_it_is_rejected(feld,
     Bindung ohne Escape im Log."""
     assert _pruefen(_mit_ref(feld, gueltig)) is None  # Gegenprobe: ohne Anhang gueltig
     assert _pruefen(_mit_ref(feld, gueltig + anhang)) == cc.Ablehnung(
-        cc.ROLLE_UNZULAESSIG, {"feld": feld, "regel": "format"})
+        cc.ROLLE_UNZULAESSIG, {"feld": "fuehler" if feld == "raumfuehler" else feld, "regel": "format"})
 
 
 @pytest.mark.parametrize("attribut", ["longitude", "latitude", "hvac_action"])
@@ -128,8 +130,10 @@ def test_a_mobile_app_notification_service_is_accepted():
 
 
 def test_ha_bindung_pruefen_is_the_public_structure_check():
-    assert cc.ha_bindung_pruefen(ha_konfiguration()) is None
-    assert cc.ha_bindung_pruefen(ha_konfiguration(bindung={"benachrichtigung": ["notify.email"]})) == cc.Ablehnung(
+    """Sie nimmt die Sicht auf einen Kreis (kreisansicht), nicht das ganze Dokument."""
+    assert cc.ha_bindung_pruefen(kreisansicht.erste(ha_konfiguration())) is None
+    schlecht = ha_konfiguration(bindung={"benachrichtigung": ["notify.email"]})
+    assert cc.ha_bindung_pruefen(kreisansicht.erste(schlecht)) == cc.Ablehnung(
         cc.ROLLE_UNZULAESSIG, {"feld": "benachrichtigung", "regel": "format"})
 
 
@@ -145,7 +149,7 @@ def test_a_foreign_field_in_the_ha_binding_is_a_role_rejection(changes, details)
 
 def test_incomplete_binding_is_a_role_rejection():
     konfiguration = ha_konfiguration()
-    del konfiguration["bindung"]["batterien"]
+    del konfiguration["kreise"][0]["bindung"]["batterien"]
     assert _pruefen(konfiguration).grund == cc.ROLLE_UNZULAESSIG
 
 
@@ -161,7 +165,7 @@ def test_accepted_binding_variants(bindung):
 
 def test_a_missing_poll_interval_is_the_default_of_the_lever_set():
     konfiguration = ha_konfiguration()
-    del konfiguration["bindung"]["abfrage_s"]
+    del konfiguration["kreise"][0]["bindung"]["abfrage_s"]
     assert _pruefen(konfiguration) is None
 
 
@@ -193,7 +197,8 @@ def test_an_unknown_host_is_rejected():
 
 
 def test_lever_set_lock_applies_to_home_assistant_too():
-    rastung = Rastung(ha_konfiguration()["hebelsatz"], ha_konfiguration()["verteilsystem"])
+    kreis = ha_konfiguration()["kreise"][0]
+    rastung = Rastung(kreis["hebelsatz"], kreis["verteilsystem"])
     ablehnung = _geprueft(ha_konfiguration(hebelsatz="viessmann_vicare"), rastung, host=cc.HOST_HA)
     assert ablehnung.grund == cc.HEBELSATZ_EINGERASTET
 

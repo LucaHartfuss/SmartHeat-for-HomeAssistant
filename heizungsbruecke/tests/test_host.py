@@ -122,7 +122,7 @@ def test_ein_raumfuehler_ohne_zustand_ist_nicht_pruefbar(env, angelegt, sleeps):
     del env.ha.states["sensor.room_actual"], env.ha.states["sensor.room_actual::device_class"]
     with pytest.raises(StartFailure) as fehler:
         _host(env).load()
-    assert fehler.value.key == "rollen_nicht_pruefbar" and fehler.value.grund.startswith("raumfuehler: ")
+    assert fehler.value.key == "rollen_nicht_pruefbar" and fehler.value.grund.startswith("fuehler: ")
 
 
 def test_eine_optionale_rolle_ohne_zustand_startet_ungelesen_mit_hinweis(env, angelegt, sleeps):
@@ -370,8 +370,8 @@ def test_ein_kreis_fremder_plattform_startet_nicht(env, angelegt, sleeps):
     shelly = {"platform": "shelly", "config_entry_id": "e-shelly", "device_id": "d-shelly"}
     _registry(env, dict.fromkeys(SCHREIBZIELE, shelly))
     konfiguration = konfiguration_aus_optionen(OPTIONS)
-    konfiguration["bindung"]["kreis"] = {**konfiguration["bindung"]["kreis"], "plattform": "shelly",
-                                         "config_entry": "e-shelly"}
+    bindung = konfiguration["kreise"][0]["bindung"]
+    bindung["kreis"] = {**bindung["kreis"], "plattform": "shelly", "config_entry": "e-shelly"}
     with pytest.raises(StartFailure) as fehler:
         HaHost(FakeGeraet(konfiguration), env.ha).load()
     assert fehler.value.grund == "plattform: diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)"

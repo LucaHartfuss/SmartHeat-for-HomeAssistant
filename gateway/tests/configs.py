@@ -1,4 +1,5 @@
 """Konfigurations- und Bedienungsdokumente fuer Tests (Testwerte, keine Zugangsdaten)."""
+import konfig_form
 from bindung_beispiele import PARAMETER, parameter
 
 from smartheat_core import dateien
@@ -10,7 +11,7 @@ THERMOSTAT = "0x00124b0000000002"
 def konfiguration(**changes) -> dict:
     """Konfigurationsdokument (Inhalt ohne schema/version) fuer den Simulations-Treiber; Testwerte."""
     value = {
-        "anlage": "test-tenant", "profil": "viessmann_gastherme_heizkoerper", "hebelsatz": "viessmann_vicare",
+        "anlage": "test-tenant", "hebelsatz": "viessmann_vicare",
         "verteilsystem": "Heizkoerper",
         "bindung": {"treiber": {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 0}},
                     "thermostat": THERMOSTAT},
@@ -20,13 +21,17 @@ def konfiguration(**changes) -> dict:
     value.update(changes)
     if "bindungsparameter" not in changes and value["hebelsatz"] in PARAMETER:  # eingerichtet: Parameter des Hebelsatzes
         value["bindungsparameter"] = parameter(value["hebelsatz"])
-    return value
+    return konfig_form.nach_form(value)
+
+
+def kreis_bindung() -> dict:
+    """Die Bindung des einen Kreises von `konfiguration()`."""
+    return konfiguration()["kreise"][0]["bindung"]
 
 
 def leer() -> dict:
     """Leere Konfiguration (wie device_config.leer() des Servers): kein Geraet eingerichtet."""
-    return {**konfiguration(), "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
-            "bindung": None, "tagestick": None, "abo": None, "raumfuehler": [], "bindungsparameter": None}
+    return konfig_form.nach_form({"anlage": None, "mindest_software": "0.6.0"})
 
 
 def bedienung(raum_soll: float = 20.0) -> dict:

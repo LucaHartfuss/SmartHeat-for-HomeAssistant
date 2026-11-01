@@ -1,6 +1,7 @@
 import math
 
 import bindung_beispiele
+import konfig_form
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
 
@@ -201,7 +202,7 @@ def test_binding_for_picks_the_class_and_description_of_the_lever_set(lever_set,
 
     hebelsatz = lever_set or "vaillant_vrc720"
     description = dokument_config.beschreibung(
-        {"hebelsatz": hebelsatz, "bindungsparameter": bindung_beispiele.parameter(hebelsatz)})
+        konfig_form.nach_form({"hebelsatz": hebelsatz, "bindungsparameter": bindung_beispiele.parameter(hebelsatz)}))
     binding = binding_for(description, FakeHa(), MANIFEST)
     assert type(binding).__name__ == cls
     assert binding.description is description

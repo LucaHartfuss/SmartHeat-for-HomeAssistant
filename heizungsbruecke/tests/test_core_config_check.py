@@ -51,8 +51,8 @@ def test_no_object_is_invalid():
 
 
 @pytest.mark.parametrize("change", [
-    {"anlage": ""}, {"anlage": 5}, {"anlage": "x" * 65}, {"profil": None}, {"hebelsatz": None},
-    {"verteilsystem": 3}, {"bindung": []}, {"raumfuehler": []}, {"raumfuehler": "x"}, {"raumfuehler": [5]},
+    {"anlage": ""}, {"anlage": 5}, {"anlage": "x" * 65}, {"anlage_name": 5}, {"hebelsatz": None},
+    {"verteilsystem": 3}, {"bindung": []}, {"raumfuehler": []}, {"raumfuehler": [5]},
     {"raumfuehler": [SENSOR] * 9}, {"tagestick": "25:00"}, {"tagestick": None}, {"abo": "vielleicht"},
     {"abo": None},
 ])
@@ -136,7 +136,7 @@ def test_without_thermostat():
 def test_a_room_sensor_twice_is_a_double_assignment():
     ablehnung = _pruefen(gateway_konfiguration(raumfuehler=[SENSOR, SENSOR]))
     assert ablehnung.grund == cc.DOPPELT_BELEGT
-    assert ablehnung.details == {"feld": "raumfuehler", "regel": "doppelt"}
+    assert ablehnung.details == {"feld": "fuehler", "regel": "doppelt"}
 
 
 def test_driver_parameters_are_checked_by_the_host():
@@ -175,7 +175,7 @@ def test_a_gateway_shaped_configuration_is_not_a_home_assistant_binding():
 
 @pytest.mark.parametrize(("change", "details"), [
     ({"tagestick": "25:00"}, {"feld": "tagestick", "regel": "format"}),
-    ({"raumfuehler": [SENSOR] * 9}, {"feld": "raumfuehler", "regel": "anzahl", "min": 1, "max": 8, "anzahl": 9}),
+    ({"raumfuehler": [SENSOR] * 9}, {"feld": "fuehler", "regel": "anzahl", "min": 0, "max": 8, "anzahl": 9}),
     ({"abo": "vielleicht"}, {"feld": "abo", "regel": "unbekannt"}),
 ])
 def test_aufbau_nennt_feld_und_regel(change, details):

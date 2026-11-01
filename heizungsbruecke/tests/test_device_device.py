@@ -7,8 +7,7 @@ import threading
 import time
 
 import pytest
-from bindung_beispiele import parameter
-from device_helpers import SENSOR, WALL, FakeHost, FakeLink, World, _anzeige
+from device_helpers import WALL, FakeHost, FakeLink, World, _anzeige, _konfiguration, _leer
 
 from smartheat_core import config_check, dateien
 from smartheat_device import bootstrap, commands, device, identity, wire, wish
@@ -19,18 +18,6 @@ from smartheat_runtime.worker import RegulationWorker
 
 SOFTWARE = {"version": "0.6.1", "manifest_url": "https://example.test/m.json", "manifest_sha256": "a" * 64,
             "signature": "sig"}
-
-
-def _konfiguration(version=1, **changes):
-    inhalt = {
-        "anlage": "kunde3", "profil": "viessmann_gastherme_heizkoerper", "hebelsatz": "viessmann_vicare",
-        "verteilsystem": "Heizkoerper",
-        "bindung": {"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None},
-        "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
-        "bindungsparameter": parameter("viessmann_vicare"),
-    }
-    inhalt.update(changes)
-    return {"schema": 2, "version": version, **inhalt}
 
 
 def _bedienung(version=3, raum_soll=21.0):
@@ -305,12 +292,6 @@ def test_a_held_configuration_is_only_rechecked_while_connected(tmp_path):
     assert world.link.of("up/result") == [{"schema": 2, "dokument": "konfiguration", "version": 1, "ok": True}]
 
 
-def _leer(version):
-    return {"schema": 2, "version": version, "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
-            "bindung": None, "raumfuehler": [], "tagestick": None, "abo": None, "mindest_software": "0.6.0",
-            "software": None, "bindungsparameter": None}
-
-
 class BasisHost(GeraetHostBasis, FakeHost):
     """FakeHost mit den echten Rueckrufen des gemeinsamen Teils (Markierung, Neustart); aufraeumen.json und
     abgemeldet.json im Testordner."""
@@ -438,9 +419,7 @@ def test_an_empty_configuration_is_handed_over(tmp_path):
     world = World(tmp_path)
     world.verbinden()
     world.empfangen("down/config", _konfiguration())
-    leer = {**_konfiguration(version=2), "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
-            "bindung": None, "raumfuehler": [], "tagestick": None, "abo": None}
-    world.empfangen("down/config", leer)
+    world.empfangen("down/config", _leer(version=2))
     assert world.host.konfigurationen[-1][1]["anlage"] is None and world.device.abo_status() == "unknown"
 
 

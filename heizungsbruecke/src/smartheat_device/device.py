@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeVar
 
-from smartheat_core import config_check
+from smartheat_core import config_check, kreisansicht
 from smartheat_core.logtext import lesbar
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_device import bootstrap, commands, fehler, identity, inventory, nachrichten, wire, wish
@@ -695,7 +695,7 @@ class Device:
         """Nur Namen, die in der Konfiguration (ursprungswerte, vom Server gespiegelt) fehlen, in
         den Grenzen von V1; was nicht passt, geht nicht hinaus (Log ohne Wert)."""
         konfiguration = self.konfiguration() or {}
-        bekannt = konfiguration.get("ursprungswerte")
+        bekannt = kreisansicht.erste(konfiguration).get("ursprungswerte")  # bis zum Mehrkreisbetrieb: Kreis 1
         bekannt = bekannt if isinstance(bekannt, dict) else {}
         werte: dict = {}
         gemerkt, gescheitert = self._host_wert("ursprungswerte", self.host.ursprungswerte)

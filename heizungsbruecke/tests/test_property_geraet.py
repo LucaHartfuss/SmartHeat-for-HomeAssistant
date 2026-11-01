@@ -309,12 +309,14 @@ UNGEPRUEFT = {"konfiguration": ("mindest_software", "ursprungswerte"),
 def test_nicht_endliche_zahl_an_jeder_stelle_wird_abgelehnt_oder_nie_gespeichert(tmp_path, dokument):
     """Erschoepfend: jede Stelle x jede nicht endliche Zahl x jede Form. Angenommen nur, wenn die Zahl nicht im
     gespeicherten Dokument landet (Feld ohne Wirkung). Ausgenommen: die Versionen (Zaehler: eine riesige Ganzzahl ist dort
-    eine gueltige Ganzzahl, _is_version liest sie nur als Zaehler), die Treiberparameter (`bindung.treiber.parameter`: sie
+    eine gueltige Ganzzahl, _is_version liest sie nur als Zaehler), die Treiberparameter (`kreise[0].bindung.treiber.parameter`: sie
     prueft der Treiber ueber den Rueckruf des Hosts, den dieser Store hier nicht hat; Gateway-Host-Tests) und UNGEPRUEFT."""
     name, art, gut, _optional = dokument
     zaehler = 0
     for pfad in pfade(gut):
-        if not pfad or pfad[0] in ("version", "schema", *UNGEPRUEFT[name]) or pfad[:3] == ("bindung", "treiber", "parameter"):
+        if (not pfad or pfad[0] in ("version", "schema", *UNGEPRUEFT[name])
+                or pfad[:3] == ("kreise", 0, "ursprungswerte")
+                or pfad[:5] == ("kreise", 0, "bindung", "treiber", "parameter")):
             continue
         for zahl in _NICHT_ENDLICH:
             if isinstance(zahl, int) and pfad[:2] == ("bindungsparameter", "schreibschutz"):

@@ -291,20 +291,27 @@ def _kaputte_konfigurationen(konfiguration: dict) -> list:
     def mit(**aenderung):
         return lambda version: {"schema": 2, "version": version, **konfiguration, **aenderung}
 
+    def im_kreis(**aenderung):
+        return mit(kreise=[{**konfiguration["kreise"][0], **aenderung}])
+
+    def im_raum(**aenderung):
+        kreis = konfiguration["kreise"][0]
+        return im_kreis(raeume=[{**kreis["raeume"][0], **aenderung}, *kreis["raeume"][1:]])
+
     lockerer_schutz = json.loads(json.dumps(konfiguration["bindungsparameter"]))
     lockerer_schutz["schreibschutz"] = {**lockerer_schutz["schreibschutz"], "durchsetzen_tag": 7}
     return [
         ("fremdes Feld", mit(gift=1)),
-        ("NaN im Raumfuehler", mit(raumfuehler=[float("nan")])),
+        ("NaN im Fuehler", im_raum(fuehler=[float("nan")])),
         ("Uebergroesse", mit(anlage=_grosser_text())),
         ("Surrogat", mit(anlage="a\ud800b")),
         ("lockerer Schreibschutz", mit(bindungsparameter=lockerer_schutz)),
-        ("anderer Hebelsatz", mit(hebelsatz="viessmann_vicare")),
-        ("anderes Verteilsystem", mit(verteilsystem="Fussbodenheizung")),
+        ("anderer Hebelsatz", im_kreis(hebelsatz="viessmann_vicare")),
+        ("anderes Verteilsystem", im_kreis(verteilsystem="Fussbodenheizung")),
         ("Tagestick keine Uhrzeit", mit(tagestick=5)),
         ("Riesenzahl", mit(tagestick=10**400)),
         ("Feld fehlt", lambda version: {k: v for k, v in {"schema": 2, "version": version, **konfiguration}.items()
-                                         if k != "bindung"}),
+                                         if k != "kreise"}),
         ("kein JSON", lambda version: b"{kaputt"),
         ("Liste", lambda version: b"[1, 2]"),
     ]

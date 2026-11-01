@@ -46,7 +46,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeGuard
 
-from smartheat_core import config_check, dateien, rastung, wallclock
+from smartheat_core import config_check, dateien, kreisansicht, rastung, wallclock
 from smartheat_core.rastung import Rastung
 from smartheat_device import fehler, nachrichten, wire
 from smartheat_runtime import soll_speicher
@@ -285,7 +285,8 @@ class DocumentStore:
     def _rasten(self, inhalt: dict) -> Rastung | None:
         if not self._rasten_erlaubt:  # Programmierfehler: ein Nur-Lese-Store (rasten=False) empfaengt keine Dokumente
             raise RuntimeError("DocumentStore mit rasten=False schreibt keine Rastung")
-        hebelsatz, verteilsystem = inhalt.get("hebelsatz"), inhalt.get("verteilsystem")
+        sicht = kreisansicht.erste(inhalt)  # bis die Rastung je Kreis fuehrt: das Paar des ersten Kreises
+        hebelsatz, verteilsystem = sicht["hebelsatz"], sicht["verteilsystem"]
         if not (isinstance(hebelsatz, str) and isinstance(verteilsystem, str)):
             return None
         neu = Rastung(hebelsatz, verteilsystem)
@@ -443,7 +444,7 @@ class DocumentStore:
             return _bedienung_pruefen(inhalt)
         if art == ANZEIGE:
             return _anzeige_pruefen(inhalt)
-        ablehnung = (_form(inhalt, _ohne_huelle(wire.KONFIGURATION_FIELDS), wire.KONFIGURATION_OPTIONAL)
+        ablehnung = (_form(inhalt, _ohne_huelle(wire.KONFIGURATION_FIELDS))
                      or software_pruefen(inhalt["software"]))
         if ablehnung is not None:
             return ablehnung

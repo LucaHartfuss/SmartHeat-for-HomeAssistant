@@ -387,9 +387,9 @@ def test_the_ha_check_is_skipped_against_the_accepted_configuration(tmp_path, mo
     ha.offline = True
     akzeptiert = konfiguration_aus_optionen(OPTIONS)
     host, _, _ = _host(tmp_path, monkeypatch, ha=ha, device=Device(akzeptiert))
-    assert host.treiber_pruefen({**akzeptiert, "abo": "inaktiv"}) is None
+    assert host.treiber_pruefen(konfiguration_aus_optionen({**OPTIONS, "abo": "inaktiv"})) is None
     with pytest.raises(NichtPruefbar):  # neue Bindung: HA-Teil noetig, HA aus -> spaeter erneut
-        host.treiber_pruefen({**akzeptiert, "raumfuehler": ["sensor.anderer"]})
+        host.treiber_pruefen(konfiguration_aus_optionen({**OPTIONS, "room_sensors": ["sensor.anderer"]}))
 
 
 def test_the_ha_check_gets_the_accepted_configuration(tmp_path, monkeypatch):
@@ -398,8 +398,8 @@ def test_the_ha_check_gets_the_accepted_configuration(tmp_path, monkeypatch):
     ha = FakeHa()
     akzeptiert = konfiguration_aus_optionen(OPTIONS)
     host, _, _ = _host(tmp_path, monkeypatch, ha=ha, device=Device(akzeptiert))
-    assert host.treiber_pruefen({**akzeptiert, "hebelsatz": "gibt_es_nicht"}) == {"feld": "hebelsatz",
-                                                                                   "regel": "unbekannt"}
+    unbekannt = konfiguration_aus_optionen({**OPTIONS, "lever_set": "gibt_es_nicht"})
+    assert host.treiber_pruefen(unbekannt) == {"feld": "hebelsatz", "regel": "unbekannt"}
     ha.offline = True
     assert host.treiber_pruefen(akzeptiert) is None  # unveraendert gegen die uebernommene: HA nicht noetig
     host.verbinden(Device(None))

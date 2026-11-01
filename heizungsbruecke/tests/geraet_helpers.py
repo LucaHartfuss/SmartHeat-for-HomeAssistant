@@ -8,6 +8,7 @@ import json
 from types import SimpleNamespace
 
 import bindung_beispiele
+import konfig_form
 from bindung_beispiele import parameter
 from device_helpers import SENSOR
 from fakes import KONFIG_EINTRAG, FakeClock, FakeHa
@@ -50,14 +51,14 @@ def konfiguration_aus_optionen(options: dict) -> dict:
                "benachrichtigung": list(options.get("notify_services", [])),
                "hinweise_aus": list(options.get("notify_hints_off", []))}
     konfiguration = {
-        "anlage": options["tenant_id"], "profil": "vaillant_gastherme_heizkoerper",
+        "anlage": options["tenant_id"],
         "hebelsatz": hebelsatz, "verteilsystem": options.get("verteilsystem"),
         "bindung": bindung, "raumfuehler": list(options.get("room_sensors", [])),
-        "tagestick": options.get("daily_trigger_time"), "abo": "aktiv", "mindest_software": "1.0.0", "software": None,
+        "tagestick": options.get("daily_trigger_time"), "abo": options.get("abo", "aktiv"), "mindest_software": "1.0.0", "software": None,
         "bindungsparameter": options["bindungsparameter"] if "bindungsparameter" in options
         else bindung_beispiele.parameter(hebelsatz if hebelsatz in bindung_beispiele.PARAMETER else "vaillant_vrc720"),
     }
-    return konfiguration
+    return konfig_form.nach_form(konfiguration)
 
 
 class Sent:
@@ -182,7 +183,7 @@ def start_bridge(env, *, options, abo=entitlement.ACTIVE, abgemeldet=False, bedi
     options = {**options, **option_overrides}
     konfiguration = konfiguration_aus_optionen(options)
     if ursprungswerte is not None:
-        konfiguration = {**konfiguration, "ursprungswerte": ursprungswerte}
+        konfiguration["kreise"][0]["ursprungswerte"] = ursprungswerte
     if abgemeldet:
         dokument_config.abmelden(config.ABGEMELDET_PATH, konfiguration["anlage"])
     start_markierung = None
@@ -350,19 +351,19 @@ THERMOSTAT = "0x00124b0000000002"
 
 def gateway_konfiguration(**changes):
     value = {
-        "anlage": "kunde3", "profil": "viessmann_gastherme_heizkoerper", "hebelsatz": "viessmann_vicare",
+        "anlage": "kunde3", "hebelsatz": "viessmann_vicare",
         "verteilsystem": "Heizkoerper",
         "bindung": {"treiber": {"id": "simulation", "parameter": {"heizkreis": 0}}, "thermostat": THERMOSTAT},
         "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
         "bindungsparameter": parameter("viessmann_vicare"),
     }
     value.update(changes)
-    return value
+    return konfig_form.nach_form(value)
 
 
 def ha_konfiguration(**changes) -> dict:
     base = {
-        "anlage": "zuhause2", "profil": "vaillant_gastherme_heizkoerper", "hebelsatz": "vaillant_vrc720",
+        "anlage": "zuhause2", "hebelsatz": "vaillant_vrc720",
         "verteilsystem": "Heizkoerper", "tagestick": "12:07", "abo": "aktiv",
         "bindungsparameter": parameter("vaillant_vrc720"), "raumfuehler": ["sensor.wohnzimmer_thermostat_temperatur"],
         "bindung": {
@@ -375,4 +376,4 @@ def ha_konfiguration(**changes) -> dict:
         },
     }
     bindung = {**base["bindung"], **changes.pop("bindung", {})}
-    return {**base, **changes, "bindung": bindung}
+    return konfig_form.nach_form({**base, **changes, "bindung": bindung})

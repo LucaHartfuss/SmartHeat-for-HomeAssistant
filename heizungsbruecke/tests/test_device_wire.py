@@ -94,10 +94,20 @@ NUR_GEPINNT_GERAET: set[str] = {  # Kopien im Kern (smartheat_core darf nichts i
     "ENERGIE_EINHEITEN",  # bindungsparameter.EINHEITEN
     "HA_HINWEISE",  # config_check.HA_HINWEISE
     "HA_ROLLEN",  # config_check.HA_ROLLEN
+    "KONFIGURATION_KREIS_FIELDS",  # config_check.KONFIG_KREIS_FELDER
+    "KONFIGURATION_KREIS_OPTIONAL",  # config_check.KONFIG_KREIS_OPTIONAL
+    "KONFIGURATION_RAUM_FIELDS",  # config_check.RAUM_FELDER
+    "KREISE_MAX",  # config_check.KREISE_MAX
     "KREIS_FIELDS",  # config_check.KREIS_FELDER
     "KREIS_OPTIONAL",  # config_check.KREIS_OPTIONAL
+    "RAEUME_MAX",  # config_check.RAEUME_MAX
+    "RAUM_FUEHLER_MAX",  # config_check.RAUM_FUEHLER_MAX
+    "RAUM_ROLLEN",  # config_check.RAUM_ROLLEN
     "SCHREIBSCHUTZ_FIELDS",  # bindungsparameter.SCHREIBSCHUTZ_FELDER
     "TREIBER_FIELDS",  # config_check.TREIBER_FELDER
+    "WEGE",  # config_check.WEGE
+    "WEG_DER_PLATTFORM",  # config_check.WEG_DER_PLATTFORM
+    "WEG_DES_TREIBERS",  # config_check.WEG_DES_TREIBERS
     "ZAEHLER",  # bindungsparameter.ZAEHLER
 }
 

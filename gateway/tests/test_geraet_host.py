@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from befehle_sicht import registrierte_befehle
-from configs import bedienung, dokumente_schreiben, konfiguration
+from configs import bedienung, dokumente_schreiben, konfiguration, leer
 from fakes import FakeBus
 from geraet_welt import WALL, FakeDevice, Welt
 from world import GatewayWorld
@@ -31,8 +31,7 @@ from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
 from smartheat_runtime.worker import RegulationWorker
 
-LEER = {**konfiguration(), "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
-        "bindung": None, "raumfuehler": [], "tagestick": None, "abo": None}
+LEER = leer()
 
 
 @pytest.fixture

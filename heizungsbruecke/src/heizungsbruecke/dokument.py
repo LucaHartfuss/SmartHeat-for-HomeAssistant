@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from heizungsbruecke.inventur import einstellbare_plattformen, entity_erlaubt, entity_klasse
+from smartheat_core import kreisansicht
 from smartheat_core.bindungsparameter import ENERGIE_KANAELE
 from smartheat_core.config_check import NichtPruefbar
 from smartheat_core.levers import LEVER_SETS
@@ -106,7 +107,7 @@ def _texte(value) -> tuple[str, ...]:
 def bindung(konfiguration) -> HaBindung:
     """HA-Bindung aus dem Dokument; config_check hat die Form geprueft. Wirft ConfigError bei einem Hebelsatz, den der
     HA-Host nicht kennt."""
-    konfiguration = _mapping(konfiguration)
+    konfiguration = kreisansicht.erste(konfiguration)  # die Laufzeit fuehrt genau einen Kreis
     hebelsatz = konfiguration.get("hebelsatz")
     if not isinstance(hebelsatz, str) or hebelsatz not in LEVER_SETS or hebelsatz not in PFLICHT_ROLLEN:
         raise ConfigError(f"Hebelsatz {hebelsatz!r} ist für Home Assistant unbekannt – {RECONFIGURE_HINT}")
@@ -191,7 +192,7 @@ def _refs(b: HaBindung) -> list[tuple[str, str]]:
     raumfuehler/batterien, nie die Entity. Ohne Soll-Entity entfaellt room_target (lokal_pruefen meldet sie als fehlend)."""
     soll = [("room_target", b.soll_entity)] if b.soll_entity is not None else []
     return [*soll, *((v1_rolle(rolle), ref) for rolle, ref in b.rollen.items()),
-            *(("raumfuehler", ref) for ref in b.raumfuehler), *(("batterien", ref) for ref in b.batterien)]
+            *(("fuehler", ref) for ref in b.raumfuehler), *(("batterien", ref) for ref in b.batterien)]
 
 
 def _pflicht_refs(b: HaBindung) -> set[str]:
@@ -229,7 +230,7 @@ ROLLEN_FORM: dict[str, tuple[tuple[str, str | None], ...]] = {
     **{f"energy_{kanal}": (("sensor", "energy"),) for kanal in ENERGIE_KANAELE},
     "operating_mode": (_FREI,), "efficiency_ratio": (_FREI,), "generator_hours": (_FREI,),
     "generator_starts": (_FREI,), "generator_state": (_FREI,),
-    "raumfuehler": (_TEMPERATUR, ("climate", None)),
+    "fuehler": (_TEMPERATUR, ("climate", None)),
     "batterien": (("sensor", "battery"), ("binary_sensor", "battery")),
 }
 #: Ein climate-Raumfuehler liefert seine Ist-Temperatur, nie das Soll.
@@ -239,7 +240,7 @@ _KLIMA_IST = "::current_temperature"
 def _form_domaene(feld: str, ref: str) -> bool:
     """Ohne Zustand: nur die Domaene aus der ID (und beim climate-Raumfuehler das Attribut) gegen die Form des Felds."""
     domain = _entity(ref).partition(".")[0]
-    if feld == "raumfuehler" and domain == "climate" and not ref.endswith(_KLIMA_IST):
+    if feld == "fuehler" and domain == "climate" and not ref.endswith(_KLIMA_IST):
         return False
     return any(domain == erlaubt for erlaubt, _ in ROLLEN_FORM.get(feld, ()))
 
@@ -357,8 +358,10 @@ def _mit_ha(b: HaBindung, ha_api) -> tuple[str, str] | None:
 
 
 def _unveraendert(konfiguration, akzeptiert) -> bool:
-    return isinstance(akzeptiert, Mapping) and all(
-        key in akzeptiert and akzeptiert[key] == konfiguration.get(key) for key in _HA_FELDER)
+    if not isinstance(akzeptiert, Mapping):
+        return False
+    alt, neu = kreisansicht.erste(akzeptiert), kreisansicht.erste(konfiguration)
+    return all(alt.get(key) is not None and alt[key] == neu.get(key) for key in _HA_FELDER)
 
 
 def zuordnung_pruefen(konfiguration, ha_api, akzeptiert=None) -> dict | None:

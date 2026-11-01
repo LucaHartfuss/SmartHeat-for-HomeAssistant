@@ -10,7 +10,7 @@ import dataclasses
 import logging
 import time
 
-from smartheat_core import bindungsparameter, wallclock
+from smartheat_core import bindungsparameter, kreisansicht, wallclock
 from smartheat_core.logtext import lesbar
 from smartheat_core.safety import resolve_local_safety
 from smartheat_gateway import config as gateway_config
@@ -114,12 +114,13 @@ class GatewayHost:
         return self._geraet.ursprungswerte_server(self.konfiguration, self._leer_abmelden)
 
     def sign_off_parts(self) -> RestoreParts | None:
-        hebelsatz = self.konfiguration.get("hebelsatz")
+        sicht = kreisansicht.erste(self.konfiguration)
+        hebelsatz = sicht.get("hebelsatz")
         try:
             dokument_config.rastung_pruefen(self.konfiguration, self._paths.rastung)
             if not isinstance(hebelsatz, str):
                 raise ConfigError("Konfiguration ohne Hebelsatz")
-            safety = resolve_local_safety(hebelsatz, self.konfiguration.get("verteilsystem"))
+            safety = resolve_local_safety(hebelsatz, sicht.get("verteilsystem"))
             beschreibung = bindungsparameter.beschreibung(hebelsatz, self.konfiguration.get("bindungsparameter"))
             driver = self._create_driver(gateway_config.bindung(self.konfiguration).driver_spec(), beschreibung)
             check_lever_set(driver, hebelsatz)

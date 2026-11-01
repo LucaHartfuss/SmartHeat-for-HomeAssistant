@@ -7,6 +7,7 @@ import datetime
 import itertools
 import json
 
+import konfig_form
 from bindung_beispiele import parameter
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -299,20 +300,18 @@ def _command(kind="diagnostics", command_id="c1", payload=None):
 
 def _konfiguration(version=1, **changes):
     inhalt = {
-        "anlage": "kunde3", "profil": "viessmann_gastherme_heizkoerper", "hebelsatz": "viessmann_vicare",
+        "anlage": "kunde3", "hebelsatz": "viessmann_vicare",
         "verteilsystem": "Heizkoerper",
         "bindung": {"treiber": {"id": "simulation", "parameter": {"heizkreis": 0}}, "thermostat": None},
         "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
         "bindungsparameter": parameter("viessmann_vicare"),
     }
     inhalt.update(changes)
-    return {"schema": 2, "version": version, **inhalt}
+    return konfig_form.nach_form({"schema": 2, "version": version, **inhalt})
 
 
 def _leer(version=1, mindest="0.6.0"):
-    return {"schema": 2, "version": version, "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
-            "bindung": None, "raumfuehler": [], "tagestick": None, "abo": None, "mindest_software": mindest,
-            "software": None, "bindungsparameter": None}
+    return konfig_form.nach_form({"schema": 2, "version": version, "anlage": None, "mindest_software": mindest})
 
 
 def _bedienung(version=1, raum_soll=21.0, *, kreis=1, modus="manuell", **changes):

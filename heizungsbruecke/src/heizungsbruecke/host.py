@@ -21,7 +21,7 @@ from heizungsbruecke.ha_binding import binding_for, binding_roles
 from heizungsbruecke.ha_signals import SOLL_REF, GeraetSignale, HaSignalSource
 from heizungsbruecke.manifest import build_manifest, entity_ref
 from heizungsbruecke.version import ADDON_VERSION
-from smartheat_core import config_check, wallclock
+from smartheat_core import config_check, kreisansicht, wallclock
 from smartheat_core.logtext import lesbar
 from smartheat_runtime import dokument_config
 from smartheat_runtime.app import Loaded, Notice, RestoreParts, StartFailure
@@ -340,7 +340,7 @@ def _wait_for_required_entities(ha_api, b: dokument.HaBindung) -> None:
 
 def _bindung_pruefen(konfiguration) -> None:
     """Form der uebernommenen HA-Bindung (config_check): lokaler Text mit dem Feld, nie mit der Entity (Regel 6)."""
-    ablehnung = config_check.ha_bindung_pruefen(konfiguration)
+    ablehnung = config_check.ha_bindung_pruefen(kreisansicht.erste(konfiguration))
     if ablehnung is not None:
         feld = (ablehnung.details or {}).get("feld", "bindung")
         raise ConfigError(f"{feld}: Form der Zuordnung ungültig – {RECONFIGURE_HINT}")

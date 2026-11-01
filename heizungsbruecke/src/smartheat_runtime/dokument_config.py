@@ -1,6 +1,7 @@
 """Laufzeit aus dem Konfigurationsdokument: sobald ein Host smartheat_device nutzt (Gateway ab
 0.6.0, HA-Add-on ab 5c), liest die Laufzeit Anlage, Hebelsatz, Verteilsystem, Raumfuehler, Tagestick und Abo aus dem
-Konfigurationsdokument statt aus Optionen; kurze Intervalle gibt es nur fuer die E2E aus der Umgebung
+Konfigurationsdokument statt aus Optionen (je Kreis; heute fuehrt die Laufzeit genau einen Kreis und lehnt ein
+Dokument mit mehreren ab); kurze Intervalle gibt es nur fuer die E2E aus der Umgebung
 (SMARTHEAT_E2E_INTERVALLE). Transport und Zugang haelt der Geraetekern (eine
 MQTT-Verbindung), der Abo-Status steht im Dokument (die 30-Tage-Frist bleibt lokal).
 Die Anlage bindet den lokalen Zustand ueber tenant_id: eine andere Anlage beginnt mit leerem Zustand, eine
@@ -13,7 +14,7 @@ import os
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from smartheat_core import config_check, dateien, rastung
+from smartheat_core import config_check, dateien, kreisansicht, rastung
 from smartheat_core.binding import BindingDescription
 from smartheat_core.bindungsparameter import beschreibung as _beschreibung
 from smartheat_core.levers import LEVER_SETS
@@ -22,12 +23,11 @@ from smartheat_runtime import entitlement
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
 from smartheat_runtime.windows import validate_daily_trigger_time
 
-FELDER = ("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo",
-          "bindungsparameter")
-#: Aendert sich eines davon, startet der Host die Laufzeit neu (software, mindest_software und profil nicht). Die
-#: Bindungsparameter gehoeren dazu: Schritte, Toleranzen, Wartezeit und Schreibschutz kommen nur von dort.
-LAUFZEIT_FELDER = ("anlage", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo",
-                   "bindungsparameter")
+FELDER = ("anlage", "anlage_name", "weg", "kreise", "tagestick", "bindungsparameter")
+#: Aendert sich eines davon, startet der Host die Laufzeit neu (software, mindest_software und Anlagenname nicht).
+#: Die Kreise gehoeren dazu (Bindung, Raeume, Hebelsatz, Verteilsystem, Abo), aber ohne die gespiegelten
+#: Ursprungswerte; die Bindungsparameter auch: Schritte, Toleranzen, Wartezeit und Schreibschutz kommen nur von dort.
+LAUFZEIT_FELDER = ("anlage", "weg", "kreise", "tagestick", "bindungsparameter")
 ABO = {"aktiv": entitlement.ACTIVE, "inaktiv": entitlement.INACTIVE}
 # Lokale Checks laufen eventgetrieben; dieser Takt gilt nur noch fuer den Watchdog-Fallback
 # bei getrennter WS-Verbindung (und fuer grace_check/health).
@@ -46,7 +46,7 @@ class ConfigError(ValueError):
 
 
 def _hebelsatz(konfiguration) -> str:
-    hebelsatz = konfiguration.get("hebelsatz") if isinstance(konfiguration, Mapping) else None
+    hebelsatz = kreisansicht.erste(konfiguration).get("hebelsatz")
     if not isinstance(hebelsatz, str) or hebelsatz not in LEVER_SETS:
         raise ConfigError(f"Hebelsatz {hebelsatz!r} ist unbekannt – {RECONFIGURE_HINT}")
     return hebelsatz
@@ -56,7 +56,7 @@ def beschreibung(konfiguration) -> BindingDescription:
     """Wirksame Binding-Beschreibung aus Hebelsatz und Bindungsparametern; keine Ersatztabelle."""
     hebelsatz = _hebelsatz(konfiguration)
     try:
-        return _beschreibung(hebelsatz, konfiguration.get("bindungsparameter"))
+        return _beschreibung(hebelsatz, kreisansicht.erste(konfiguration).get("bindungsparameter"))
     except ValueError as error:
         raise ConfigError(f"Konfiguration: {error}") from None
 
@@ -65,7 +65,7 @@ def sicherheit(konfiguration) -> LocalSafety:
     """Lokale Sicherheitswerte fuer Hebelsatz und Verteilsystem (Regel 4)."""
     hebelsatz = _hebelsatz(konfiguration)
     try:
-        return resolve_local_safety(hebelsatz, konfiguration.get("verteilsystem"))
+        return resolve_local_safety(hebelsatz, kreisansicht.erste(konfiguration).get("verteilsystem"))
     except ValueError as error:
         raise ConfigError(f"Konfiguration: {error}") from None
 
@@ -77,14 +77,15 @@ def eingerichtet(konfiguration) -> bool:
 
 def ursprungswerte(konfiguration) -> dict:
     """Feld ursprungswerte der Konfiguration (vom Server gespiegelt); {} ohne gueltiges Feld."""
-    werte = konfiguration.get("ursprungswerte") if isinstance(konfiguration, Mapping) else None
+    werte = kreisansicht.erste(konfiguration).get("ursprungswerte")  # bis zum Mehrkreisbetrieb: Kreis 1
     return dict(werte) if isinstance(werte, Mapping) else {}
 
 
 def abo_status(konfiguration) -> str:
     if not eingerichtet(konfiguration):
         return entitlement.UNKNOWN
-    return ABO.get(konfiguration.get("abo"), entitlement.UNKNOWN)
+    abo = kreisansicht.erste(konfiguration).get("abo")
+    return ABO.get(abo, entitlement.UNKNOWN) if isinstance(abo, str) else entitlement.UNKNOWN
 
 
 def _e2e_intervalle() -> dict:
@@ -111,7 +112,7 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
     Standard zurueck; runtime_config meldet ihn danach als Konfigurationsfehler."""
     intervalle = _e2e_intervalle()  # einmal je Aufruf lesen (und loggen)
     anlage = konfiguration["anlage"] if eingerichtet(konfiguration) else None
-    hebelsatz = konfiguration.get("hebelsatz") if isinstance(konfiguration, Mapping) else None
+    hebelsatz = kreisansicht.erste(konfiguration).get("hebelsatz")
     lever_set = LEVER_SETS.get(hebelsatz) if isinstance(hebelsatz, str) else None
     lever_set = lever_set or LEVER_SETS[_STANDARD_HEBELSATZ]
     return BootInfo(
@@ -125,7 +126,7 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
 def rastung_pruefen(konfiguration, rastung_pfad: Path) -> None:
     """Zweite Linie: die Laufzeit startet bzw. setzt nur zurueck, wenn die Konfiguration zur
     Rastung passt; der Dokumentspeicher hat das schon geprueft, das hier deckt einen Fehler dort ab. Wirft ConfigError."""
-    if not rastung.passt(rastung.lesen(rastung_pfad), konfiguration if isinstance(konfiguration, Mapping) else {}):
+    if not rastung.passt(rastung.lesen(rastung_pfad), kreisansicht.erste(konfiguration)):
         raise ConfigError(f"Konfiguration: {rastung.TEXT}")
 
 
@@ -134,6 +135,8 @@ def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
     """Wirft ConfigError (der Host macht daraus StartFailure); config_check hat das Dokument schon geprueft."""
     if not eingerichtet(konfiguration):
         raise ConfigError("Das Gerät ist nicht eingerichtet")
+    if len(kreisansicht.kreise(konfiguration)) != 1:
+        raise ConfigError("Konfiguration: die Laufzeit fuehrt genau einen Heizkreis")
     rastung_pruefen(konfiguration, rastung_pfad)
     hebelsatz = _hebelsatz(konfiguration)
     safety = sicherheit(konfiguration)
@@ -141,8 +144,8 @@ def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
         daily = validate_daily_trigger_time(konfiguration.get("tagestick"))
     except ValueError as error:
         raise ConfigError(f"Konfiguration: {error}") from None
-    sensors = konfiguration.get("raumfuehler")
-    if not isinstance(sensors, list) or not sensors or not all(isinstance(ref, str) for ref in sensors):
+    sensors = kreisansicht.erste(konfiguration)["raumfuehler"]  # nur die Fuehler der Referenzraeume
+    if not sensors:
         raise ConfigError("Konfiguration: keine Raumfühler")
     intervalle = _e2e_intervalle()  # einmal je Aufruf lesen (und loggen)
     return RuntimeConfig(
@@ -158,7 +161,16 @@ def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
 def laufzeit_relevant(alt, neu) -> bool:
     alt = alt if isinstance(alt, Mapping) else {}
     neu = neu if isinstance(neu, Mapping) else {}
-    return any(alt.get(key) != neu.get(key) for key in LAUFZEIT_FELDER)
+    return any(_laufzeit_wert(alt, key) != _laufzeit_wert(neu, key) for key in LAUFZEIT_FELDER)
+
+
+def _laufzeit_wert(konfiguration: Mapping, feld: str):
+    """Wert eines Laufzeitfeldes; die Kreise ohne die gespiegelten Ursprungswerte (ihr Eintreffen startet nichts neu)."""
+    wert = konfiguration.get(feld)
+    if feld == "kreise" and isinstance(wert, list):
+        return [{k: v for k, v in kreis.items() if k != "ursprungswerte"} if isinstance(kreis, Mapping) else kreis
+                for kreis in wert]
+    return wert
 
 
 def abgemeldet(pfad: Path, konfiguration) -> bool:

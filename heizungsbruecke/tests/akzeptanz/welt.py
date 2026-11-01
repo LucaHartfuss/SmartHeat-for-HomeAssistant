@@ -200,6 +200,16 @@ def _ohne_bootstrap(ident):
     raise AssertionError("Bootstrap-Aufruf in der Akzeptanzwelt (der Zugang ist gespeichert)")
 
 
+class _Konfiguration(dict):
+    """Das Konfigurationsdokument; `["bindung"]` gibt die Bindung des einen Kreises der Anlage heraus, damit die
+    Szenarien sie wie bisher im Dokument aendern (die Aenderung wirkt im Dokument selbst)."""
+
+    def __missing__(self, schluessel):
+        if schluessel == "bindung":
+            return self["kreise"][0]["bindung"]
+        raise KeyError(schluessel)
+
+
 class Anlage(Handgriffe):
     """Eine Anlage (Hebelsatz x Verteilsystem) mit laufendem Add-on. `starten()` bringt sie in den Regelbetrieb,
     `server_antwortet(hebel)` ist die Antwort des Servers auf den letzten Snapshot, `runde(sekunden)` ein Durchlauf von
@@ -208,7 +218,7 @@ class Anlage(Handgriffe):
     def __init__(self, tmp_path, mp, satz: str, verteilsystem: str) -> None:
         self.uhr, self.ca, self.links, self.supervisor = Uhr(), GeraeteCa(), [], FakeSupervisor()
         self.ha = FakeHa(self.uhr, zustand(satz, verteilsystem), schreibziele(satz))
-        self.konfiguration = konfiguration(satz, verteilsystem)
+        self.konfiguration = _Konfiguration(konfiguration(satz, verteilsystem))
         self.daten = tmp_path / "data"
         self.trigger: list[FakeTrigger] = []
         self._umgebung(tmp_path, mp)

@@ -108,11 +108,25 @@ DURCH = ("nutzer", "automation")
 DOKUMENTE = ("konfiguration", "bedienung", "anzeige")
 DOKUMENT_SOFTWARE = "software"  # nur in up/result: Ergebnis eines Updates, version = Software-Version (Text)
 DOKUMENT_TOPICS = {"konfiguration": "down/config", "bedienung": "down/operation", "anzeige": "down/display"}
+#: Konfiguration: anlagenweit die Felder dieser Liste, je Kreis `KONFIGURATION_KREIS_FIELDS` (Hebelsatz, Verteilsystem,
+#: Bindung, Raeume, Abo), je Raum `KONFIGURATION_RAUM_FIELDS`. `profil` und die Raumfuehler-Liste gibt es nicht mehr.
 KONFIGURATION_FIELDS = (
-    "schema", "version", "anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo",
-    "mindest_software", "software", "bindungsparameter",
+    "schema", "version", "anlage", "anlage_name", "weg", "kreise", "tagestick", "mindest_software",
+    "mindest_integration", "software", "bindungsparameter",
 )
-KONFIGURATION_OPTIONAL = ("ursprungswerte",)  # fehlt = keine Ursprungswerte auf dem Server
+KONFIGURATION_KREIS_FIELDS = ("kreis", "name", "bindung", "raeume", "hebelsatz", "verteilsystem", "abo")
+KONFIGURATION_KREIS_OPTIONAL = ("ursprungswerte",)  # fehlt = keine Ursprungswerte auf dem Server
+KONFIGURATION_RAUM_FIELDS = ("raum", "name", "rolle", "fuehler", "soll_quelle", "versatz_k", "ziel_fest")
+RAUM_ROLLEN = ("referenz", "kontroll")
+#: Hoechstens so viele Kreise je Geraet (Nachrichten und Konfiguration), Nutzer-Entscheidung.
+KREISE_MAX = 4
+RAEUME_MAX, RAUM_FUEHLER_MAX = 16, 8  # Raeume je Kreis, Fuehler je Raum
+#: Anbindungswege, die ein Geraet heute ausfuehrt, und ihre Abbildung aus der Bindung (HA: Plattform der Integration,
+#: Gateway: Treiber-ID); `simulation` ist der Testweg (nur Labor). Ein anderer Weg ist `weg_unbekannt`.
+WEGE = ("vaillant_myvaillant", "viessmann_vicare", "weishaupt_modbus", "simulation")
+WEG_DER_PLATTFORM = {"mypyllant": "vaillant_myvaillant", "vicare": "viessmann_vicare",
+                     "weishaupt_modbus": "weishaupt_modbus"}
+WEG_DES_TREIBERS = {"vicare_cloud": "viessmann_vicare", "simulation": "simulation"}
 # Spec Stufe 3 S4b 4.1: Herstellerwissen der Bindung (G-7). Pflicht fuer eine eingerichtete Konfiguration, null in einer
 # leeren -- bewusste Ausnahme von der Versionsregel ohne neue Schema-Nummer: Geraete bis 1.0.0 ignorieren das Feld.
 BINDUNGSPARAMETER_FIELDS = (
@@ -156,7 +170,7 @@ URSPRUNG_MAX_HEBEL, URSPRUNG_HEBEL_MAX_CHARS = 16, 64  # Ursprungswerte: hoechst
 URSPRUNG_WERT_MAX = 1e12  # groesster Betrag einer Zahl in ursprungswerte
 DOKUMENT_ERRORS = (
     "schema_unbekannt", "ungueltig", "hebelsatz_eingerastet", "sicherheitswerte_fehlen", "rolle_unzulaessig",
-    "doppelt_belegt", "treiber_parameter", "update_noetig", "ausserhalb_bereich",
+    "doppelt_belegt", "treiber_parameter", "update_noetig", "ausserhalb_bereich", "weg_unbekannt", "weg_mehrfach",
 )
 SOFTWARE_ERRORS = (
     "manifest_ungueltig", "signatur_ungueltig", "updater_zu_alt", "version_zu_alt", "start_fehlgeschlagen",
@@ -211,7 +225,8 @@ PRUEF_REGELN = ("fehlt", "ungueltig", "anzahl", "bereich", "format", "doppelt", 
 #: Pruefbare Felder: die Namen aus den Feldlisten dieses Vertrags (abgeleitet: ein neues Feld ist ohne zweite Liste
 #: pruefbar).
 PRUEF_FELDER = tuple(dict.fromkeys((
-    *KONFIGURATION_FIELDS, *KONFIGURATION_OPTIONAL, *BINDUNGSPARAMETER_FIELDS, *SCHREIBSCHUTZ_FIELDS,
+    *KONFIGURATION_FIELDS, *KONFIGURATION_KREIS_FIELDS, *KONFIGURATION_KREIS_OPTIONAL, *KONFIGURATION_RAUM_FIELDS,
+    *BINDUNGSPARAMETER_FIELDS, *SCHREIBSCHUTZ_FIELDS,
     *BINDUNG_GATEWAY_FIELDS, *TREIBER_FIELDS, *BINDUNG_HA_FIELDS, *BINDUNG_HA_OPTIONAL, *KREIS_FIELDS, *KREIS_OPTIONAL,
     *HA_ROLLEN,
     *BEDIENUNG_FIELDS, *BEDIENUNG_KREIS_FIELDS, *ANZEIGE_FIELDS, *ANZEIGE_KREIS_FIELDS, *COMMAND_FIELDS,

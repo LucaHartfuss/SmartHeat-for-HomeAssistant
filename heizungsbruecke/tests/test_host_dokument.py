@@ -328,18 +328,24 @@ def test_sign_off_parts_are_none_with_a_broken_lock(env):
     assert host.sign_off_parts() is None
 
 
+def _mit_ursprung(konfiguration, werte, **felder):
+    """Die Konfiguration mit Ursprungswerten im ersten Kreis (und weiteren Feldern der Anlage)."""
+    kreis = {**konfiguration["kreise"][0], "ursprungswerte": werte}
+    return {**konfiguration, **felder, "kreise": [kreis]}
+
+
 def test_ursprungswerte_server_reads_the_current_configuration_fresh(env):
     konfiguration = konfiguration_aus_optionen(OPTIONS)
-    geraet = FakeGeraet({**konfiguration, "ursprungswerte": {"heat_limit": 16.0}})
+    geraet = FakeGeraet(_mit_ursprung(konfiguration, {"heat_limit": 16.0}))
     host = HaHost(geraet, env.ha, clock=env.clock)
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
-    geraet._konfiguration = {**konfiguration, "ursprungswerte": {"heat_limit": 15.0}}  # neue Konfiguration trifft ein
+    geraet._konfiguration = _mit_ursprung(konfiguration, {"heat_limit": 15.0})  # neue Konfiguration trifft ein
     assert host.ursprungswerte_server() == {"heat_limit": 15.0}
 
 
 def test_ursprungswerte_server_falls_back_to_the_marker_while_the_reset_is_pending(env):
-    konfiguration = {**konfiguration_aus_optionen(OPTIONS), "ursprungswerte": {"heat_limit": 16.0}}
-    host = HaHost(FakeGeraet({**konfiguration, "anlage": None, "ursprungswerte": {}},
+    konfiguration = _mit_ursprung(konfiguration_aus_optionen(OPTIONS), {"heat_limit": 16.0})
+    host = HaHost(FakeGeraet(_mit_ursprung(konfiguration, {}, anlage=None),
                              start_markierung=_offene_markierung(konfiguration)), env.ha, clock=env.clock)
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
 
@@ -347,10 +353,10 @@ def test_ursprungswerte_server_falls_back_to_the_marker_while_the_reset_is_pendi
 def test_ursprungswerte_server_ignores_a_new_setup_while_the_reset_is_pending(env):
     """Minor 3: eine neue Einrichtung (andere Anlage) trifft ein, bevor das Zuruecksetzen gelang: die Werte der alten
     Anlage aus der Markierung gelten weiter."""
-    alt = {**konfiguration_aus_optionen(OPTIONS), "ursprungswerte": {"heat_limit": 16.0}}
-    geraet = FakeGeraet({**alt, "anlage": None, "ursprungswerte": {}}, start_markierung=_offene_markierung(alt))
+    alt = _mit_ursprung(konfiguration_aus_optionen(OPTIONS), {"heat_limit": 16.0})
+    geraet = FakeGeraet(_mit_ursprung(alt, {}, anlage=None), start_markierung=_offene_markierung(alt))
     host = HaHost(geraet, env.ha, clock=env.clock)
-    geraet._konfiguration = {**alt, "anlage": "andere_anlage", "ursprungswerte": {"heat_limit": 12.0}}
+    geraet._konfiguration = _mit_ursprung(alt, {"heat_limit": 12.0}, anlage="andere_anlage")
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
 
 
@@ -413,7 +419,9 @@ def test_while_the_reset_is_pending_the_messages_go_to_the_services_of_the_marke
     Konfiguration der Aufraeum-Markierung, nicht aus der leeren, sodass eine Meldung (etwa die kritische bei
     gescheitertem Zuruecksetzen) die Handys erreicht. Gegenprobe: ohne Markierung hat die leere Konfiguration keine."""
     konfiguration = konfiguration_aus_optionen(OPTIONS)
-    leer = {**konfiguration, "anlage": None, "bindung": {**konfiguration["bindung"], "benachrichtigung": []}}
+    kreis = konfiguration["kreise"][0]
+    leer = {**konfiguration, "anlage": None,
+            "kreise": [{**kreis, "bindung": {**kreis["bindung"], "benachrichtigung": []}}]}
     ha = _DiensteHa()
     HaHost(FakeGeraet(leer, ha=ha), ha, clock=env.clock).notify_sink.push("wiederherstellung", "Text")
     assert ha.dienste == []

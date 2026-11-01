@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+import konfig_form
 import pytest
 from fakes import FakeClock
 
@@ -59,8 +60,9 @@ def test_ohne_aufraeumen_pfad_ist_die_basis_nicht_nutzbar(tmp_path):
         basis.aufraeumen_pfad()
 
 
-EINGERICHTET = {"anlage": "t1", "hebelsatz": "vaillant_vrc720", "raumfuehler": ["sensor.a"], "abo": "aktiv"}
-LEER = {"anlage": None, "raumfuehler": []}  # wie der Server sie nach dem Erstkontakt schickt: raumfuehler [] != fehlend
+_FLACH = {"anlage": "t1", "hebelsatz": "vaillant_vrc720", "raumfuehler": ["sensor.a"], "abo": "aktiv"}
+EINGERICHTET = konfig_form.nach_form(_FLACH)
+LEER = konfig_form.nach_form({"anlage": None})  # wie der Server sie nach dem Erstkontakt schickt: kreise [] != fehlend
 
 
 def _angefordert(host: _Host) -> bool:
@@ -78,12 +80,12 @@ def test_leere_konfiguration_nach_keiner_startet_nicht_neu(tmp_path):
     assert dokument_config.laufzeit_relevant(None, LEER)  # ohne (c) ginge der Neustart hinaus
     host = _Host(tmp_path / "a.json")
     host.konfiguration_uebernommen(None, LEER)
-    host.konfiguration_uebernommen(LEER, {**LEER, "abo": "inaktiv", "tagestick": "12:00"})
+    host.konfiguration_uebernommen(LEER, {**LEER, "tagestick": "12:00"})
     assert not _angefordert(host)
 
 
 @pytest.mark.parametrize("alt, neu", [(None, EINGERICHTET), (LEER, EINGERICHTET), (EINGERICHTET, LEER),
-                                     (EINGERICHTET, {**EINGERICHTET, "abo": "inaktiv"})])
+                                     (EINGERICHTET, konfig_form.nach_form({**_FLACH, "abo": "inaktiv"}))])
 def test_eine_eingerichtete_konfiguration_startet_neu(tmp_path, alt, neu):
     """Gegenprobe zu (c): ist die alte oder die neue Konfiguration eingerichtet, bleibt der Neustart."""
     host = _Host(tmp_path / "a.json")
@@ -104,7 +106,7 @@ def test_leer_nach_leer_hebt_die_abmeldung_nicht_auf_und_startet_nicht_neu(tmp_p
 
 # --- Start der Laufzeit: Konfiguration und Ursprungswerte ---
 
-ALT = {**EINGERICHTET, "ursprungswerte": {"heat_limit": 16.0}}
+ALT = konfig_form.nach_form({**_FLACH, "ursprungswerte": {"heat_limit": 16.0}})
 OFFEN = aufraeumen.Markierung("t1", ALT, False)
 
 
@@ -131,7 +133,7 @@ def test_laufzeit_konfiguration_mit_markierung_startet_abgemeldet_mit_der_alten(
 
 def test_laufzeit_konfiguration_eine_schon_eingerichtete_gespeicherte_geht_vor(tmp_path):
     """Kam vor dem Start der Laufzeit schon eine neue Einrichtung an, laeuft die Laufzeit mit ihr (wie bisher)."""
-    neu = {**EINGERICHTET, "anlage": "t2"}
+    neu = konfig_form.nach_form({**_FLACH, "anlage": "t2"})
     assert _mit_konfiguration(tmp_path, neu, OFFEN).laufzeit_konfiguration() == (neu, False)
 
 
@@ -140,7 +142,7 @@ def test_ursprungswerte_server_markierung_hat_vorrang(tmp_path):
     Anlage) eintrifft; ohne ausstehendes Zuruecksetzen gilt die aktuelle eingerichtete, sonst die der Laufzeit."""
     host = _mit_konfiguration(tmp_path, LEER, OFFEN)
     konfiguration, leer_abmelden = host.laufzeit_konfiguration()
-    host.device.gespeichert = {**EINGERICHTET, "anlage": "t2", "ursprungswerte": {"heat_limit": 12.0}}
+    host.device.gespeichert = konfig_form.nach_form({**_FLACH, "anlage": "t2", "ursprungswerte": {"heat_limit": 12.0}})
     assert host.ursprungswerte_server(konfiguration, leer_abmelden) == {"heat_limit": 16.0}
     # ohne Markierung: die frisch eingetroffene Konfiguration
     assert host.ursprungswerte_server(konfiguration, False) == {"heat_limit": 12.0}

@@ -25,7 +25,7 @@ def _abmelden(anlage, version: int = 2) -> None:
 
 
 def _abo_ende(anlage) -> None:
-    anlage.konfiguration_senden(2, {**konfiguration(SATZ, "Heizkoerper"), "abo": "inaktiv"})
+    anlage.konfiguration_senden(2, konfiguration(SATZ, "Heizkoerper", abo="inaktiv"))
     anlage.laufen_ueber_neustarts(600)
     assert stand(anlage) == COMFORT_BOOST  # die Karenzzeit: das Add-on regelt im Notbetrieb weiter
     assert any("Notbetrieb" in text for text in anlage.meldetexte())
