@@ -3,7 +3,8 @@ nachgebauten HA-Funktionen states()/state_attr(). Das echte HA-Verhalten (none -
 prueft tests/test_ha_api_real_ha_integration.py."""
 import pytest
 
-from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
+from heizungsbruecke import helper_templates
+from heizungsbruecke.helper_templates import room_temperature_template
 
 jinja2 = pytest.importorskip("jinja2")
 
@@ -41,11 +42,9 @@ def test_room_template_with_a_single_sensor():
     assert _render(room_temperature_template(["sensor.a"]), {"sensor.a": "19.5"}) == "19.5"
 
 
-@pytest.mark.parametrize("value,expected", [(3.2, "3.2"), (-41.0, "None"), (None, "None"), ("x", "None")])
-def test_outdoor_template_reads_weather_temperature_within_range(value, expected):
-    template = outdoor_temperature_template("weather.forecast_home")
-
-    assert _render(template, {}, {("weather.forecast_home", "temperature"): value}) == expected
+def test_there_is_no_template_for_the_outdoor_temperature():
+    """Die Aussentemperatur kommt aus einem Sensor; ein Template-Helfer dafuer gibt es nicht mehr."""
+    assert not hasattr(helper_templates, "outdoor_temperature_template")
 
 
 def test_room_template_rejects_empty_sensor_list():

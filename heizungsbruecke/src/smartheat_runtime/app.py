@@ -115,7 +115,7 @@ class StartFailure(Exception):
 
 @dataclass(frozen=True)
 class Notice:
-    """Nicht kritischer Hinweis des Hosts beim Start (HA: Quelle der Raum- oder Aussentemperatur gewechselt)."""
+    """Nicht kritischer Hinweis des Hosts beim Start (HA: Quelle der Raumtemperatur gewechselt)."""
     key: str
     state: str
     message: str

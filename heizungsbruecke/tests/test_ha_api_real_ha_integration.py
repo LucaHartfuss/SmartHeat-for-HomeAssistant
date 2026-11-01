@@ -25,7 +25,7 @@ from bindung_beispiele import VAILLANT_MYPYLLANT
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import HaPlantBinding
-from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
+from heizungsbruecke.helper_templates import room_temperature_template
 from smartheat_runtime.roles import ChannelManifest
 
 pytestmark = pytest.mark.skipif(
@@ -260,18 +260,6 @@ def test_room_template_sensor_averages_valid_sources_and_is_unknown_without(real
     _set_state(api, "sensor.tp6_a", "unknown", {})
     _set_state(api, "climate.tp6_d", "heat", {"current_temperature": None, "temperature": 22.0})
     assert _wait_for_state(api, entity_id, "unknown") == "unknown"
-
-
-def test_outdoor_template_sensor_reads_weather_temperature(real_ha):
-    base_url, token = real_ha
-    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-    _set_state(api, "weather.tp6_home", "sunny", {"temperature": 3.2, "temperature_unit": "°C"})
-
-    entity_id = api.create_template_sensor(
-        name="SmartHeat realtest Außentemperatur", template=outdoor_temperature_template("weather.tp6_home"),
-    )
-
-    assert _wait_for_state(api, entity_id, "3.2") == "3.2"
 
 
 def test_deleted_and_recreated_helpers_keep_their_entity_id(real_ha):
