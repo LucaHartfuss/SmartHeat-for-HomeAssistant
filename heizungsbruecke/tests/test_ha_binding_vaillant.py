@@ -1,5 +1,6 @@
 """HA-Binding Vaillant: die Betriebsart der Zone als Hilfs-Ursprungswert (mode_select) und ihre Rueckstellung auf das
 Zeitprogramm (auto). Hebel und Reihenfolge mit der Pipeline: test_core_pipeline_vaillant_rueckstellung.py."""
+import dataclasses
 import logging
 
 import pytest
@@ -64,6 +65,14 @@ def test_read_aux_without_a_climate_zone_names_no_mode():
     manifest = ChannelManifest(refs={"curve_current": "number.curve", "shift_current": "number.shift"})
     binding, _ = _binding(manifest=manifest)
     assert binding.read_aux() == {"mode_select": KEINE_BETRIEBSART}
+
+
+def test_a_description_without_aux_values_reads_and_allows_nothing():
+    ha = FakeHa(MANUAL_HVAC_MODE)
+    binding = HaPlantBinding(ha, MANIFEST, dataclasses.replace(VAILLANT_MYPYLLANT, aux_originals=()))
+    assert binding.read_aux() == {}
+    assert binding.aux_zulaessig("mode_select", "auto") is False
+    assert ha.calls == []
 
 
 @pytest.mark.parametrize(("wert", "zulaessig"), [
