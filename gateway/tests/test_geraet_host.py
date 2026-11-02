@@ -13,9 +13,10 @@ from befehle_sicht import registrierte_befehle
 from configs import bedienung, dokumente_schreiben, konfiguration, leer
 from fakes import FakeBus
 from geraet_welt import WALL, FakeDevice, Welt
+from rastung_beispiele import rastung_aus
 from world import GatewayWorld
 
-from smartheat_core import dateien
+from smartheat_core import dateien, rastung
 from smartheat_device import nachrichten, wire
 from smartheat_device.documents import DocumentStore
 from smartheat_device.geraet_host_basis import EV_RELOAD
@@ -319,6 +320,8 @@ def test_the_sign_off_ends_only_with_a_new_version_of_the_same_plant(world):
     Zustellung derselben Version (kein Neustart); eine neue Version mit gleichem Inhalt hebt die Markierung auf, und der
     Neustart regelt wieder."""
     dokumente_schreiben(world.paths, konfiguration(), version=1)
+    # die Rastung gehoert zur gespeicherten Konfiguration (ohne sie lehnt der Speicher jede neue Konfiguration ab)
+    rastung.schreiben(world.paths.rastung, rastung_aus(konfiguration()), "2026-11-01T00:00:00")
     dokument_config.abmelden(world.paths.abgemeldet, "test-tenant")
     world.start_runtime()
     world.connect()
