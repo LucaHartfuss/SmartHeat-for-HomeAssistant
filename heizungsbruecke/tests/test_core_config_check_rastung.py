@@ -124,3 +124,27 @@ def test_a_home_assistant_config_entry_or_circle_change_is_locked():
 def test_a_home_assistant_read_role_can_change_without_a_new_setup(rolle):
     lock = rastung_aus(_ha())
     assert _ha_pruefen(_ha(**{rolle: "sensor.ein_neuer_fuehler"}), lock) is None
+
+
+def _ha_ohne(rolle: str) -> dict:
+    neu = _ha()
+    del neu["kreise"][0]["bindung"]["rollen"][rolle]
+    return neu
+
+
+def test_a_home_assistant_write_role_that_drops_out_or_comes_in_is_locked():
+    lock = rastung_aus(_ha())
+    assert _ha_pruefen(_ha_ohne("room_setpoint"), lock) == EINGERASTET        # fiele weg: weniger Ziele
+    assert _ha_pruefen(_ha(heat_limit="number.zuhause_circuit_0_heat_limit"), lock) == EINGERASTET  # kaeme hinzu
+    schmal = rastung_aus(_ha_ohne("room_setpoint"))
+    assert _ha_pruefen(_ha(), schmal) == EINGERASTET                           # umgekehrt ebenso
+
+
+def test_swapped_or_repeated_home_assistant_write_targets_are_locked():
+    lock = rastung_aus(_ha())
+    rollen = _ha()["kreise"][0]["bindung"]["rollen"]
+    vertauscht = _ha(curve=rollen["room_setpoint"], room_setpoint=rollen["curve"])
+    assert _ha_pruefen(vertauscht, lock) == EINGERASTET
+    doppelt = _ha(room_setpoint=rollen["curve"])                                # dasselbe Ziel in zwei Rollen
+    assert _ha_pruefen(doppelt, lock).grund == cc.DOPPELT_BELEGT  # die Bindung lehnt zuerst ab
+    assert not rastung.passt(lock, doppelt)                                    # und die Rastung dahinter auch

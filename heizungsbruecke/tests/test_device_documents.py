@@ -143,7 +143,7 @@ def test_a_read_only_store_neither_writes_nor_creates_the_lock(tmp_path):
     _store(tmp_path).empfangen("konfiguration", _konfiguration())
     (tmp_path / "sicherheitssatz.json").unlink()
     nur_lesen = docs.DocumentStore(tmp_path, host="gateway", software_version="0.6.0", rasten=False)
-    assert nur_lesen.rastung is None and nur_lesen.inhalt("konfiguration")["anlage"] == "kunde3"
+    assert nur_lesen.rastung.sperre == "fehlt" and nur_lesen.inhalt("konfiguration")["anlage"] == "kunde3"
     assert not (tmp_path / "sicherheitssatz.json").exists()
 
 
@@ -177,15 +177,64 @@ def test_an_empty_configuration_never_creates_a_lock(tmp_path):
     assert not (tmp_path / "sicherheitssatz.json").exists()
 
 
-def test_a_stored_configuration_without_lock_does_not_lock_on_start(tmp_path):
-    """Stand vor der Rastung je Kreis (client1): der Start rastet nicht nach, die Migration holt es nach. Bis dahin
-    gilt keine Rastung, das naechste angenommene Dokument rastet wie bei der ersten Einrichtung."""
+def test_a_stored_configuration_without_lock_is_locked_not_locked_in_again(tmp_path):
+    """Stand vor der Rastung je Kreis (client1): der Start rastet nicht nach und ein neues Dokument rastet nicht ein
+    (sonst bestimmte das erste fremde Dokument die Ziele); die Rastung gilt als gesperrt (`fehlt`) bis zur Migration."""
     _store(tmp_path).empfangen("konfiguration", _konfiguration())
     (tmp_path / "sicherheitssatz.json").unlink()
     store = _store(tmp_path)
-    assert store.rastung is None and not (tmp_path / "sicherheitssatz.json").exists()
-    assert store.empfangen("konfiguration", _konfiguration(version=2)).ok
-    assert store.rastung == _rastung_zu() and (tmp_path / "sicherheitssatz.json").exists()
+    assert store.rastung == rastung.UNBEKANNT and store.rastung.sperre == "fehlt"
+    assert not (tmp_path / "sicherheitssatz.json").exists()
+    ergebnis = store.empfangen("konfiguration", _konfiguration(version=2, verteilsystem="Fussbodenheizung"))
+    assert (ergebnis.ok, ergebnis.grund) == (False, "hebelsatz_eingerastet")
+    assert store.empfangen("konfiguration", _konfiguration(version=3)).grund == "hebelsatz_eingerastet"
+    assert not (tmp_path / "sicherheitssatz.json").exists() and store.version("konfiguration") == 1
+    assert store.empfangen("konfiguration", _leer(version=4)).ok       # leer bleibt moeglich und lockert nichts
+
+
+def test_a_migration_while_the_store_runs_is_neither_overwritten_nor_bypassed(tmp_path):
+    """Die Migration schreibt die Datei, waehrend der Store laeuft (docker exec): der Store liest vor jeder Annahme
+    neu, nimmt nur zur Rastung Passendes an und ueberschreibt die Datei nie."""
+    _store(tmp_path).empfangen("konfiguration", _konfiguration())
+    (tmp_path / "sicherheitssatz.json").unlink()
+    store = _store(tmp_path)
+    rastung.schreiben(tmp_path / "sicherheitssatz.json", _rastung_zu(), "2026-11-01T00:00:00")  # wie die Migration
+    inhalt = (tmp_path / "sicherheitssatz.json").read_bytes()
+    ergebnis = store.empfangen("konfiguration", _konfiguration(version=2, verteilsystem="Fussbodenheizung"))
+    assert (ergebnis.ok, ergebnis.grund) == (False, "hebelsatz_eingerastet")
+    assert (tmp_path / "sicherheitssatz.json").read_bytes() == inhalt
+    assert store.empfangen("konfiguration", _konfiguration(version=3)).uebernommen
+    assert (tmp_path / "sicherheitssatz.json").read_bytes() == inhalt and store.rastung == _rastung_zu()
+
+
+def test_a_file_that_appears_between_check_and_locking_is_not_overwritten(tmp_path, monkeypatch):
+    """Erstinbetriebnahme, die Migration legt die Datei zwischen Pruefung und Einrasten an: nichts wird ueberschrieben,
+    das Dokument wird gegen die Datei neu geprueft."""
+    store = _store(tmp_path)
+    echt = docs.config_check.pruefen
+    aufrufe = []
+
+    def pruefen(inhalt, lock, **kwargs):
+        aufrufe.append(lock)
+        if len(aufrufe) == 1:
+            rastung.schreiben(tmp_path / "sicherheitssatz.json", _rastung_zu(), "2026-11-01T00:00:00")
+        return echt(inhalt, lock, **kwargs)
+
+    monkeypatch.setattr(docs.config_check, "pruefen", pruefen)
+    ergebnis = store.empfangen("konfiguration", _konfiguration(verteilsystem="Fussbodenheizung"))
+    assert aufrufe[0] is None and aufrufe[1] == _rastung_zu()
+    assert (ergebnis.ok, ergebnis.grund) == (False, "hebelsatz_eingerastet")
+    assert rastung.lesen(tmp_path / "sicherheitssatz.json") == _rastung_zu()
+    assert store.version("konfiguration") == 0
+
+
+def test_a_configuration_without_a_derivable_lock_is_rejected_not_stored(tmp_path, monkeypatch):
+    monkeypatch.setattr(docs.rastung, "aus_konfiguration", lambda inhalt: None)
+    store = _store(tmp_path)
+    ergebnis = store.empfangen("konfiguration", _konfiguration())
+    assert (ergebnis.ok, ergebnis.grund) == (False, "ungueltig")
+    assert store.version("konfiguration") == 0 and not store.eingerichtet()
+    assert not (tmp_path / "sicherheitssatz.json").exists() and not (tmp_path / "konfiguration.json").exists()
 
 
 def test_a_broken_lock_file_rejects_every_set_up_configuration(tmp_path):

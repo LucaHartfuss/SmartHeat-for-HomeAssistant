@@ -316,7 +316,6 @@ def test_the_same_pair_with_other_targets_is_rejected():
     assert not rastung.passt(lock, _gw_konf((1, 1)))                                       # anderer Heizkreis
     assert not rastung.passt(lock, _konf((1, _gw_bindung(0, treiber="simulation"))))      # anderer Treiber
     assert not rastung.passt(lock, _konf((1, _gw_bindung(0, ieee="0x1"))))                # Thermostat dazu
-    assert not rastung.passt(lock, _konf((1, _gw_bindung(0, ieee="0x1"))))
 
 
 def test_a_new_circle_number_with_the_same_targets_fits():

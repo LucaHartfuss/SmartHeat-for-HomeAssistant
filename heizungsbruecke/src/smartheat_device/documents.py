@@ -34,7 +34,9 @@ dokumente.json oder hat sein Wert nicht die Vertragsform, ist nichts gemerkt (ke
 Rastung: Hebelsatz, Verteilsystem, Schreibziele und Soll-Entity je Kreis der ersten eingerichteten Konfiguration stehen
 in sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der
 Konfiguration geschrieben. Der Start rastet nie nach: fehlt die Datei bei gespeicherter eingerichteter Konfiguration
-oder steht sie im alten Format, holt die einmalige Migration im Wartungsfenster es nach (rastung_migration). Scheitert
+(Code fehlt) oder steht sie im alten Format, ist die Rastung gesperrt und neue Konfigurationen werden abgelehnt, bis die
+einmalige Migration im Wartungsfenster sie nachholt (rastung_migration); die Datei wird vor jeder Annahme neu gelesen
+und nie ueberschrieben. Scheitert
 das Schreiben erst nach dem Ersetzen (fsync des Ordners), gilt die Rastung vom Datentraeger. Eine kaputte oder
 manipulierte Datei (auch ein Symlink, auch das alte Format) lehnt jede eingerichtete Konfiguration ab (rastung.lesen)."""
 import copy
@@ -58,6 +60,7 @@ DATEIEN = {KONFIGURATION: "konfiguration.json", BEDIENUNG: "bedienung.json", ANZ
 ZUSTAND_DATEI = "dokumente.json"
 SCHEMA_UNBEKANNT = "schema_unbekannt"
 UNGUELTIG = "ungueltig"
+_FEHLT = replace(rastung.UNBEKANNT, sperre="fehlt")  # Konfiguration da, Rastungsdatei fehlt: gesperrt
 UPDATE_NOETIG = "update_noetig"
 AUSSERHALB_BEREICH = "ausserhalb_bereich"
 _RESERVIERT = ("schema", "version")
@@ -271,14 +274,25 @@ class DocumentStore:
         return self._rastung
 
     def _rastung_laden(self) -> Rastung | None:
-        """Nur lesen, nie aus der gespeicherten Konfiguration nachrasten: eine fehlende Datei bei eingerichteter
-        Konfiguration (Stand vor der Rastung je Kreis) holt die einmalige Migration im Wartungsfenster nach
-        (smartheat_device.rastung_migration). Eine vorhandene, auch kaputte Datei wird nie ueberschrieben."""
-        return rastung.lesen(self._rastung_pfad)
+        """Die Rastung vom Datentraeger, nie aus der gespeicherten Konfiguration nachgerastet. Fehlt die Datei bei
+        eingerichteter Konfiguration (Stand vor der Rastung je Kreis), gilt sie als gesperrt (Code `fehlt`): ein neues
+        Dokument mit anderem Verteilsystem oder anderen Schreibzielen wird nicht eingerastet, die Laufzeit regelt mit
+        der gespeicherten Konfiguration weiter, die einmalige Migration im Wartungsfenster
+        (smartheat_device.rastung_migration) schreibt die Datei. Nur ohne Konfiguration und ohne Datei (Erstinbetriebnahme)
+        ist sie None. Wird bei jeder Pruefung neu gelesen: eine inzwischen migrierte Datei gilt sofort."""
+        gelesen = rastung.lesen(self._rastung_pfad)
+        if gelesen is None and self.eingerichtet():
+            return _FEHLT
+        return gelesen
 
     def _rasten(self, inhalt: dict) -> Rastung | None:
+        """Schreibt die Rastung zum ersten Mal. Liegt inzwischen eine Datei da (etwa von der Migration), wird nichts
+        geschrieben und diese Rastung zurueckgegeben, auch eine gesperrte; der Aufrufer prueft dann erneut."""
         if not self._rasten_erlaubt:  # Programmierfehler: ein Nur-Lese-Store (rasten=False) empfaengt keine Dokumente
             raise RuntimeError("DocumentStore mit rasten=False schreibt keine Rastung")
+        vorhanden = self._rastung_laden()
+        if vorhanden is not None:
+            return vorhanden
         neu = rastung.aus_konfiguration(inhalt)
         if neu is None:
             return None
@@ -386,6 +400,13 @@ class DocumentStore:
             self._vorbereiten(inhalt)
         if art == KONFIGURATION and self._rastung is None and not config_check.ist_leer(inhalt):
             self._rastung = self._rasten(inhalt)  # vor dem Dokument: ein Absturz dazwischen schadet nicht
+            if self._rastung is None:  # eine gepruefte Konfiguration muss sich rasten lassen, sonst nichts speichern
+                logger.error("Konfiguration abgelehnt: keine Rastung ableitbar")
+                return self._abgelehnt_mit(art, version, UNGUELTIG, None)
+            ablehnung = config_check.pruefen(inhalt, self._rastung, host=self._host,
+                                             treiber_pruefen=self._treiber_pruefen)
+            if ablehnung is not None:  # inzwischen liegt eine Datei da (Migration), die das Dokument nicht deckt
+                return self._abgelehnt_mit(art, version, ablehnung.grund, ablehnung.details)
         vorher, abgelehnt = self._docs[art], self._abgelehnt.get(art)
         try:
             self._speichern(Dokument(art, version, inhalt))
@@ -446,4 +467,5 @@ class DocumentStore:
             return None
         if self._update_anlass is not None:
             return config_check.Ablehnung(UPDATE_NOETIG)
+        self._rastung = self._rastung_laden()  # vor jeder Annahme neu lesen (Migration im laufenden Betrieb)
         return config_check.pruefen(inhalt, self._rastung, host=self._host, treiber_pruefen=self._treiber_pruefen)
