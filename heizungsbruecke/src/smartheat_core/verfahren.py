@@ -59,10 +59,13 @@ _WEISHAUPT_PRAEFIXE = ("hz_operationmode_", "heating_circuit_operation_mode_")
 
 _JE_HEBELSATZ: dict[str, Verfahren] = {v.lever_set.id: v for v in (
     # Vaillant: Zone auf Manuell; die Umschaltung macht den Sollwert unbrauchbar (ohne Quota-Check neu schreiben).
-    Verfahren(VAILLANT_VRC720, "room_setpoint", True, (), {
+    # Die Betriebsart der Zone ist der Hilfs-Ursprungswert (mode_select): Abo-Ende, Abmelden und Werksreset stellen alle
+    # vier Hebel auf ihren Ursprungswert und die Zone zuletzt auf das Zeitprogramm zurueck ("alles wie vor SmartHeat").
+    Verfahren(VAILLANT_VRC720, "room_setpoint", True, ("mode_select",), {
         "curve": "Heizkurve", "room_setpoint": "Wunschtemperatur der Zone", "heat_limit": "Heizgrenze",
         "min_flow": "Mindestvorlauftemperatur",
-    }, "Betriebsart der Zone", Schreibschutz(MAX_PER_DAY, None, None), rueckstellung_pflicht=("heat_limit",)),
+    }, "Betriebsart der Zone", Schreibschutz(MAX_PER_DAY, None, None),
+              rueckstellung_pflicht=("curve", "room_setpoint", "heat_limit", "min_flow")),
     Verfahren(WEISHAUPT_WWP, "room_setpoint", False, _WEISHAUPT_AUX, {
         "curve": "Heizkennlinie", "room_setpoint": "Raumsolltemperatur Normal", "heat_limit": "Sommer-Winter-Umschaltung",
     }, "Betriebsart", _WEISHAUPT_SCHUTZ, _WEISHAUPT_SCHEMATA,

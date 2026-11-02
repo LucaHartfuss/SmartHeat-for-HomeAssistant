@@ -17,6 +17,13 @@ from smartheat_runtime.roles import LEVER_ROLES, ChannelManifest
 logger = logging.getLogger(__name__)
 
 MANUAL_HVAC_MODE = "heat_cool"
+# Betriebsart der Zone, in der das Zeitprogramm des Reglers gilt; dorthin geht die Zone beim Zurueckstellen.
+ZEITPROGRAMM_HVAC_MODE = "auto"
+# Betriebsarten, die eine Zone-Climate melden darf; nur sie gelten als Ursprungswert (vom Geraet gelesen oder vom Server).
+ZONEN_BETRIEBSARTEN = (ZEITPROGRAMM_HVAC_MODE, MANUAL_HVAC_MODE, "heat", "cool", "off")
+# Hilfs-Ursprungswert, wenn der Sollwert keine Zone-Climate ist (eine number-Entity hat keine Betriebsart): es gibt
+# nichts zurueckzustellen, der Wert ist nie zulaessig und wird nie geschrieben.
+KEINE_BETRIEBSART = "keine_betriebsart"
 # Darunter ist die Wunschtemperatur kein Sollwert, sondern "Zone inaktiv".
 ROOM_SETPOINT_READ_MIN = 5.0
 # Server-Plausibilitaet fuer room_setpoint (messages.PLAUSIBLE_RANGES, Contract-Check (Vertrag V1b)): darueber ist der
@@ -123,14 +130,36 @@ class HaPlantBinding:
         return True
 
     def read_aux(self) -> dict[str, str | float]:
-        """Vaillant hat keine Hilfs-Ursprungswerte (description.aux_originals leer)."""
-        return {}
+        """Hilfs-Ursprungswert der Zone (Vaillant): ihre Betriebsart, roh wie HA sie meldet. Wirft, wenn die Zone nicht
+        verfuegbar ist: ohne bekannte Betriebsart darf die Pipeline die Zone nicht umstellen."""
+        if "mode_select" not in self.description.aux_originals:
+            return {}
+        lever = self.description.prepared_lever
+        if lever is None or not self.needs_preparation():
+            return {"mode_select": KEINE_BETRIEBSART}
+        return {"mode_select": self._ha_api.get_raw_state(entity_of(self.ref(lever)))}
 
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
-        return None
+        """Die Zone zurueck auf das Zeitprogramm, aber nur, wenn sie davor darauf stand und jetzt nicht (mehr) darauf
+        steht. Jeder andere Ursprungswert (Kunde war schon manuell, aus oder anders) wird gemerkt, aber nicht
+        geschrieben: SmartHeat hat nichts anderes umgestellt als auf Manuell. Ohne Zone-Climate geschieht nichts."""
+        original = values.get("mode_select")
+        lever = self.description.prepared_lever
+        if original is None or original == KEINE_BETRIEBSART or lever is None or not self.needs_preparation():
+            return
+        if original != ZEITPROGRAMM_HVAC_MODE:
+            logger.warning("Betriebsart der Zone war %s: bleibt, wird nicht zurueckgestellt", lesbar(str(original)))
+            return
+        entity_id = entity_of(self.ref(lever))
+        if self._ha_api.get_raw_state(entity_id) == ZEITPROGRAMM_HVAC_MODE:
+            return
+        self._ha_api.set_hvac_mode(entity_id, ZEITPROGRAMM_HVAC_MODE)
+        self.physical_writes += 1
+        logger.warning("Betriebsart der Zone auf den Ursprungswert %s (Zeitprogramm) zurueckgestellt",
+                       ZEITPROGRAMM_HVAC_MODE)
 
     def aux_zulaessig(self, name: str, wert: str) -> bool:
-        return False  # Vaillant hat keine Hilfswerte
+        return name == "mode_select" and name in self.description.aux_originals and wert in ZONEN_BETRIEBSARTEN
 
 
 # weishaupt_modbus nutzt als Select-Optionen Uebersetzungsschluessel, nicht Texte: 1.x "hz_operationmode_<modus>"

@@ -128,11 +128,13 @@ def _regulation_writes(env):
 # --- Boot ---
 
 def test_start_captures_the_heat_limit_original_before_any_write(env):
-    """Der Start merkt den Ursprungswert der Heizgrenze, auch wenn danach nichts geschrieben wird."""
+    """Der Start merkt die Ursprungswerte von Heizgrenze und Mindestvorlauf (Kurve und Verschiebung stehen im
+    Wiederherstellungspunkt) und die Betriebsart der Zone, auch wenn danach nichts geschrieben wird."""
     _quiet_backup(env)
     _start(env)
     assert env.ha.writes == []
-    assert _backup(env)["originals"] == {"heat_limit": 16.0}
+    assert _backup(env)["originals"] == {"heat_limit": 16.0, "min_flow": 21.0}
+    assert _backup(env)["aux_originals"] == {"mode_select": "keine_betriebsart"}  # Verschiebung ist keine Climate
 
 
 def test_a_failing_capture_of_the_heat_limit_original_does_not_stop_the_start(env, monkeypatch, caplog):
@@ -154,15 +156,18 @@ def test_a_failing_capture_of_the_heat_limit_original_does_not_stop_the_start(en
 
 
 def test_start_reports_originals_to_the_host_only_on_change(env):
-    _quiet_backup(env, originals={"heat_limit": 16.0})
+    _quiet_backup(env, originals={"heat_limit": 16.0, "min_flow": 21.0},
+                  aux_originals={"mode_select": "keine_betriebsart"})
     bridge = _start(env)
-    assert env.geraet.gemeldet[-1] == {"heat_limit": 16.0}
+    assert env.geraet.gemeldet[-1] == {"heat_limit": 16.0, "min_flow": 21.0, "mode_select": "keine_betriebsart"}
     anzahl = len(env.geraet.gemeldet)
     _advance(env, bridge, 60)  # weiteres Ereignis ohne Aenderung der Ursprungswerte
     assert len(env.geraet.gemeldet) == anzahl
     bridge.store.update(aux_originals={"mode_select": "hz_operationmode_automatic"})
     _advance(env, bridge, 60)  # ein Ereignis danach meldet die Aenderung (der Worker kennt nur einen Rueckruf)
-    assert env.geraet.gemeldet[-1] == {"heat_limit": 16.0, "mode_select": "hz_operationmode_automatic"}
+    assert env.geraet.gemeldet[-1] == {
+        "heat_limit": 16.0, "min_flow": 21.0, "mode_select": "hz_operationmode_automatic",
+    }
 
 
 def test_start_runs_priming_check_before_mqtt_loop_start(env, monkeypatch):
@@ -2142,9 +2147,10 @@ def test_grace_end_without_boost_restores_learned_values(env, monkeypatch):
 
     bridge.worker.run_pending()
     assert bridge.idle is True
-    # Heizgrenze: Ursprungswert (beim ersten Check von der Anlage gemerkt)
+    # Heizgrenze und Mindestvorlauf: Ursprungswerte (beim ersten Check von der Anlage gemerkt)
     assert env.ha.writes == [
         ("number.curve_current", 0.9), ("number.shift_current", 22.0), ("number.heat_limit", 16.0),
+        ("number.min_flow", 21.0),
     ]
     assert env.ha.persistent[-1] == ("smartheat_abo", ABO_ENDED)
 

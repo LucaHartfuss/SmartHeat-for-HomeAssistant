@@ -610,8 +610,9 @@ class LeverPipeline:
                 self._require_aux(prepared_lever)
             # Ohne Pflicht zu Hilfswerten (nur die Wiederherstellung) nicht vorbereiten, wenn das Binding Hilfswerte
             # hat: die Betriebsart geht ueber restore_aux zurueck, ohne gemerkte Werte bliebe eine Umstellung fuer
-            # immer.
-            # Vaillant (keine Hilfswerte) bereitet immer vor.
+            # immer. Ein Binding ohne Hilfswerte bereitet immer vor. Vaillant hat die Betriebsart der Zone als
+            # Hilfswert: vor der Vorbereitung muss sie gemerkt sein (require_aux), die Wiederherstellung bereitet nicht
+            # vor und schreibt den Sollwert nur, solange die Zone auf Manuell steht (_ready_for_setpoint).
             if self._binding.needs_preparation() and (require_aux or not self._description.aux_originals):
                 if not prepare_quota:
                     switched = self.ensure_prepared(exempt=exempt, require_aux=require_aux)
@@ -621,6 +622,9 @@ class LeverPipeline:
                     self._hold_back(held)
                 else:
                     switched = prepared
+            elif not require_aux and not self._ready_for_setpoint(prepared_lever):
+                skipped = self._group(prepared_lever)
+                values = {lever: value for lever, value in values.items() if lever not in skipped}
         force_prepared = switched and self._description.preparation_resets_setpoint
         written: list[str] = []
         done: set[str] = set()
@@ -640,6 +644,21 @@ class LeverPipeline:
             written.extend(members)
         self._clear_deferred(written)
         return held
+
+    def _ready_for_setpoint(self, lever: str) -> bool:
+        """False, wenn die Anlage ohne Vorbereitung (Wiederherstellung) den Sollwert des prepared_lever nicht annimmt:
+        steht die Zone nicht auf Manuell, wuerde ein Schreiben als Quick-Veto der Hersteller-Cloud verworfen
+        (preparation_resets_setpoint). Dann entfaellt der Hebel (Log), die uebrigen Hebel und die Hilfswerte laufen.
+        Nicht lesbare Betriebsart: DeviceWriteError, die Wiederherstellung wird wiederholt."""
+        if not self._description.preparation_resets_setpoint or not self._binding.needs_preparation():
+            return True
+        try:
+            prepared = self._binding.is_prepared()
+        except Exception as error:
+            raise DeviceWriteError(lever, self._binding.ref(lever), error) from error
+        if not prepared:
+            logger.info("%s nicht zurueckgestellt: die Zone steht nicht auf Manuell, der Wert wuerde verworfen", lever)
+        return prepared
 
     def _prepare_within_quota(self, *, exempt: bool, require_aux: bool) -> bool | None:
         """ensure_prepared im Kontingent zone_prepare (write_budget.RETRY_QUOTA: nach einem Fehlschlag hoechstens ein
@@ -936,6 +955,7 @@ class LeverPipeline:
         """Die Hebel aus restore_originals vor dem ersten eigenen Schreiben als Ursprungswert merken. Nur
         einmal und nur solange es fuer den Hebel noch keinen Wiederherstellungswert gibt (sonst waere der Live-Wert
         schon ein gelernter). Ein Lesefehler ist kein Fehler: der naechste Aufruf versucht es erneut."""
+        boost_levers = self._boost_levers()
         for lever in self._description.restore_originals:
             state = self._store.state
             if (
@@ -943,6 +963,11 @@ class LeverPipeline:
                 or state.restore_point.get(lever) is not None
             ):
                 continue
+            if (
+                (state.boost_active or state.emergency_boost_active)
+                and lever in boost_levers and lever not in self._description.optional_restore
+            ):
+                continue  # jeder Boost schreibt diesen Hebel: der Live-Wert ist ein Boost-Wert, kein Ursprungswert
             try:
                 live = self._binding.read(lever)
             except Exception as error:

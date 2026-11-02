@@ -211,7 +211,7 @@ def test_umbenannte_hebel_entity_behaelt_die_ursprungswerte(env):
     _answer_levers(env, bridge, snapshot["seq"], {"curve": 1.3, "room_setpoint": 22.0, "heat_limit": 18.0, "min_flow": 22.0})
     assert env.ha.states["number.curve_current"] == 1.3  # Gegenprobe: die Regelung hat geschrieben
     ursprung = {key: _backup(env)[key] for key in ("originals", "restore_point")}
-    assert ursprung == {"originals": {"heat_limit": 16.0},
+    assert ursprung == {"originals": {"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0, "min_flow": 21.0},
                         "restore_point": {"curve": 1.3, "room_setpoint": 22.0, "heat_limit": 18.0, "min_flow": 22.0}}
     assert _backup(env)["plant_id"] == KREIS_KENNUNG
     env.ha.states["number.heat_limit_neu"] = 18.0  # dieselbe Heizgrenze unter neuem Namen

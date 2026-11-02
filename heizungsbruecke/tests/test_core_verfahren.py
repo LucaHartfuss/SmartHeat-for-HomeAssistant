@@ -69,7 +69,8 @@ def test_verfahrensfelder_wie_bis_1_0_0():
     v, w, b, s = (VERFAHREN[k] for k in (
         ("vaillant_myvaillant", "vaillant_vrc720"), ("weishaupt_modbus", "weishaupt_wwp"),
         ("weishaupt_modbus", "weishaupt_wwp_basis"), ("viessmann_vicare", "viessmann_vicare")))
-    assert (v.prepared_lever, v.preparation_resets_setpoint, v.aux_originals, v.schemata) == ("room_setpoint", True, (), ())
+    assert (v.prepared_lever, v.preparation_resets_setpoint, v.aux_originals, v.schemata) == (
+        "room_setpoint", True, ("mode_select",), ())
     for x in (w, b):
         assert (x.prepared_lever, x.preparation_resets_setpoint) == ("room_setpoint", False)
         assert x.aux_originals == ("mode_select", "setpoint_comfort", "setpoint_setback")
