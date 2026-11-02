@@ -19,7 +19,7 @@ import os
 import stat
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from smartheat_core import dateien, kreisansicht
@@ -70,7 +70,7 @@ class _Ungueltig(Exception):
 
 def _gesperrt(code: str) -> Rastung:
     logger.error("Rastung des Sicherheitssatzes gesperrt (%s): jede Einrichtung wird abgelehnt", code)
-    return Rastung((), sperre=code)
+    return replace(UNBEKANNT, sperre=code)
 
 
 def _json(pfad: Path):
@@ -201,7 +201,8 @@ def aus_konfiguration(konfiguration) -> Rastung | None:
         nummer, hebelsatz, verteilsystem = kreis.get("kreis"), kreis.get("hebelsatz"), kreis.get("verteilsystem")
         bindung = kreis.get("bindung")
         ziel = ziele(bindung)
-        if not (ziel and _nummer(nummer, 1) and isinstance(hebelsatz, str) and isinstance(verteilsystem, str)):
+        if not (ziel and isinstance(nummer, int) and _nummer(nummer, 1)
+                and isinstance(hebelsatz, str) and isinstance(verteilsystem, str)):
             return None
         try:
             resolve_local_safety(hebelsatz, verteilsystem)

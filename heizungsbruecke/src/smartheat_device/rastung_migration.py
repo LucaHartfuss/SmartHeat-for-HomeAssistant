@@ -112,7 +112,7 @@ def migrieren(ordner: Path, *, host: str, release: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="smartheat_device.rastung_migration", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(prog="smartheat_device.rastung_migration", description=(__doc__ or "").split("\n")[0])
     parser.add_argument("--device-dir", required=True, type=Path)
     parser.add_argument("--host", required=True)
     parser.add_argument("--release", required=True)
