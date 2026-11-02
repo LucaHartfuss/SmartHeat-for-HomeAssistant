@@ -105,7 +105,7 @@ class Anlage:
 
     def antwort(self, **hebel) -> None:
         """Gueltige Serverantwort auf den letzten Tick."""
-        werte = {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0, **hebel}
+        werte = {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0, "min_flow": 20.5, **hebel}
         self.senden("down/setpoints", {"schema": 4, "seq": self.snapshots()[-1]["seq"], "ts": "x", "status": "ok",
                                        "reason": None, "levers": werte, "learned": None})
 
@@ -276,8 +276,8 @@ def test_eine_befehlsflut_haelt_die_regelung_nicht_an_und_den_speicher_bei_500(
 
 KAPUTT_ANZAHL = 100
 #: gueltig aufgebaute Antworten mit Werten weit ausserhalb der lokalen Grenzen: zu hoch, zu niedrig
-WILDE_ANTWORTEN = ({"curve": 9.9, "room_setpoint": 99.0, "heat_limit": 99.0},
-                   {"curve": -5.0, "room_setpoint": -40.0, "heat_limit": -40.0})
+WILDE_ANTWORTEN = ({"curve": 9.9, "room_setpoint": 99.0, "heat_limit": 99.0, "min_flow": 99.0},
+                   {"curve": -5.0, "room_setpoint": -40.0, "heat_limit": -40.0, "min_flow": -40.0})
 #: Namen der Varianten, die das Geraet verwirft, bevor es sie liest (zu gross, kein JSON, keine Nachricht): keine Antwort
 UNGELESEN = {"Uebergroesse", "kein JSON", "Liste"}
 
@@ -449,7 +449,7 @@ def test_100_kaputte_dokumente_und_antworten_im_wechsel_mit_ticks_aendern_die_ko
     # zu niedrige Antwortwerte kamen als unterer Grenzwert an (den schreibt sonst nichts); die obere Seite deckt
     # _alle_schreibwerte_in_den_grenzen ab (der Comfort-Boost schreibt dort ohnehin das Maximum)
     for entity, hebel in (("number.curve_current", "curve"), ("number.shift_current", "room_setpoint"),
-                          ("number.heat_limit", "heat_limit")):
+                          ("number.heat_limit", "heat_limit"), ("number.min_flow", "min_flow")):
         assert (entity, BEREICHE[hebel][0]) in env.ha.writes, hebel
     assert anlage.bridge.store.state.learned == {}  # die gueltigen Antworten lernen nichts, die kaputten bleiben ohne Wirkung
     # Gegenprobe: das Geraet nimmt nach der Flut ein gueltiges Dokument an

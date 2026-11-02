@@ -149,7 +149,7 @@ def test_first_start_snapshot_reports_the_written_start_shift_not_the_stale_zone
     # uebernehmen und mit seiner Antwort die 21 ueberschreiben.
     manifest = ChannelManifest(refs={
         "room_target": "sensor.room_target", "curve_current": "number.curve",
-        "shift_current": "climate.zone::temperature", "min_flow": "number.min_flow",
+        "shift_current": "climate.zone::temperature",
     })
     ha, store, mqtt = _StaleZoneHa(), make_store(), FakeMqttChannel()
     override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), _safety(), clock=clock)

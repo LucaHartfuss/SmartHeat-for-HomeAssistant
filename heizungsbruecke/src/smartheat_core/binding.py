@@ -63,7 +63,7 @@ class BindingDescription:
 
     def __post_init__(self) -> None:
         name = self.lever_set.id
-        all_levers = set(self.lever_set.levers + self.lever_set.client_derived)
+        all_levers = set(self.lever_set.levers)
         for lever in sorted(all_levers):
             if lever not in self.steps:
                 raise ValueError(f"Binding {name}: keine Schrittweite fuer {lever}")

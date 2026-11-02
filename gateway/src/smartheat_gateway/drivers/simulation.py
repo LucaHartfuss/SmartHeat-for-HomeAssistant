@@ -130,10 +130,10 @@ class SimulationDriver:
         return control if isinstance(control, dict) else {}
 
     def _levers(self) -> tuple[str, ...]:
-        """Alle Hebel der Anlage: gesendete, client-abgeleitete (Vaillant: min_flow) und nur gelesene."""
+        """Alle Hebel der Anlage: gesendete und nur gelesene."""
         lever_set = LEVER_SETS[self._p["lever_set"]]
         readonly = self._description.readonly_levers if self._description else ()
-        return lever_set.levers + lever_set.client_derived + readonly
+        return lever_set.levers + readonly
 
     def _visible(self, plant: dict, lever: str) -> float:
         written = plant["geschrieben_um"].get(lever)

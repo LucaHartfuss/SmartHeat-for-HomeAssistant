@@ -375,7 +375,9 @@ def test_abmelden_stellt_dieselben_rollen_zurueck_wie_der_hebelsatz(host_mit_kli
     assert parts is not None
     binding = parts.binding
     gesendet = [lever for lever in binding.description.lever_set.levers if binding.has(lever)]
-    assert gesendet == list(binding.description.lever_set.levers) == ["curve", "room_setpoint", "heat_limit"]
+    assert gesendet == list(binding.description.lever_set.levers) == [
+        "curve", "room_setpoint", "heat_limit", "min_flow",
+    ]
     assert binding.ref("room_setpoint") == "climate.zone::temperature"
     assert binding.ref("curve") == OPTIONS["entity_curve_current"]
     assert binding.ref("heat_limit") == OPTIONS["entity_heat_limit"]

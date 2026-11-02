@@ -6,7 +6,7 @@ import math
 from typing import TypeGuard
 
 # Gleitkomma-Rest beim Vergleich mit einer Toleranz (21.05 - 21.0 = 0.0500000000000007, 0.91 - 0.9): eine Abweichung von
-# genau der Toleranz zaehlt nicht als Abweichung (enforce, derived).
+# genau der Toleranz zaehlt nicht als Abweichung (enforce).
 GLEITKOMMA_REST = 1e-9
 
 

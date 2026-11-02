@@ -296,9 +296,12 @@ class Anlage(Handgriffe):
 
     def server_antwortet(self, hebel: dict) -> None:
         """Antwort des Servers (setpoints) auf den letzten Snapshot; verarbeitet wird sie in der naechsten Runde."""
+        levers = dict(hebel)
+        if "number.min_flow" in self.ha.states:  # Vaillant: auch der Mindestvorlauf kommt vom Server (Startwert 21,0)
+            levers.setdefault("min_flow", 21.0)
         self.link.empfangen("down/setpoints", {
             "schema": 4, "seq": self.link.of("up/snapshot")[-1]["seq"], "ts": "x", "status": "ok", "reason": None,
-            "levers": hebel, "learned": None})
+            "levers": levers, "learned": None})
 
     def runde(self, sekunden: float = 0) -> None:
         self.device.schritt()

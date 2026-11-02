@@ -304,7 +304,7 @@ def test_fehlertexte_nicht_doppelt_verpackt():
     ({"enforce_tolerance": {"curve": 0.025}}, "Toleranz"),
     ({"labels": {}}, "Anzeigename"),
     ({"restore_originals": ("level",)}, "restore_originals"),
-    ({"optional_restore": ("min_flow",)}, "optional_restore"),
+    ({"optional_restore": ("level",)}, "optional_restore"),
     ({"prepared_lever": "level"}, "prepared_lever"),
     ({"settle_seconds": 0}, "Wartezeit"),
     ({"daily_write_limit": 0}, "daily_write_limit"),
@@ -387,7 +387,7 @@ _W = "weishaupt_wwp_basis"
 # Je Pruefung in beschreibung ein Verstoss (Abschlussreview Minor 1): jeder Text ist fuer sich verstaendlich und nennt
 # die Bindungsparameter genau einmal (config_check setzt kein Praefix mehr davor).
 _VERSTOESSE = {
-    "hebel": _mit("vaillant_vrc720", zurueck=["min_flow"]),
+    "hebel": _mit("vaillant_vrc720", zurueck=["level"]),
     "zahlen_je_hebel": _ohne_min_flow(),
     "schreibschutz_unvollstaendig": _mit("vaillant_vrc720", schreibschutz={"tag": None, "lebensdauer_hinweis": None}),
     "durchsetzen": _mit("vaillant_vrc720", schreibschutz={"tag": None, "lebensdauer_hinweis": None,

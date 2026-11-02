@@ -487,14 +487,14 @@ def test_no_lifetime_hint_below_the_threshold(make_store, clock):
 
 
 def test_write_lever_is_not_exempt_from_the_daily_limit(make_store, clock):
-    # Mindestvorlauf (write_lever) und der Startwert in prepare_start zaehlen gegen das Tagesbudget.
+    # Mindestvorlauf (_write_lever) und der Startwert in prepare_start zaehlen gegen das Tagesbudget.
     store = make_store()
     ha = Ha({"number.curve": 0.7, "number.min_flow": 20.0})
     manifest = ChannelManifest(refs={"curve_current": "number.curve", "min_flow": "number.min_flow"})
     limited = dataclasses.replace(VAILLANT_MYPYLLANT, daily_write_limit=1)
     pipeline = LeverPipeline(store, HaPlantBinding(ha, manifest, limited),
                              resolve_local_safety("vaillant_vrc720", "Heizkoerper"), clock=clock)
-    assert pipeline.write_lever("min_flow", 22.0) == 22.0
+    assert pipeline._write_lever("min_flow", 22.0) == 22.0
     with pytest.raises(WriteBudgetExhausted):
-        pipeline.write_lever("min_flow", 25.0)
+        pipeline._write_lever("min_flow", 25.0)
     assert ha.writes == [("number.min_flow", 22.0)]

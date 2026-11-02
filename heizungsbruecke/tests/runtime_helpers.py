@@ -115,13 +115,15 @@ class _Link:
         """Der Link des Geraets ist (wieder) verbunden (Geraete-Thread)."""
         self._geraet.channel.verbunden()
 
-    def answer(self, seq, status="ok", curve=0.95, shift=23.0, reason=None, schema=4, heat_limit=16.0, levers=None):
-        """Server-Antwort (Schema 4) ueber den Link einspeisen. levers=None baut die Hebel aus curve/shift/heat_limit
+    def answer(self, seq, status="ok", curve=0.95, shift=23.0, reason=None, schema=4, heat_limit=16.0, min_flow=20.5,
+               levers=None):
+        """Server-Antwort (Schema 4) ueber den Link einspeisen. levers=None baut die Hebel aus curve/shift/heat_limit/min_flow
         (ein Wert _OMIT laesst den Hebel weg); schema=_OMIT bzw. levers=_OMIT: Feld fehlt."""
         if levers is None:
             levers = {
-                name: value for name, value in (("curve", curve), ("room_setpoint", shift), ("heat_limit", heat_limit))
-                if value is not _OMIT
+                name: value for name, value in (
+                    ("curve", curve), ("room_setpoint", shift), ("heat_limit", heat_limit), ("min_flow", min_flow),
+                ) if value is not _OMIT
             }
         payload = {
             "schema": schema, "seq": seq, "ts": "x", "status": status, "reason": reason, "levers": levers,
@@ -135,7 +137,8 @@ class _Link:
 
     def answer_raw(self, seq, **fields):
         payload = {"schema": 4, "seq": seq, "ts": "x", "status": "ok", "reason": None,
-                   "levers": {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0}, "learned": None, **fields}
+                   "levers": {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0, "min_flow": 20.5},
+                   "learned": None, **fields}
         self._geraet.channel.setpoints(payload)
 
 

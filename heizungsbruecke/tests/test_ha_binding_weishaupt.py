@@ -466,7 +466,7 @@ def test_a_preparation_after_an_earlier_write_counts_once(make_store, clock, mon
     monkeypatch.setattr(write_budget, "today", lambda: DAY)
     ha = FakeHa()
     pipeline, store = _pipeline(make_store, clock, ha)
-    pipeline.write_lever("curve", 0.8)
+    pipeline._write_lever("curve", 0.8)
     assert _total(store) == 1
     assert pipeline.ensure_prepared() is True
     assert _total(store) == 2 and store.state.lifetime_writes == 2

@@ -37,7 +37,7 @@ def test_missing_verteilsystem_keeps_the_customer_text():
     ({"ranges": {**LOCAL_SAFETY[("vaillant_vrc720", "Heizkoerper")].ranges, "heat_limit": (24.0, 23.0)}}, "heat_limit Minimum"),
     ({"ranges": {**LOCAL_SAFETY[("vaillant_vrc720", "Heizkoerper")].ranges, "room_setpoint": (26.0, 25.0)}}, "room_setpoint Minimum"),
     ({"comfort_boost": {"curve": 1.6}}, "Comfort-Boost curve=1.6"),
-    ({"comfort_boost": {"min_flow": 25.0}}, "Comfort-Boost min_flow"),
+    ({"comfort_boost": {"min_flow": 35.0}}, "Comfort-Boost min_flow=35.0"),
     ({"emergency_boost_levers": ("level",)}, "Notfall-Boost"),
     ({"arrival_threshold_k": 0.0}, "Ankunftsschwelle"),
 ])
@@ -84,7 +84,10 @@ def test_floor_heating_has_no_comfort_boost_and_an_emergency_boost_on_every_sent
 
     safety = resolve_local_safety(lever_set, "Fussbodenheizung")
     assert dict(safety.comfort_boost) == {}
-    assert safety.emergency_boost_levers == LEVER_SETS[lever_set].levers
+    # Der Mindestvorlauf ist ein gesendeter Hebel, aber kein Boost-Hebel: der Boost schreibt ihn nie.
+    assert safety.emergency_boost_levers == tuple(
+        lever for lever in LEVER_SETS[lever_set].levers if lever != "min_flow"
+    )
 
 
 def test_a_range_with_equal_minimum_and_maximum_is_valid():

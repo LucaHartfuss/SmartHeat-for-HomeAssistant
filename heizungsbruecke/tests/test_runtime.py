@@ -121,7 +121,7 @@ def _pruefintervall(monkeypatch, sekunden):
 
 
 def _regulation_writes(env):
-    """Schreibvorgaenge ohne den Mindestvorlauf, der jeder Raum-Soll-Aenderung folgt (smartheat_core/derived.py)."""
+    """Schreibvorgaenge ohne den Mindestvorlauf, der jeder Serverantwort folgt."""
     return [write for write in env.ha.writes if write[0] != "number.min_flow"]
 
 
@@ -434,53 +434,78 @@ def test_zone_preparation_stops_retrying_after_success(env):
     assert env.ha.states["climate.zone"] == "heat_cool" and bridge.zone_prepared is True
 
 
-def test_boot_writes_min_flow_when_it_differs_from_the_room_target(env):
+def _min_flow_writes(env):
+    return [value for entity_id, value in env.ha.writes if entity_id == "number.min_flow"]
+
+
+def test_the_boot_does_not_write_a_min_flow_of_its_own(env):
+    """Der Mindestvorlauf kommt vom Server; ohne Antwort schreibt das Geraet ihn nicht selbst."""
     env.ha.states["number.min_flow"] = 25.0
 
     _start(env)
 
-    assert ("number.min_flow", 21.0) in env.ha.writes
+    assert _min_flow_writes(env) == []
 
 
-def test_room_target_change_writes_min_flow(env):
+def test_room_target_change_alone_does_not_write_min_flow(env):
     _quiet_backup(env)
     bridge = _start(env)
     assert env.ha.writes == []
 
     _set_room_target(env, bridge, 22.0)
 
-    assert ("number.min_flow", 22.0) in env.ha.writes
+    assert _min_flow_writes(env) == []
 
 
-def _min_flow_writes(env):
-    return [value for entity_id, value in env.ha.writes if entity_id == "number.min_flow"]
+def test_the_answer_writes_the_server_min_flow(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], min_flow=20.54)
+
+    assert _min_flow_writes(env) == [20.5]
+    assert _backup(env)["restore_point"]["min_flow"] == 20.54
+
+
+def test_the_answer_min_flow_is_clamped_to_the_local_limit(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], min_flow=35.0)
+
+    assert _min_flow_writes(env) == [30.0]
 
 
 def test_min_flow_change_back_within_the_settle_window_is_written(env):
-    # Die Cloud spiegelt den eigenen Schreibvorgang erst mit dem naechsten Poll: HA zeigt noch 21, die
-    # Anlage steht schon auf 22. Zurueck auf 21 muss geschrieben werden, sonst bleibt die Anlage
-    # auf 22 und die Durchsetzung meldet spaeter einen falschen Eingriff.
+    # Die Cloud spiegelt den eigenen Schreibvorgang erst mit dem naechsten Poll: HA zeigt noch 20, die
+    # Anlage steht schon auf 20,5. Zurueck auf 20 muss geschrieben werden, sonst bleibt die Anlage
+    # auf 20,5 und die Durchsetzung meldet spaeter einen falschen Eingriff.
     _quiet_backup(env)
     bridge = _start(env)
-    _set_room_target(env, bridge, 22.0)
-    env.ha.states["number.min_flow"] = 21.0  # HA hinkt nach
+    _set_room_target(env, bridge, 20.5)
+    _answer(env, bridge, _mqtt(env).snapshots[-1]["seq"], min_flow=20.5)
+    env.ha.states["number.min_flow"] = 20.0  # HA hinkt nach
 
-    _set_room_target(env, bridge, 21.0)
+    _set_room_target(env, bridge, 20.0)
+    _answer(env, bridge, _mqtt(env).snapshots[-1]["seq"], min_flow=20.0)
 
-    assert _min_flow_writes(env) == [22.0, 21.0]
+    assert _min_flow_writes(env) == [20.5, 20.0]
 
 
 def test_min_flow_is_not_rewritten_while_ha_lags(env):
     _quiet_backup(env)
     bridge = _start(env)
-    _set_room_target(env, bridge, 22.0)
-    env.ha.states["number.min_flow"] = 21.0  # HA hinkt nach
+    _set_room_target(env, bridge, 20.5)
+    _answer(env, bridge, _mqtt(env).snapshots[-1]["seq"], min_flow=20.5)
+    env.ha.states["number.min_flow"] = 20.0  # HA hinkt nach
     env.trigger_clients[-1].connected = False  # Watchdog liest room_target in jedem Takt frisch
 
     _advance(env, bridge, 300)
     _advance(env, bridge, 300)
 
-    assert _min_flow_writes(env) == [22.0]
+    assert _min_flow_writes(env) == [20.5]
 
 
 def test_room_actual_trigger_does_not_touch_min_flow(env):
@@ -947,8 +972,8 @@ def test_answer_writes_values_and_closes_tick(env):
 
     assert snapshot["trigger"] == "target_change"
     assert snapshot["room_target"] == 20.5
-    assert set(snapshot["levers"]) == {"curve", "room_setpoint", "heat_limit"}
-    assert ("number.min_flow", 20.5) in env.ha.writes  # Mindestvorlauf folgt dem Raum-Soll
+    assert set(snapshot["levers"]) == {"curve", "room_setpoint", "heat_limit", "min_flow"}
+    assert ("number.min_flow", 20.5) in env.ha.writes  # Mindestvorlauf aus der Serverantwort
     assert _regulation_writes(env) == [
         ("number.curve_current", 0.95), ("number.shift_current", 23.0), ("number.heat_limit", 16.0),
     ]
@@ -1412,7 +1437,8 @@ def test_negative_huge_integer_as_room_setpoint_and_learned_heat_limit(env, ort,
         assert bridge.store.state.learned == {}
         assert _delivery(bridge).datenfehler is None
         assert env.ha.writes[len(vorher):] == [
-            ("number.curve_current", 0.95), ("number.shift_current", 23.0), ("number.heat_limit", 16.0)]
+            ("number.curve_current", 0.95), ("number.shift_current", 23.0), ("number.heat_limit", 16.0),
+            ("number.min_flow", 20.5)]
 
 
 @pytest.mark.parametrize("hebel", ["curve", "room_setpoint", "heat_limit"])
@@ -1438,7 +1464,7 @@ def test_snapshot_payload_is_schema_4(env):
     snapshot = _mqtt(env).snapshots[-1]
     assert snapshot["schema"] == 4
     assert snapshot["readonly"] == []
-    assert set(snapshot["levers"]) == {"curve", "room_setpoint", "heat_limit"}
+    assert set(snapshot["levers"]) == {"curve", "room_setpoint", "heat_limit", "min_flow"}
     assert snapshot["room_target"] == 20.5
 
 
@@ -2084,6 +2110,7 @@ def test_answer_during_emergency_boost_is_written_once_when_notbetrieb_ends(env)
     assert env.ha.writes == [
         ("number.curve_current", 1.5), ("number.shift_current", 25.0), ("number.heat_limit", 23.0),
         ("number.curve_current", 0.95), ("number.shift_current", 23.0), ("number.heat_limit", 16.0),
+        ("number.min_flow", 20.5),
     ]
 
 
@@ -2298,8 +2325,9 @@ def test_unwritable_device_is_reported_once_and_retried_without_notbetrieb(env):
     _answer(env, bridge, seq)
 
     assert [s["seq"] for s in _mqtt(env).snapshots] == [seq, seq, seq]
-    assert env.ha.writes[-3:] == [
+    assert env.ha.writes[-4:] == [
         ("number.curve_current", 0.95), ("number.shift_current", 23.0), ("number.heat_limit", 16.0),
+        ("number.min_flow", 20.5),
     ]
     assert env.ha.pushes[-1] == "Heizungsbrücke: Anlage wieder erreichbar, Heizkurve übertragen."
     assert _failsafe_file(env)["datenfehler"] is None
@@ -2691,7 +2719,8 @@ def test_manual_override_travels_with_the_next_snapshot_and_is_cleared_after_the
     _advance(env, bridge, 300)  # zwei Runden mit Abweichung
 
     # Heizgrenze ohne Wiederherstellungspunkt: Live-Wert der Anlage (Rueckfallkette).
-    assert _backup(env)["manual_override_pending"]["levers"] == {"curve": 1.3, "room_setpoint": 24.5, "heat_limit": 16.0}
+    assert _backup(env)["manual_override_pending"]["levers"] == {
+        "curve": 1.3, "room_setpoint": 24.5, "heat_limit": 16.0, "min_flow": 21.0}
     assert _last_event(env)["hinweise"]["manueller_eingriff"]["hebel"]["curve"] == 1.3
     assert _regulation_writes(env) == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]  # zurueckgesetzt
 

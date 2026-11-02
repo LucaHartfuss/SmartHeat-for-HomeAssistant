@@ -76,9 +76,6 @@ class BridgeState:
     manual_override_pending: dict | None = None
     # Nur Laufzeit (die Abo-Frist selbst liegt in entitlement_state.json).
     stable_target: float | None = None
-    # Mindestvorlauf, wie er zuletzt auf der Anlage stand (derived.py, fuer den Status). Nur
-    # Laufzeit: wird nicht persistiert (Praezisierung 12), beim Start neu ermittelt.
-    min_flow_current: float | None = None
     # Aufeinanderfolgende EV_HEALTH-Runden ohne gueltigen Wert je Raumfuehler (room_sensors.py).
     room_sensor_misses: dict = field(default_factory=dict)
     # Aufeinanderfolgende EV_HEALTH-Runden ohne gueltige Aussentemperatur (aussentemperatur.py).

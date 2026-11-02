@@ -91,7 +91,7 @@ def check_invariants(safety: LocalSafety, lever_set_id: str, verteilsystem: str)
     lever_set = LEVER_SETS.get(lever_set_id)
     if lever_set is None:
         raise ValueError(f"{label}: unbekannter Hebelsatz")
-    needed = set(lever_set.levers + lever_set.client_derived)
+    needed = set(lever_set.levers)
     if set(safety.ranges) != needed:
         raise ValueError(f"{label}: Bereiche fuer {sorted(safety.ranges)} statt {sorted(needed)}")
     for lever, (low, high) in safety.ranges.items():

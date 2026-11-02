@@ -720,7 +720,7 @@ def test_write_lever_min_flow_is_clamped_rounded_and_timed(make_store, clock):
     # (_write_lever) den Schreibvorgang als unveraendert ueberspringen.
     ha = RecordingHa({"number.min_flow": 25.0})
     override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
-    assert override.write_lever("min_flow", 19.2) == 20.0
+    assert override._write_lever("min_flow", 19.2) == 20.0
     assert ha.writes == [("number.min_flow", 20.0)]
     clock.advance(60)
     assert override.settled("min_flow") is False
@@ -830,9 +830,9 @@ def test_write_lever_min_flow_does_not_trust_a_stale_ha_read_after_our_own_recen
     ha = RecordingHa({"number.min_flow": 21.0})
     override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
 
-    assert override.write_lever("min_flow", 22.0) == 22.0
+    assert override._write_lever("min_flow", 22.0) == 22.0
     clock.advance(60)
-    assert override.write_lever("min_flow", 21.0) == 21.0
+    assert override._write_lever("min_flow", 21.0) == 21.0
 
     assert ha.writes == [("number.min_flow", 22.0), ("number.min_flow", 21.0)]
 
@@ -934,11 +934,11 @@ def test_write_lever_skips_inside_the_settle_window_when_our_last_write_is_the_t
     store = make_store()
     ha = RecordingHa({"number.min_flow": 21.0})
     override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
-    override.write_lever("min_flow", 22.0)
+    override._write_lever("min_flow", 22.0)
     ha.states["number.min_flow"] = 22.0
     clock.advance(60)
 
-    assert override.write_lever("min_flow", 22.0) == 22.0
+    assert override._write_lever("min_flow", 22.0) == 22.0
 
     assert ha.writes == [("number.min_flow", 22.0)]
 
@@ -995,7 +995,7 @@ def test_settled_counts_from_the_start_and_from_each_own_write(make_store, clock
     assert override.settled("min_flow") is False
     clock.advance(SETTLE + 1)
     assert override.settled("min_flow") is True
-    override.write_lever("min_flow", 22.0)
+    override._write_lever("min_flow", 22.0)
     assert override.settled("min_flow") is False
     assert override.settled("curve") is True
     clock.advance(SETTLE + 1)

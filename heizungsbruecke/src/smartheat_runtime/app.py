@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from smartheat_core import derived, enforce, wallclock, write_budget
+from smartheat_core import enforce, wallclock, write_budget
 from smartheat_core.binding import BindingDescription, PlantBinding
 from smartheat_core.logtext import lesbar
 from smartheat_core.pipeline import LeverPipeline, WriteBudgetExhausted
@@ -401,15 +401,13 @@ def _run_local_check(rt: Runtime, fehler_text: str) -> None:
 
 
 def _on_local_check(rt: Runtime, event: Event) -> None:
-    """Bei room_target_fired den Cache frisch lesen und den Mindestvorlauf nachfuehren, dann
-    Boost-Logik, dann "Tick faellig?".
+    """Bei room_target_fired den Cache frisch lesen, dann Boost-Logik, dann "Tick faellig?".
     Beides getrennt abgesichert: ein toter room_actual-Fuehler laesst den Boost-Teil scheitern,
     darf aber keinen Tick verhindern; dessen Versuch meldet den Fuehler als Datenfehler."""
     if rt.store.state.abo_finished:
         return
     if event.data.get("room_target_fired"):
         regulation.refresh_stable_target(rt)
-        derived.sync(rt)
     if not rt.zone_prepared:
         _prepare_zone(rt)
     _run_local_check(rt, "Fehler im lokalen Check (Boost/Notfall-Boost), wird beim naechsten Ereignis erneut versucht")
@@ -625,7 +623,6 @@ def _prime(rt: Runtime) -> None:
     if rt.store.state.restore_point.get("room_setpoint") is None:
         _first_start(rt)
     _prepare_zone(rt)
-    derived.sync(rt)
     _run_local_check(rt, "Fehler beim initialen lokalen Check vor MQTT-Start, wird beim naechsten Ereignis erneut versucht")
 
 

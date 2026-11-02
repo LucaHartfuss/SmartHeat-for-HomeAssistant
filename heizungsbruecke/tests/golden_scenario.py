@@ -212,9 +212,11 @@ class World:
         return self.snapshots()[-1]["seq"]
 
     def answer(self, status="ok", reason=None, curve=0.95, shift=23.0, heat_limit=16.0) -> None:
+        # Der Server sendet den Mindestvorlauf wie bisher das Geraet ihn abgeleitet hat: das Raum-Soll.
+        min_flow = self.state().stable_target
         payload = {
             "schema": 4, "seq": self.last_seq(), "ts": "2026-01-15T00:00:00+01:00", "status": status, "reason": reason,
-            "levers": {"curve": curve, "room_setpoint": shift, "heat_limit": heat_limit},
+            "levers": {"curve": curve, "room_setpoint": shift, "heat_limit": heat_limit, "min_flow": min_flow},
             "learned": {"curve": 1.0, "heat_limit": 16.0},
         }
         self.geraet.channel.setpoints(payload)

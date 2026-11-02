@@ -154,11 +154,8 @@ def _manual(state) -> dict | None:
 
 
 def _levers(state, lever_set) -> dict:
-    """Stand je Hebel (Wiederherstellungspunkt = zuletzt bestaetigt) plus die vom Client abgeleiteten (Mindestvorlauf)."""
-    levers = {lever: _zahl(state.restore_point.get(lever)) for lever in lever_set.levers}
-    if "min_flow" in lever_set.client_derived:
-        levers["min_flow"] = _zahl(state.min_flow_current)
-    return levers
+    """Stand je Hebel (Wiederherstellungspunkt = zuletzt bestaetigt)."""
+    return {lever: _zahl(state.restore_point.get(lever)) for lever in lever_set.levers}
 
 
 def _im_vertrag(feld: str, wert: str, erlaubt: tuple[str, ...], ersatz: str) -> str:

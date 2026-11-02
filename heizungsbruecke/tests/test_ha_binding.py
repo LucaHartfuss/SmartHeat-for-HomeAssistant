@@ -214,7 +214,7 @@ def test_binding_roles_for_sign_off():
 
     from heizungsbruecke.ha_binding import binding_roles
 
-    assert binding_roles(VAILLANT_MYPYLLANT) == ("curve_current", "shift_current", "heat_limit")
+    assert binding_roles(VAILLANT_MYPYLLANT) == ("curve_current", "shift_current", "heat_limit", "min_flow")
     assert binding_roles(WEISHAUPT_MODBUS) == (
         "curve_current", "shift_current", "heat_limit", "mode_select", "setpoint_comfort", "setpoint_setback",
     )

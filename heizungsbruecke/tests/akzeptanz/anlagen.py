@@ -7,7 +7,8 @@ VERTEILSYSTEME = ("Heizkoerper", "Fussbodenheizung")
 SAETZE = ("vaillant_vrc720", "weishaupt_wwp", "weishaupt_wwp_basis", "viessmann_vicare")
 ALLE = [(satz, verteilsystem) for verteilsystem in VERTEILSYSTEME for satz in SAETZE]
 
-#: Hebel, die der Server fuer den Hebelsatz setzt (min_flow leitet der Client selbst ab)
+#: Hebel des Hebelsatzes, die ein Szenario gezielt setzt; den Mindestvorlauf (Vaillant) sendet der Server zusaetzlich,
+#: siehe `serverhebel_von`
 _HEBEL = {
     "vaillant_vrc720": ("curve", "room_setpoint", "heat_limit"),
     "weishaupt_wwp": ("curve", "room_setpoint", "heat_limit"),
@@ -90,6 +91,11 @@ _PARAMETER = {
 
 def hebel_von(satz: str) -> tuple[str, ...]:
     return _HEBEL[satz]
+
+
+def serverhebel_von(satz: str) -> tuple[str, ...]:
+    """Alle Hebel, die der Server in einer Antwort sendet: die des Satzes, bei Vaillant dazu der Mindestvorlauf."""
+    return (*_HEBEL[satz], *(("min_flow",) if satz == "vaillant_vrc720" else ()))
 
 
 def schreibziel(satz: str, hebel: str) -> str:

@@ -123,9 +123,9 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     # Kurz nach einem eigenen Schreiben (erster Start: _prime schreibt die Startverschiebung, der
     # erzwungene Tick folgt Sekunden spaeter; eine Soll-Aenderung kurz vor dem Tagestick) zeigt HA bei
     # mypyllant noch die alten Werte; der Server protokolliert beim Erstkontakt die gemeldeten Werte und
-    # vergleicht sie an jedem Tagestick mit seinen zuletzt gesendeten ("Anlage folgt nicht"). Wie
-    # derived.sync: bis LeverPipeline.settled gilt fuer jeden geschriebenen Hebel der eigene letzte Schreibwert
-    # (auch Steigung und Heizgrenze, nicht nur die Parallelverschiebung). Der vorbereitete Hebel
+    # vergleicht sie an jedem Tagestick mit seinen zuletzt gesendeten ("Anlage folgt nicht"). Bis
+    # LeverPipeline.settled gilt fuer jeden geschriebenen Hebel der eigene letzte Schreibwert
+    # (auch Steigung, Heizgrenze und Mindestvorlauf, nicht nur die Parallelverschiebung). Der vorbereitete Hebel
     # (Vaillant: Wunschtemperatur der Zone) faellt sonst bei ruhender Zone auf den Wiederherstellungspunkt zurueck.
     pipeline = rt.override
     binding = pipeline.binding

@@ -119,7 +119,7 @@ def beschreibung(weg: object, hebelsatz: str, parameter) -> BindingDescription:
         raise Fehler("Die Bindungsparameter sind unvollständig oder enthalten fremde Felder.", "bindungsparameter",
                      "ungueltig")
     lever_set = verfahren.lever_set
-    hebel = lever_set.levers + lever_set.client_derived
+    hebel = lever_set.levers
     schritte = _zahlen_je_hebel(parameter["schritte"], hebel, "schritte")
     toleranzen = _zahlen_je_hebel(parameter["toleranzen"], hebel, "toleranzen")
     for lever in hebel:

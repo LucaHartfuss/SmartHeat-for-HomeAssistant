@@ -119,10 +119,10 @@ def test_die_hinweise_haben_genau_die_felder_des_vertrags():
     assert set(event["hinweise"]) == {"raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff"}
 
 
-def test_event_carries_levers_of_the_lever_set_and_derived_min_flow(make_store):
+def test_event_carries_levers_of_the_lever_set_incl_min_flow(make_store):
     store = make_store()
-    store.update(restore_point={"curve": 1.05, "room_setpoint": 21.0, "heat_limit": 16.0},
-                 learned={"curve": 1.05, "heat_limit": 16.2}, min_flow_current=20.5)
+    store.update(restore_point={"curve": 1.05, "room_setpoint": 21.0, "heat_limit": 16.0, "min_flow": 20.5},
+                 learned={"curve": 1.05, "heat_limit": 16.2})
     event = build_event("t1", Flags(), store.state, VAILLANT, ADDON_VERSION)
     assert event["hebelsatz"] == "vaillant_vrc720"
     assert event["hebel"] == {"curve": 1.05, "room_setpoint": 21.0, "heat_limit": 16.0, "min_flow": 20.5}
@@ -145,8 +145,8 @@ def test_event_without_learned_values_reports_none(make_store):
 def test_nicht_endliche_laufzeitwerte_stehen_nie_im_status(make_store, wert):
     """Ein NaN-Hebel legt den Status nicht lahm; das Feld wird None."""
     store = make_store()
-    store.update(restore_point={"curve": wert, "room_setpoint": 21.0, "heat_limit": 16.0},
-                 learned={"curve": wert, "heat_limit": 16.2}, min_flow_current=wert,
+    store.update(restore_point={"curve": wert, "room_setpoint": 21.0, "heat_limit": 16.0, "min_flow": wert},
+                 learned={"curve": wert, "heat_limit": 16.2},
                  manual_override={"levers": {"curve": wert, "room_setpoint": 22.0},
                                   "erkannt": "2026-10-03T11:00:00+02:00"})
     event = build_event("t1", Flags(), store.state, VAILLANT, ADDON_VERSION)

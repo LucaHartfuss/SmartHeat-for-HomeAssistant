@@ -1,5 +1,5 @@
 """Durchsetzen statt Melden. Weicht die Anlage vom Sollstand ab -- Steigung,
-Parallelverschiebung, Heizgrenze (Zeilen der Hebel-Pipeline), Mindestvorlauf (= Raum-Soll, derived.py) oder die
+Parallelverschiebung, Heizgrenze, Mindestvorlauf (Zeilen der Hebel-Pipeline) oder die
 Zonen-Betriebsart --, hat jemand in der App oder in HA verstellt: SmartHeat schreibt den Sollstand
 zurueck, meldet den Eingriff einmal (nicht kritisch, abschaltbar) und schickt die Werte aller Hebel des
 Hebelsatzes als KPI mit dem naechsten Snapshot.
@@ -28,7 +28,7 @@ from collections.abc import Callable
 from datetime import date
 from typing import Any, Protocol
 
-from smartheat_core import derived, wallclock, write_budget
+from smartheat_core import wallclock, write_budget
 from smartheat_core.logtext import lesbar
 from smartheat_core.pipeline import WriteBudgetExhausted
 from smartheat_core.zahlen import GLEITKOMMA_REST, ist_endliche_zahl
@@ -118,9 +118,6 @@ def _deviations(rt: EnforceRuntime) -> tuple[dict, dict, set]:
     prepared_lever offen."""
     tolerance = rt.override.binding.description.enforce_tolerance
     expected = rt.override.expected_values()
-    wanted_min_flow = derived.expected(rt)
-    if wanted_min_flow is not None and rt.override.binding.has("min_flow"):
-        expected["min_flow"] = wanted_min_flow
     prepared = rt.override.binding.description.prepared_lever
     unprepared = not rt.zone_prepared and _zone_not_manual(rt)
     deviating: dict = {}
@@ -218,9 +215,7 @@ def _restore(rt: EnforceRuntime, expected: dict, deviating: dict) -> tuple[list[
             break
         _count_attempt(rt, lever)
         try:
-            if lever == "min_flow":
-                rt.override.write_lever("min_flow", expected["min_flow"])
-            elif lever == ZONE_MODE and prepared not in expected:
+            if lever == ZONE_MODE and prepared not in expected:
                 rt.override.ensure_prepared()
             elif lever == ZONE_MODE:
                 rt.override.write_levers((prepared,))

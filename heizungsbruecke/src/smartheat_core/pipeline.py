@@ -16,14 +16,14 @@ BindingDescription.aux_originals (Betriebsart, Komfort-/Absenk-Soll), gemerkt vo
 ersten Schreiben des prepared_lever und nach den Hebeln zurueckgestellt.
 
 Geschrieben wird nur bei tatsaechlicher Aenderung (Quota-Check, jeder Schreibvorgang kann ein Cloud-Aufruf sein), jeder
-Wert auf die lokalen Grenzen begrenzt und auf die Schrittweite der Anlage gerundet. Client-abgeleitete Hebel
-(Mindestvorlauf) gehoeren zu keiner Zeile, werden aber auch hier geschrieben (write_lever).
+Wert auf die lokalen Grenzen begrenzt und auf die Schrittweite der Anlage gerundet. Der Mindestvorlauf ist ein
+Serverhebel wie die anderen: er steht im Wiederherstellungspunkt, gehoert aber zu keiner Boost-Zeile.
 
 Jeder physische Schreibvorgang (binding.physical_writes; eine Schreibgruppe zaehlt je physischem Aufruf)
 zaehlt in das Tagesbudget TOTAL (nur mit BindingDescription.daily_write_limit) und in den Lebensdauerzaehler
-(nur mit lifetime_hint_at). Das Tagesbudget begrenzt Serverwerte, Durchsetzen, Vorbereitung und Mindestvorlauf; ein
-Boost startet am Tageslimit nicht, Boost-Ende und Wiederherstellung sind ausgenommen, zaehlen aber mit (der
-Rueckweg hat Vorrang vor der Schonung). Jeder Boost-Start zaehlt (Comfort: boost_start, Notfall: emergency_start; je
+(nur mit lifetime_hint_at). Das Tagesbudget begrenzt Serverwerte (auch den Mindestvorlauf), Durchsetzen und
+Vorbereitung; ein Boost startet am Tageslimit nicht, Boost-Ende und Wiederherstellung sind ausgenommen, zaehlen aber
+mit (der Rueckweg hat Vorrang vor der Schonung). Jeder Boost-Start zaehlt (Comfort: boost_start, Notfall: emergency_start; je
 hoechstens 6 am Tag, 30 min Abstand). Ein wegen des Budgets nicht geschriebener Serverwert bleibt im
 Wiederherstellungspunkt und in deferred_levers und wird mit write_deferred nachgeholt."""
 import logging
@@ -481,7 +481,7 @@ class LeverPipeline:
     def range_of(self, lever: str) -> tuple[float, float]:
         """Lokale Grenzen, verengt auf den Wertebereich der Anlage (binding.limits). Erweitert nie; ohne Schnittmenge
         gelten die lokalen Grenzen (das Schreiben scheitert dann sichtbar an der Anlage, nie ein Wert ausserhalb der
-        lokalen Grenzen). Einzige Quelle des Schreibbereichs: auch Mindestvorlauf (derived) und Durchsetzen lesen ihn
+        lokalen Grenzen). Einzige Quelle des Schreibbereichs: auch Durchsetzen liest ihn
         hier."""
         low, high = self._safety.ranges[lever]
         device = self._device_limits(lever)
@@ -752,11 +752,6 @@ class LeverPipeline:
         wanted = {name for lever in levers for name in self._group(lever)}
         self._write({lever: values[lever] for lever in wanted if lever in values})
 
-    def write_lever(self, lever: str, value: float) -> float:
-        """Einen einzelnen Hebel schreiben (Mindestvorlauf, client-abgeleitet). Wirft DeviceWriteError oder
-        WriteBudgetExhausted."""
-        return self._write_lever(lever, value)
-
     def ensure_prepared(self, *, exempt: bool = False, require_aux: bool = True) -> bool:
         """Anlage vorbereiten (Vaillant: Zone auf Manuell). Direkt nach einer eigenen Umstellung zeigt HA den alten
         Modus bis zum naechsten Poll der Hersteller-Cloud: dann nicht erneut umstellen (Kontingent). Nach einer
@@ -850,6 +845,12 @@ class LeverPipeline:
         state = self._store.state
         return _row(state.boost_active, state.emergency_boost_active)
 
+    def _boost_levers(self) -> tuple[str, ...]:
+        """Die Hebel des Hebelsatzes, die ein Boost veraendert (Comfort- oder Notfall-Boost) und deren Wert vor dem
+        Boost gesichert sein muss. Der Mindestvorlauf gehoert nicht dazu: ein Boost schreibt ihn nicht."""
+        changed = set(self._safety.comfort_boost) | set(self._safety.emergency_boost_levers)
+        return tuple(lever for lever in self._description.lever_set.levers if lever in changed)
+
     def _ensure_restore_point(self, *, allow_saved_fallback: bool) -> str | None:
         """Fehlende Werte des Wiederherstellungspunkts (erster Boost vor der ersten Serverantwort) einmalig von der
         Anlage lesen und speichern. None, wenn das nicht geht oder der Punkt noch nicht gespeichert ist -- ausser
@@ -858,7 +859,7 @@ class LeverPipeline:
         state = self._store.state
         point = state.restore_point
         missing = [
-            lever for lever in self._description.lever_set.levers
+            lever for lever in self._boost_levers()
             if self._binding.has(lever) and point.get(lever) is None
         ]
         if state.boost_active or state.emergency_boost_active:
@@ -955,7 +956,7 @@ class LeverPipeline:
 
     def _saved_fallback(self) -> str | None:
         required = tuple(
-            lever for lever in self._description.lever_set.levers if lever not in self._description.optional_restore
+            lever for lever in self._boost_levers() if lever not in self._description.optional_restore
         )
         saved = self._store.saved_restore_point(required)
         if saved is None:

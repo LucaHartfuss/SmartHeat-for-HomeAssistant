@@ -507,7 +507,7 @@ def _antwort(erwartet):
 @pytest.mark.parametrize("hebelsatz", sorted(SAETZE))
 def test_beliebige_serverantwort_schreibt_nichts_ausserhalb_der_lokalen_grenzen_und_laesst_den_worker_laufen(hebelsatz):
     optionen, zustand, entities = SAETZE[hebelsatz]
-    erwartet = tuple(sorted(set(entities.values()) - {"min_flow"}))
+    erwartet = tuple(sorted(set(entities.values())))
     bereiche = LOCAL_SAFETY[(hebelsatz, OPTIONS["verteilsystem"])].ranges
     zaehler = {"geschrieben": 0, "angenommen": 0}
 
