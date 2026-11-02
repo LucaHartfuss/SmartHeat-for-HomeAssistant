@@ -27,3 +27,8 @@ _.MAX_CLOCK_SKEW_SECONDS  # Server: geraete/device_auth.py (Zeitfenster der Sign
 _.UNAUTHENTICATED_ERROR  # Server: geraete/devices_api.py (Text der 401-Antwort); das Geraet wertet nur den Status 401
 _.ENERGIE_EINHEITEN  # Server: einrichtung/ha_pruefung.py, einrichtung/ha.py, geraete/device_config.py; im Geraet nur gepinnt (bindungsparameter.EINHEITEN)
 _.expires_rule  # Feld von wire.Command: Server geraete/device_protocol.py wertet die Regel aus (expires_seconds None)
+
+# --- Soll aus der Bedienung (smartheat_core/plan.py): die Verdrahtung in beide Hosts folgt, bis dahin ruft nur der Test ---
+_.soll_effektiv  # smartheat_core/plan.py: noch ohne Aufrufer in den Hosts (tests/test_core_plan.py)
+_.soll_art  # smartheat_core/plan.py SollErgebnis: Feld wird mit der Verdrahtung in die Telemetrie gelesen
+_.naechster_wechsel  # smartheat_core/plan.py SollErgebnis: Feld wird mit dem Wochenplan vom Wecker gelesen
