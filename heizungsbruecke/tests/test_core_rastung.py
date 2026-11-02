@@ -164,9 +164,9 @@ def _datei_mit_groesse(pfad, groesse):
 
 
 @pytest.mark.parametrize(("groesse", "gesperrt"), [
-    (rastung._MAX_BYTES - 1, False), (rastung._MAX_BYTES, False),
-    (rastung._MAX_BYTES + 1, False),   # bis MAX+1 Bytes wird vollstaendig gelesen
-    (rastung._MAX_BYTES + 2, True),    # das letzte Byte wird nicht mehr gelesen: abgeschnitten, gesperrt
+    (32 * 1024 - 1, False), (32 * 1024, False),
+    (32 * 1024 + 1, False),   # bis 32 KiB + 1 Byte wird vollstaendig gelesen
+    (32 * 1024 + 2, True),    # das letzte Byte wird nicht mehr gelesen: abgeschnitten, gesperrt
 ])
 def test_the_lock_file_is_read_up_to_a_hard_size_limit(tmp_path, groesse, gesperrt):
     pfad = tmp_path / rastung.DATEI
@@ -372,3 +372,34 @@ def test_the_one_circle_helper_builds_a_lock_that_survives_the_file(tmp_path):
     lock = einzel(soll_entity="climate.x", ziele=("a=1", "b=1"))
     rastung.schreiben(pfad, lock, "x")
     assert rastung.lesen(pfad) == lock
+
+
+# --- Randfaelle der Form: nie ausnahmeanfaellig, nie lockernd ----------------------------------------------------------
+
+@pytest.mark.parametrize("bindung", [
+    {"kreis": {"plattform": "mypyllant", "anlage": "S", "nummer": "0"}},   # Kreis ohne Rollen
+    {"rollen": {"curve": "number.kurve"}},                                 # Rollen ohne Kreis
+    {"kreis": {"plattform": "mypyllant", "anlage": "S", "nummer": "0"}, "rollen": None},
+    {"kreis": None, "rollen": {}},
+])
+def test_a_home_assistant_binding_needs_both_the_circle_and_the_roles(bindung):
+    assert rastung.ziele(bindung) is None
+
+
+@pytest.mark.parametrize("hebelsatz, verteilsystem", [
+    (["vaillant_vrc720"], PAAR[1]), (PAAR[0], ["Heizkoerper"]), (PAAR[0], {"a": 1}), ({"a": 1}, PAAR[1]),
+])
+def test_a_circle_with_an_unhashable_pair_never_fits_and_never_raises(hebelsatz, verteilsystem):
+    sperre = _lock((1, rastung.ziele(_gw_bindung()), None))
+    konfiguration = _konf((1, _gw_bindung()))
+    assert rastung.passt(sperre, konfiguration) is True
+    konfiguration["kreise"][0].update(hebelsatz=hebelsatz, verteilsystem=verteilsystem)
+    assert rastung.passt(sperre, konfiguration) is False
+
+
+def test_the_parameters_are_compared_in_a_stable_text_whatever_their_characters():
+    """Die Ziele sind Text: dieselben Parameter ergeben dieselben Ziele, andere nie (auch nicht ausserhalb von ASCII)."""
+    a = rastung.ziele(_gw_bindung(treiber="vicäre"))
+    assert a == rastung.ziele(_gw_bindung(treiber="vicäre")) and a != rastung.ziele(_gw_bindung(treiber="vicare"))
+    assert rastung.ziele({"treiber": {"id": "x", "parameter": {"ä": "ö", "a": 1}}, "thermostat": None}) \
+        == rastung.ziele({"treiber": {"id": "x", "parameter": {"a": 1, "ä": "ö"}}, "thermostat": None})
