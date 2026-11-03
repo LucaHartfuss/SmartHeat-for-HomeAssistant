@@ -92,7 +92,7 @@ CONFIG_ERROR_MESSAGE = (
 )
 CONFIG_ERROR_BOOST_MESSAGE = (
     "SmartHeat: Konfigurationsfehler – {grund}. Die Heizungssteuerung ist gestoppt, die Anlage steht aber noch auf "
-    "Boost-Werten. Bitte die zuletzt gelernten Werte von Hand einstellen ({werte})."
+    "Boost-Werten. Bitte die ursprünglichen Werte von Hand einstellen ({werte})."
 )
 #: Code, wenn der Zustand des Kreises zu einer anderen Anlage gehoert als die, auf die das Dokument ihn jetzt zeigen
 #: laesst: nichts wird geschrieben (Wiederherstellungspunkt und Ursprungswerte gehoeren zur alten Anlage).
@@ -101,12 +101,12 @@ ANDERE_ANLAGE_ZUSATZ = " Der Zustand gehört zu einer anderen Anlage, es wurde n
 SIGN_OFF_INVALID_CONFIG = "Konfiguration ungültig, die Anlage wurde nicht zurückgesetzt"
 SIGN_OFF_RESTORE_FAILED = "Zurücksetzen der Anlage scheitert, neuer Versuch in {seconds} s"
 SIGN_OFF_RESTORE_FAILED_MESSAGE = (
-    "SmartHeat wurde entfernt, konnte die Heizung aber nicht auf die zuletzt gelernten Werte "
+    "SmartHeat wurde entfernt, konnte die Heizung aber nicht auf die ursprünglichen Werte "
     "zurücksetzen ({werte}). Es wird weiter versucht, sonst bitte diese Werte von Hand einstellen."
 )
 SIGN_OFF_NOT_RESTORED_MESSAGE = (
     "SmartHeat wurde entfernt, die Heizung steht aber noch auf Boost-Werten (Konfiguration "
-    "ungültig, kein Zurücksetzen möglich). Bitte die zuletzt gelernten Werte von Hand einstellen ({werte})."
+    "ungültig, kein Zurücksetzen möglich). Bitte die ursprünglichen Werte von Hand einstellen ({werte})."
 )
 
 logger = logging.getLogger(__name__)
@@ -637,9 +637,10 @@ def _prime(rt: Runtime) -> None:
     """Erster lokaler Check synchron vor mqtt.loop_start(): Stable-Target-Cache fuellen, beim
     ersten Start ohne gespeicherte Parallelverschiebung den Steigungs-Punkt neu setzen und einen
     Tick erzwingen (_first_start), Zone auf Manuell mit brauchbarer Parallelverschiebung (vor dem
-    ersten Snapshot, Plan-Praezisierung 11), Mindestvorlauf = Raum-Soll, dann Boost-Flags aus
-    echten Sensorwerten. Persistierte Boosts laufen weiter und enden regulaer ueber ihre Schwellen
-    (N1). Der Ursprungswert der Heizgrenze wird vor dem ersten eigenen Schreiben gemerkt.
+    ersten Snapshot, Plan-Praezisierung 11), dann Boost-Flags aus echten Sensorwerten (den
+    Mindestvorlauf liefert der Server als Hebel). Persistierte Boosts laufen weiter und enden
+    regulaer ueber ihre Schwellen (N1). Die Ursprungswerte der Hebel (und der Zonen-Betriebsart)
+    werden vor dem ersten eigenen Schreiben gemerkt.
     Scheitert ein Schritt, laufen die uebrigen trotzdem."""
     try:
         rt.override.capture_originals()

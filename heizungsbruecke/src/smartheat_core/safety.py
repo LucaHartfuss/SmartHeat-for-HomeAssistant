@@ -11,7 +11,8 @@ from smartheat_core.levers import LEVER_SETS
 
 @dataclass(frozen=True)
 class LocalSafety:
-    """ranges: Bereich je Hebel des Hebelsatzes einschliesslich der client-abgeleiteten (Mindestvorlauf).
+    """ranges: Bereich je Hebel des Hebelsatzes (bei Vaillant auch der Mindestvorlauf: ihn liefert der Server, lokal
+    wird er nur begrenzt).
     comfort_boost: Comfort-Boost-Werte je Hebel; leer = kein Comfort-Boost (Fussbodenheizung).
     emergency_boost_levers: der Notfall-Boost setzt diese Hebel auf ihr lokales Maximum.
     arrival_threshold_k: Ankunftsschwelle des Comfort-Boosts und Austrittsschwelle des Notfall-Boosts -- nicht die

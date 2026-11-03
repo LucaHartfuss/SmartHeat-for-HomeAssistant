@@ -3753,14 +3753,14 @@
     "ha",
     "notify",
     "notify.mobile_app_handy",
-    "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+    "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach stellt es die ursprünglichen Werte wieder ein und beendet die Steuerung."
    ],
    [
     "ha",
     "persistent_notification.create",
     "smartheat_abo",
     "SmartHeat",
-    "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+    "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach stellt es die ursprünglichen Werte wieder ein und beendet die Steuerung."
    ],
    [
     "trigger",
@@ -3848,7 +3848,7 @@
      "abo": "inaktiv"
     },
     "notify_messages": {
-     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach stellt es die ursprünglichen Werte wieder ein und beendet die Steuerung."
     },
     "restore_point": {
      "curve": 1.05,
@@ -3989,7 +3989,7 @@
      "abo": "inaktiv"
     },
     "notify_messages": {
-     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach stellt es die ursprünglichen Werte wieder ein und beendet die Steuerung."
     },
     "restore_point": {
      "curve": 1.05,
@@ -4180,7 +4180,7 @@
      "notbetrieb": "aktiv"
     },
     "notify_messages": {
-     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach stellt es die ursprünglichen Werte wieder ein und beendet die Steuerung."
     },
     "restore_point": {
      "curve": 1.05,
@@ -4321,14 +4321,14 @@
     "ha",
     "notify",
     "notify.mobile_app_handy",
-    "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die zuletzt gelernten Werte bleiben eingestellt."
+    "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die ursprünglichen Werte sind wieder eingestellt."
    ],
    [
     "ha",
     "persistent_notification.create",
     "smartheat_abo",
     "SmartHeat",
-    "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die zuletzt gelernten Werte bleiben eingestellt."
+    "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die ursprünglichen Werte sind wieder eingestellt."
    ],
    [
     "trigger",
@@ -4417,7 +4417,7 @@
      "notbetrieb": "aktiv"
     },
     "notify_messages": {
-     "abo": "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die zuletzt gelernten Werte bleiben eingestellt."
+     "abo": "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die ursprünglichen Werte sind wieder eingestellt."
     },
     "restore_point": {
      "curve": 0.9,

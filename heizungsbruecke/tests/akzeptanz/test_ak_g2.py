@@ -15,7 +15,7 @@ def _stand(anlage: Anlage, satz: str) -> dict:
 
 
 def _schreibungen(anlage: Anlage, satz: str) -> int:
-    """Zahl der Schreibvorgaenge auf die drei Hebel (der abgeleitete Mindestvorlauf bleibt aussen vor)."""
+    """Zahl der Schreibvorgaenge auf die drei Hebel (der Mindestvorlauf, ein vierter Hebel des Servers, bleibt aussen vor)."""
     ziele = {schreibziel(satz, hebel) for hebel in HEBEL}
     return len([1 for entity, _, _ in anlage.ha.schreibvorgaenge if entity in ziele])
 

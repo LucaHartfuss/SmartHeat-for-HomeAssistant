@@ -73,7 +73,7 @@ NOTBETRIEB_ON = "Heizungsbrücke: Server antwortet nicht, Notbetrieb aktiv. Die 
 
 ABO_ENDED = (
     "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, "
-    "die zuletzt gelernten Werte bleiben eingestellt."
+    "die ursprünglichen Werte sind wieder eingestellt."
 )
 
 
