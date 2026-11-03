@@ -30,3 +30,6 @@ _.expires_rule  # Feld von wire.Command: Server geraete/device_protocol.py werte
 
 # --- Einstieg fuer Hosts mit mehreren Heizkreisen (sie rufen ihn bei einem neuen Konfigurationsdokument; Tests treiben ihn) ---
 _.konfiguration_geaendert  # smartheat_runtime/kreise.py Laufzeit.konfiguration_geaendert: Wiederaufnahme nach Abo-Wechsel
+
+# --- Raum-Abweichung (smartheat_core/raum_delta.py): Zwilling der Rechnung des Servers, vom Vertragscheck gegen die gemeinsamen Vektoren geprueft ---
+_.delta  # Contract-Check 89 (tools/contracts/raum_delta.json) rechnet Server und Geraet an denselben Vektoren; im Laufzeitpfad nur wirksames_ist

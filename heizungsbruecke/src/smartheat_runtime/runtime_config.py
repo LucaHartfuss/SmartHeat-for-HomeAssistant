@@ -66,3 +66,6 @@ class RuntimeConfig:
     # Abo-Status aus dem Konfigurationsdokument (entitlement.ACTIVE/INACTIVE/UNKNOWN). Die MQTT-
     # Verbindung haelt smartheat_device (app.start mqtt_factory), die Laufzeit fragt keinen Server selbst.
     abo_source: Callable[[], str]
+    # Referenzraeume des Kreises mit Fuehlern als (Raumnummer, Versatz in Kelvin); die Regelung rechnet ihr Delta nur
+    # ueber diese (leer: der Host kennt keine Raeume, dann gilt der Kreissensor room_actual).
+    referenzraeume: tuple[tuple[int, float], ...] = ()

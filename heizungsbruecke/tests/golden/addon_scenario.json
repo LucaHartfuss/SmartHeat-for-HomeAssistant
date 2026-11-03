@@ -172,6 +172,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T08:00:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 20.0
+      }
+     ],
      "room_target": 21.0,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -1231,6 +1237,12 @@
      "failsafe_active": true,
      "ts": "2026-01-15T12:07:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 18.0
+      }
+     ],
      "room_target": 21.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2069,6 +2081,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T12:13:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2123,6 +2141,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T12:18:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2177,6 +2201,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T12:23:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2231,6 +2261,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T12:28:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2285,6 +2321,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T12:33:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2339,6 +2381,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T12:38:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2393,6 +2441,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T12:43:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2447,6 +2501,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T12:48:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2501,6 +2561,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T12:53:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2622,6 +2688,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T12:58:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2791,6 +2863,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T13:03:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -3059,6 +3137,12 @@
      "failsafe_active": false,
      "ts": "2026-01-15T13:03:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0

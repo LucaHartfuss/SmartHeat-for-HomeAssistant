@@ -37,7 +37,9 @@ def world(data_dir, clock):
     driver.poll_once()
     store = TargetStore(data_dir / "runtime" / "room_target.json", 21.0, clock, lambda: "ts")
     source = GatewaySignalSource(bus, mirror)
-    source.bind(driver, store, (f"zigbee:{SENSOR}:temperature", f"zigbee:{SECOND}:temperature"))
+    source.bind(driver, store, (f"zigbee:{SENSOR}:temperature", f"zigbee:{SECOND}:temperature"),
+                ((1, (f"zigbee:{SENSOR}:temperature",)), (2, (f"zigbee:{SECOND}:temperature",)),
+                 (3, (f"zigbee:{SENSOR}:temperature", f"zigbee:{SECOND}:temperature"))))
     return bus, z2m, source
 
 
@@ -57,6 +59,26 @@ def test_one_dead_sensor_keeps_the_mean_none_is_invalid(world):
     z2m.bridge(online=False)
     with pytest.raises(SignalUngueltig):  # erwartet ungueltig, kein Programmfehler
         source.get_state(REF_ROOM_MEAN)
+
+
+def test_je_raum_liest_ein_eigenes_mittel_seiner_fuehler(world):
+    _, z2m, source = world
+    z2m.report(SENSOR, temperature=20.0)
+    z2m.report(SECOND, temperature=22.0)
+    assert source.get_state("raum:1") == 20.0
+    assert source.get_state("raum:2") == 22.0
+    assert source.get_state("raum:3") == 21.0  # zwei Fuehler im Raum: Mittel
+    assert source.get_state(REF_ROOM_MEAN) == 21.0  # der Kreismittelwert bleibt unberuehrt
+
+
+def test_ein_raum_ohne_gueltigen_fuehler_ist_ungueltig_und_ein_fremder_raum_unbekannt(world):
+    _, z2m, source = world
+    z2m.report(SENSOR, temperature=20.0)
+    z2m.bridge(online=False)
+    with pytest.raises(SignalUngueltig):
+        source.get_state("raum:1")
+    with pytest.raises(SignalNotFound):
+        source.get_state("raum:9")  # kein Raum dieser Nummer gebunden
 
 
 @pytest.mark.parametrize("wert", ["abc", True, None, [1]], ids=["text", "bool", "null", "liste"])

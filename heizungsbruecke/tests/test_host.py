@@ -86,6 +86,16 @@ def test_anlagen_kennung_kommt_aus_dem_kreis(env, angelegt, sleeps):
         assert dokument.anlagen_kennung(dataclasses.replace(b, kreis={**b.kreis, feld: wert})) != KREIS_KENNUNG, feld
 
 
+def test_die_raumsensoren_der_hilfssensoren_gehen_ins_manifest(env, angelegt, sleeps, monkeypatch):
+    """Der lokale Check liest je Referenzraum den Hilfssensor des Raums, nicht den Kreismittelwert."""
+    monkeypatch.setattr(
+        "heizungsbruecke.derived_sensors.ensure_all",
+        lambda **kwargs: DerivedSensors({"room_actual": "sensor.room_actual"}, (), "fp1",
+                                        raeume={1: "sensor.raum_1", 2: "sensor.raum_2"}))
+    loaded = _host(env).load()
+    assert loaded.manifest.raum_refs == {1: "sensor.raum_1", 2: "sensor.raum_2"}
+
+
 def test_der_weg_gehoert_nicht_zur_kennung_und_eine_unbrauchbare_kennung_scheitert_laut():
     """Plattform und Anlage bestimmen den Hersteller; ohne gueltige Kennung gibt es keine plant_id (ConfigError)."""
     b = dokument.bindung(konfiguration_aus_optionen(OPTIONS))

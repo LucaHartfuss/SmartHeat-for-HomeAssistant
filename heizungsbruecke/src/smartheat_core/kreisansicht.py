@@ -94,6 +94,27 @@ def raeume_fuehler(konfiguration, kreis: int | None = None) -> list[tuple[int, l
             and (fuehler := _fuehler(raum))]
 
 
+def referenz_versatz(konfiguration, kreis: int | None = None) -> list[tuple[int, float]]:
+    """(Raumnummer, Versatz in Kelvin) der Referenzraeume des Kreises (ohne Nummer des ersten) mit mindestens einem
+    Fuehler, in der Reihenfolge des Dokuments. Kontrollraeume kommen nie vor. Ohne Kreis leer."""
+    if not isinstance(konfiguration, Mapping):
+        return []
+    eintraege = kreise(konfiguration)
+    if kreis is None:
+        gewaehlt = eintraege[0] if eintraege else None
+    else:
+        gewaehlt = next((e for e in eintraege if e.get("kreis") == kreis and not isinstance(e.get("kreis"), bool)), None)
+    if gewaehlt is None:
+        return []
+    ergebnis = []
+    for raum in _raeume(gewaehlt):
+        nummer, versatz = raum.get("raum"), raum.get("versatz_k", 0)
+        if (raum.get("rolle") == ROLLE_REFERENZ and isinstance(nummer, int) and not isinstance(nummer, bool)
+                and _fuehler(raum) and isinstance(versatz, (int, float)) and not isinstance(versatz, bool)):
+            ergebnis.append((nummer, float(versatz)))
+    return ergebnis
+
+
 def dokument_aus_sicht(sicht: Mapping) -> dict:
     """Die Umkehrung von `ansicht` fuer genau einen Kreis: ein Dokument mit einem Kreis, dessen einziger Raum ein
     Referenzraum mit den `raumfuehler` der Sicht ist (fuer die Pruefung gegen den Host)."""

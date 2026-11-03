@@ -2,6 +2,7 @@
 Konfigurationsdokument."""
 from pathlib import Path
 
+import konfig_form
 import pytest
 from configs import SENSOR, THERMOSTAT, konfiguration, kreis_bindung, leer
 from rastung_beispiele import rastung_aus
@@ -15,13 +16,35 @@ from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_runtime import dokument_config, entitlement
 from smartheat_runtime.dokument_config import ConfigError
 
+SECOND = "0x00124b0000000003"
 PARAMETER = {"lever_set": "viessmann_vicare", "heizkreis": 0}
 
 
 def test_binding_from_the_document():
     bindung = config.bindung(konfiguration())
-    assert bindung == config.GatewayBindung("simulation", PARAMETER, (f"zigbee:{SENSOR}:temperature",), THERMOSTAT)
+    assert bindung == config.GatewayBindung("simulation", PARAMETER, (f"zigbee:{SENSOR}:temperature",), THERMOSTAT,
+                                            ((1, (f"zigbee:{SENSOR}:temperature",)),))
     assert bindung.driver_spec() == {"id": "simulation", "parameter": PARAMETER}
+
+
+def test_die_bindung_traegt_alle_raeume_mit_fuehler_auch_kontrollraeume_aber_nur_referenzfuehler_im_mittel():
+    kontroll = f"zigbee:{SECOND}:temperature"
+    dokument = konfiguration()
+    dokument["kreise"][0]["raeume"] = [
+        konfig_form.raum([f"zigbee:{SENSOR}:temperature"]),
+        konfig_form.raum([kontroll], nummer=2, name="Bad", rolle="kontrolle"),
+        konfig_form.raum([], nummer=3, name="Flur", rolle="kontrolle"),  # ohne Fuehler: kein Eintrag
+    ]
+    bindung = config.bindung(dokument)
+    assert bindung.room_sensors == (f"zigbee:{SENSOR}:temperature",)
+    assert bindung.raeume == ((1, (f"zigbee:{SENSOR}:temperature",)), (2, (kontroll,)))
+
+
+def test_ein_unbrauchbarer_fuehler_eines_kontrollraums_ist_ein_konfigurationsfehler():
+    dokument = konfiguration()
+    dokument["kreise"][0]["raeume"].append(konfig_form.raum(["sensor.bad"], nummer=2, rolle="kontrolle"))
+    with pytest.raises(ConfigError, match="Raumf"):
+        config.bindung(dokument)
 
 
 @pytest.mark.parametrize("change", [

@@ -27,6 +27,7 @@ class GatewayBindung:
     driver_parameter: dict
     room_sensors: tuple[str, ...]
     thermostat: str | None
+    raeume: tuple[tuple[int, tuple[str, ...]], ...] = ()  # (Nummer, Fuehler) jedes Raums mit Fuehler, auch Kontrollraeume
 
     def driver_spec(self) -> dict:
         return {"id": self.driver_id, "parameter": dict(self.driver_parameter)}
@@ -50,7 +51,10 @@ def bindung(konfiguration, kreis: int | None = None) -> GatewayBindung:
     thermostat = raw.get("thermostat") if isinstance(raw, Mapping) else None
     if thermostat is not None and (not isinstance(thermostat, str) or not IEEE.fullmatch(thermostat)):
         raise ConfigError(f"Thermostat ({thermostat!r}) ist keine IEEE-Adresse – {dokument_config.RECONFIGURE_HINT}")
-    return GatewayBindung(driver_id, dict(parameter), tuple(sensors), thermostat)
+    raeume = tuple((nummer, tuple(fuehler)) for nummer, fuehler in kreisansicht.raeume_fuehler(konfiguration, kreis))
+    if any(not ROOM_SENSOR_REF.fullmatch(ref) for _, fuehler in raeume for ref in fuehler):
+        raise ConfigError(f"Raumfühler eines Raums ungültig – {dokument_config.RECONFIGURE_HINT}")
+    return GatewayBindung(driver_id, dict(parameter), tuple(sensors), thermostat, raeume)
 
 
 def parse_dokument(konfiguration, paths: Paths, abo_source: Callable[[], str],

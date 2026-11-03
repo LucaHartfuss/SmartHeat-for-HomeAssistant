@@ -2,7 +2,6 @@ import importlib.util
 import logging
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -403,7 +402,7 @@ def test_run_telemetry_tick_survives_exception_without_propagating(monkeypatch, 
 
 
 def test_regulation_fields_and_local_ts():
-    manifest = SimpleNamespace(refs={
+    manifest = ChannelManifest(refs={
         "room_actual": "sensor.r", "outdoor_temp": "sensor.o", "flow_setpoint": "sensor.vl",
     })
     ha = MagicMock(spec=SignalSource)
@@ -416,16 +415,70 @@ def test_regulation_fields_and_local_ts():
 
 
 def test_read_regulation_fields_liest_aussentemperatur_und_vorlaufsoll_aus_den_signalen():
-    manifest = SimpleNamespace(refs={"outdoor_temp": "sensor.o", "flow_setpoint": "sensor.vl", "room_target": "x.y"})
+    manifest = ChannelManifest(refs={"outdoor_temp": "sensor.o", "flow_setpoint": "sensor.vl", "room_target": "x.y"})
     signals = MagicMock(spec=SignalSource)
     signals.get_state.side_effect = {"sensor.o": 3.5, "sensor.vl": 41.0, "x.y": 99.0}.__getitem__
     assert telemetry.read_regulation_fields(manifest, signals, 20.5) == {
-        "room_target": 20.5, "outdoor_temp": 3.5, "flow_setpoint": 41.0}  # room_target aus dem Argument, nicht 99.0
+        "room_target": 20.5, "outdoor_temp": 3.5, "flow_setpoint": 41.0, "raeume": []}  # room_target aus dem Argument, nicht 99.0
     assert sorted(call.args[0] for call in signals.get_state.call_args_list) == ["sensor.o", "sensor.vl"]  # nie "x.y"
 
 
+def _raeume_manifest(raum_refs):
+    return ChannelManifest(refs={"room_actual": "sensor.r"}, raum_refs=raum_refs)
+
+
+def test_die_telemetrie_traegt_den_ist_wert_je_raum_nach_raumnummer_sortiert():
+    manifest = _raeume_manifest({3: "sensor.k", 1: "sensor.a", 2: "sensor.b"})
+    signals = MagicMock(spec=SignalSource)
+    signals.get_state.side_effect = {"sensor.a": 20.5, "sensor.b": 19.25, "sensor.k": 17.0}.__getitem__
+    felder = telemetry.read_regulation_fields(manifest, signals, None)
+    assert felder["raeume"] == [{"raum": 1, "ist": 20.5}, {"raum": 2, "ist": 19.25}, {"raum": 3, "ist": 17.0}]
+
+
+@pytest.mark.parametrize("schlecht", [
+    RuntimeError("unavailable"), SignalUngueltig("kein Fuehler"), 99.0, 4.99, 35.01, float("nan"), float("inf"),
+    "kalt", None, True,
+])
+def test_ein_raum_ohne_gueltigen_wert_fehlt_in_der_liste_die_uebrigen_bleiben(schlecht):
+    manifest = _raeume_manifest({1: "sensor.a", 2: "sensor.b"})
+    signals = MagicMock(spec=SignalSource)
+
+    def _get(ref):
+        wert = {"sensor.a": 20.5, "sensor.b": schlecht}[ref]
+        if isinstance(wert, Exception):
+            raise wert
+        return wert
+
+    signals.get_state.side_effect = _get
+    assert telemetry.read_regulation_fields(manifest, signals, None)["raeume"] == [{"raum": 1, "ist": 20.5}]
+
+
+@pytest.mark.parametrize("wert", [5.0, 35.0])
+def test_die_randwerte_des_raumbereichs_gelten_als_gueltig(wert):
+    manifest = _raeume_manifest({1: "sensor.a"})
+    signals = MagicMock(spec=SignalSource)
+    signals.get_state.return_value = wert
+    assert telemetry.read_regulation_fields(manifest, signals, None)["raeume"] == [{"raum": 1, "ist": wert}]
+
+
+def test_ohne_raeume_im_manifest_ist_die_liste_leer_aber_da():
+    signals = MagicMock(spec=SignalSource)
+    assert telemetry.read_regulation_fields(_raeume_manifest({}), signals, None)["raeume"] == []
+
+
+def test_der_tick_sendet_raeume_neben_room_actual():
+    manifest = _raeume_manifest({1: "sensor.a", 2: "sensor.k"})
+    ha = MagicMock(spec=SignalSource)
+    ha.get_state.side_effect = {"sensor.r": 20.0, "sensor.a": 19.5, "sensor.k": 22.0}.__getitem__
+    mqtt = MagicMock(spec=MqttChannel)
+    telemetry.run_telemetry_tick(manifest, ha, mqtt, boost_active=False, failsafe_active=False, room_target=None, kreis=1)
+    payload = mqtt.publish_telemetry.call_args.args[0]
+    assert payload["room_actual"] == 20.0
+    assert payload["raeume"] == [{"raum": 1, "ist": 19.5}, {"raum": 2, "ist": 22.0}]
+
+
 def test_unreadable_regulation_field_is_omitted():
-    manifest = SimpleNamespace(refs={"room_actual": "sensor.r", "outdoor_temp": "sensor.o"})
+    manifest = ChannelManifest(refs={"room_actual": "sensor.r", "outdoor_temp": "sensor.o"})
     ha = MagicMock(spec=SignalSource)
 
     def _get(ref):

@@ -64,7 +64,11 @@ RAUMFUEHLER_MAX = 8  # Fuehler der Referenzraeume je Kreis
 #: KONFIGURATION_KREIS_OPTIONAL, KONFIGURATION_RAUM_FIELDS, WEGE, WEG_DER_PLATTFORM, WEG_DES_TREIBERS), ebenfalls in
 #: test_core_vertrag_pin.py gehalten. Hoechstens vier Kreise je Geraet (Nutzer-Entscheidung, Regel 4).
 KREISE_MAX = 4
-RAEUME_MAX, RAUM_FUEHLER_MAX = 16, 8
+RAEUME_MAX, RAUM_FUEHLER_MAX = 8, 8
+#: Kopie aus smartheat_device.wire (RAUM_SOLL_MIN/MAX und RAUM_VERSATZ_MAX), ebenfalls in test_core_vertrag_pin.py
+#: gehalten: festes Ziel eines Kontrollraums 15 bis 25 Grad, Versatz eines Referenzraums -3 bis +3 K (Regel 4).
+RAUM_ZIEL_MIN, RAUM_ZIEL_MAX = 15.0, 25.0
+RAUM_VERSATZ_MAX = 3.0
 KREIS_NUMMER_MAX = 2**31 - 1  # Kreis- und Raumnummern (wire.KREIS_MAX)
 RAUM_ROLLEN = ("referenz", "kontroll")
 KONFIG_KREIS_FELDER = ("kreis", "name", "bindung", "raeume", "hebelsatz", "verteilsystem", "abo")
@@ -175,10 +179,14 @@ def _raum_aufbau(raum, gesehen: set[int]) -> dict | None:
         return befund("soll_quelle", "nicht_erlaubt")
     if not _zahl(raum["versatz_k"]):
         return befund("versatz_k", "ungueltig")
+    if not -RAUM_VERSATZ_MAX <= raum["versatz_k"] <= RAUM_VERSATZ_MAX:
+        return befund("versatz_k", "bereich", min=-RAUM_VERSATZ_MAX, max=RAUM_VERSATZ_MAX)
     if raum["versatz_k"] != 0 and (not referenz or raum["soll_quelle"]):
         return befund("versatz_k", "nicht_erlaubt")
     if raum["ziel_fest"] is not None and not _zahl(raum["ziel_fest"]):
         return befund("ziel_fest", "ungueltig")
+    if raum["ziel_fest"] is not None and not RAUM_ZIEL_MIN <= raum["ziel_fest"] <= RAUM_ZIEL_MAX:
+        return befund("ziel_fest", "bereich", min=RAUM_ZIEL_MIN, max=RAUM_ZIEL_MAX)
     if raum["ziel_fest"] is not None and referenz:
         return befund("ziel_fest", "nicht_erlaubt")
     return None

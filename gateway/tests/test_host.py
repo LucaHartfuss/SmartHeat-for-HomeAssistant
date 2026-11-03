@@ -384,6 +384,20 @@ def test_manifest_requires_the_roles_of_the_lever_set(data_dir, clock):
         build_manifest(Partial())
 
 
+def test_das_manifest_nennt_je_raum_mit_fuehler_eine_raumreferenz(data_dir, clock):
+    driver = create("simulation", {"lever_set": "viessmann_vicare"}, Paths(data_dir), clock=clock, writer=True,
+                    description=VIESSMANN_VICARE_BINDING)
+    manifest = build_manifest(driver, ((1, ("zigbee:0x1:temperature",)), (4, ("zigbee:0x2:temperature",))))
+    assert manifest.raum_refs == {1: "raum:1", 4: "raum:4"}
+    assert build_manifest(driver).raum_refs == {}
+
+
+def test_der_geladene_kreis_liest_seine_raeume_einzeln(data_dir, clock):
+    loaded = _host(Paths(data_dir), konfiguration(), clock).load()
+    assert loaded.manifest.raum_refs == {1: "raum:1"}
+    assert loaded.config.referenzraeume == ((1, 0.0),)
+
+
 def test_abo_comes_from_the_document(data_dir, clock):
     loaded = _host(Paths(data_dir), konfiguration(abo="inaktiv"), clock).load()
     assert loaded.config.abo_source() == "inactive"

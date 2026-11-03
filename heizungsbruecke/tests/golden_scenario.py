@@ -154,7 +154,8 @@ class World:
             monkeypatch.setattr(f"heizungsbruecke.config.{name}", self.data / file_name)
         monkeypatch.setattr(
             "heizungsbruecke.derived_sensors.ensure_all",
-            lambda **kwargs: DerivedSensors({"room_actual": "sensor.room_actual"}, (), "fp-golden"),
+            lambda **kwargs: DerivedSensors({"room_actual": "sensor.room_actual"}, (), "fp-golden",
+                                            raeume={n: "sensor.room_actual" for n, _ in kwargs["raeume"]}),
         )
         monkeypatch.setattr(TRIGGER_CLIENT, trigger_klasse(self.triggers, RecordingTrigger, log=self.log))
         counter = itertools.count(1)

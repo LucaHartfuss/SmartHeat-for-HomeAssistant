@@ -51,13 +51,15 @@ DEVICES_WAIT_SECONDS = 60.0
 NOT_CONFIGURED_HINT = "Gateway ist noch nicht eingerichtet - die Einrichtung laeuft im SmartHeat-Portal."
 
 
-def build_manifest(driver) -> ChannelManifest:
+def build_manifest(driver, raeume: tuple[tuple[int, tuple[str, ...]], ...] = ()) -> ChannelManifest:
+    """`raeume`: (Nummer, Fuehler) je Raum mit Fuehler; jeder bekommt die Referenz `raum:<n>`."""
     refs = {"room_actual": REF_ROOM_MEAN, "room_target": REF_ROOM_TARGET, **driver.signals()}
     lever_set = driver.description.lever_set.id
     missing = [role for role in REQUIRED_ROLES_BY_LEVER_SET[lever_set] if role not in refs]
     if missing:
         raise ManifestError(f"Treiber liefert Pflicht-Rollen nicht: {', '.join(missing)}")
-    return ChannelManifest(refs={role: refs[role] for role in ALL_ROLES if role in refs})
+    return ChannelManifest(refs={role: refs[role] for role in ALL_ROLES if role in refs},
+                           raum_refs={nummer: f"raum:{nummer}" for nummer, _ in raeume})
 
 
 def check_lever_set(driver, lever_set_id: str) -> None:
@@ -173,7 +175,7 @@ class GatewayHost:
             raise StartFailure(f"Konfiguration: {error}", KEY_CONFIG) from error
         self._activate(driver)  # erste Abfrage vor dem Manifest: optionale Signale stehen dann im Cache
         try:
-            manifest = build_manifest(driver)
+            manifest = build_manifest(driver, bindung.raeume)
         except ManifestError as error:
             driver.stop()  # kein Abfragen im Leerlauf, bis die Neupruefung den Treiber neu baut
             self.driver = None
@@ -185,7 +187,7 @@ class GatewayHost:
                             on_change=self._raum_changed)
         self._angleichen = bedient is not None and not dirty
         self._bedienung_start = start if self._angleichen and store.value != start else None
-        self._signals.bind(driver, store, bindung.room_sensors)
+        self._signals.bind(driver, store, bindung.room_sensors, bindung.raeume)
         runtime = dataclasses.replace(runtime, battery_refs=self._battery_refs(bindung))
         self._store, self._bindung, self._runtime_config = store, bindung, runtime
         geraet, kreis = self._geraet, self.kreis

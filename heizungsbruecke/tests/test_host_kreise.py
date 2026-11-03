@@ -73,7 +73,8 @@ def zwei(geraet_env, monkeypatch):
     def ensure_all(**kwargs):
         aufrufe.append(kwargs)
         suffix = "" if kwargs["kreis"] == 1 else "_2"
-        return DerivedSensors({"room_actual": f"sensor.room_actual{suffix}"}, (), "fp1")
+        return DerivedSensors({"room_actual": f"sensor.room_actual{suffix}"}, (), "fp1",
+                              raeume={n: f"sensor.room_actual{suffix}" for n, _ in kwargs["raeume"]})
 
     monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", ensure_all)
 

@@ -188,7 +188,8 @@ class HaHost:
             # optionale Lese-Rollen und Batterien ohne Zustand bleiben fuer diesen Lauf ungelesen
             ungelesen = {ref for _, ref in ohne_zustand}
             rollen = {rolle: ref for rolle, ref in b.rollen.items() if ref not in ungelesen}
-            manifest = build_manifest({**rollen, "room_target": SOLL_REF}, derived.entity_ids, b.hebelsatz)
+            manifest = build_manifest(
+                {**rollen, "room_target": SOLL_REF}, derived.entity_ids, b.hebelsatz, derived.raeume)
             binding = binding_for(description, self._ha_api, manifest)
             plant_id = dokument.anlagen_kennung(b)
         except StartupError as error:

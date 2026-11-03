@@ -174,7 +174,7 @@ def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
         local_check_interval=intervalle.get("pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
         telemetry_interval=intervalle.get("telemetrie_s", DEFAULT_TELEMETRY_INTERVAL_SECONDS),
         notify_hints_off=(), room_sensor_refs=tuple(sensors), battery_refs=(), entitlement_path=entitlement_path,
-        abo_source=abo_source,
+        abo_source=abo_source, referenzraeume=tuple(kreisansicht.referenz_versatz(konfiguration, kreis)),
     )
 
 

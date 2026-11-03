@@ -13,6 +13,7 @@ from smartheat_core.bindungsparameter import ENERGIE_KANAELE
 from smartheat_core.logtext import lesbar
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime.delivery import DataFault
+from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 from smartheat_runtime.ports import SignalUngueltig, SourceUnavailable
 
 logger = logging.getLogger(__name__)
@@ -124,8 +125,9 @@ def publish_telemetry(
 
 def read_regulation_fields(manifest, signals, room_target: float | None) -> dict:
     """Aussentemperatur und Vorlauf-Soll lesen (nur gemappte, nur endliche Werte) plus das
-    stabile Raum-Soll. Ein nicht lesbarer Wert fehlt, er wird nie als 0 gesendet."""
-    fields: dict = {}
+    stabile Raum-Soll und `raeume`, den Ist-Wert je Raum (Referenz- und Kontrollraeume) nach Raumnummer. Ein nicht
+    lesbarer oder unplausibler Wert fehlt, er wird nie als 0 gesendet; `raeume` steht immer da, im Zweifel leer."""
+    fields: dict = {"raeume": read_raeume(manifest, signals)}
     if room_target is not None and math.isfinite(room_target):
         fields["room_target"] = room_target
     for role in (rolle for rolle in REGULATION_FIELDS if rolle != "room_target"):  # room_target ist das Argument
@@ -140,6 +142,27 @@ def read_regulation_fields(manifest, signals, room_target: float | None) -> dict
         if ist_endliche_zahl(value):
             fields[role] = value
     return fields
+
+
+def read_raeume(manifest, signals) -> list[dict]:
+    """Ist je Raum aus `manifest.raum_refs`, aufsteigend nach Raumnummer. Ein Raum ohne lesbaren Wert im Raumbereich
+    (ROOM_TEMP_RANGE) fehlt mit einer Warnung je Ausfall und Raum; die uebrigen bleiben."""
+    raeume = []
+    for raum, ref in sorted(manifest.raum_refs.items()):
+        schluessel = f"raum:{raum}"
+        try:
+            ist = signals.get_state(ref)
+            if not is_plausible(ist, ROOM_TEMP_RANGE):
+                raise ValueError("kein Wert im Raumbereich")
+        except Exception as exc:
+            if schluessel not in _AUSFALL_GEWARNT:
+                _AUSFALL_GEWARNT.add(schluessel)
+                logger.warning("Ist von Raum %d nicht lesbar, der Raum fehlt in der Telemetrie: %s", raum,
+                               lesbar(str(exc)))
+            continue
+        _AUSFALL_GEWARNT.discard(schluessel)
+        raeume.append({"raum": raum, "ist": ist})
+    return raeume
 
 
 def read_kpi_fields(

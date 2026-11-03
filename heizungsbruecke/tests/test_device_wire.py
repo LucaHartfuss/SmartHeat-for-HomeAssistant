@@ -103,6 +103,7 @@ NUR_GEPINNT_GERAET: set[str] = {  # Kopien im Kern (smartheat_core darf nichts i
     "RAEUME_MAX",  # config_check.RAEUME_MAX
     "RAUM_FUEHLER_MAX",  # config_check.RAUM_FUEHLER_MAX
     "RAUM_ROLLEN",  # config_check.RAUM_ROLLEN
+    "RAUM_VERSATZ_MAX",  # config_check.RAUM_VERSATZ_MAX
     "SCHREIBSCHUTZ_FIELDS",  # bindungsparameter.SCHREIBSCHUTZ_FELDER
     "TREIBER_FIELDS",  # config_check.TREIBER_FELDER
     "WEGE",  # config_check.WEGE

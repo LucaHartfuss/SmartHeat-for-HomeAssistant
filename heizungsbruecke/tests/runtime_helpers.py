@@ -291,7 +291,7 @@ def _frische_umgebung(verzeichnis: Path, mp, clock):
     derived = {"replaced": ()}
     mp.setattr("heizungsbruecke.derived_sensors.ensure_all",
                lambda **kwargs: DerivedSensors({**DERIVED, "room_actual": "sensor.room_actual"}, derived["replaced"],
-                                               "fp1"))
+                                               "fp1", raeume={n: "sensor.room_actual" for n, _ in kwargs["raeume"]}))
     trigger = []
     mp.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", trigger_klasse(trigger))
     return SimpleNamespace(clock=clock, paths=paths, abo={"status": entitlement.ACTIVE, "queries": 0},
