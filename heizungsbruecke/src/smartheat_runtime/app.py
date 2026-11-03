@@ -728,9 +728,10 @@ def _zustandsspeicher(boot: BootInfo) -> ZustandsSpeicher:
 
 
 def _zustand_nicht_migriert(boot: BootInfo) -> bool:
-    """Eine Sicherung im alten Pfad ohne Kreisordner: die Zustandsmigration steht noch aus."""
+    """Eine Sicherung im alten Pfad ohne die Sicherung des Kreises: die Zustandsmigration steht noch aus. Entscheidend
+    ist die Datei, nicht der Ordner (eine zurueckgenommene Migration kann einen leeren Ordner hinterlassen)."""
     return (boot.alter_zustand is not None and boot.alter_zustand.exists()
-            and not boot.backup_path.parent.exists())
+            and not boot.backup_path.exists())
 
 
 def start(host: Host, clock: Callable[[], float] = time.monotonic, *,

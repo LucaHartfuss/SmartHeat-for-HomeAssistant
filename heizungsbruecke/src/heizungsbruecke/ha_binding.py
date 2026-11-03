@@ -140,9 +140,11 @@ class HaPlantBinding:
         return {"mode_select": self._ha_api.get_raw_state(entity_of(self.ref(lever)))}
 
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
-        """Die Zone zurueck auf das Zeitprogramm, aber nur, wenn sie davor darauf stand und jetzt nicht (mehr) darauf
-        steht. Jeder andere Ursprungswert (Kunde war schon manuell, aus oder anders) wird gemerkt, aber nicht
-        geschrieben: SmartHeat hat nichts anderes umgestellt als auf Manuell. Ohne Zone-Climate geschieht nichts."""
+        """Die Zone zurueck auf das Zeitprogramm, wenn sie davor darauf stand; jeder andere Ursprungswert (Kunde war schon
+        manuell, aus oder anders) wird gemerkt, aber nicht geschrieben: SmartHeat hat nichts anderes umgestellt als auf
+        Manuell. Die Betriebsart wird vorher nicht gelesen: HA zeigt eine eigene Umstellung erst nach dem naechsten
+        Abruf der Hersteller-Cloud, ein veraltetes "auto" liesse die Zone sonst fuer immer auf Manuell. Das Schreiben
+        ist idempotent; der Aufrufer ruft es einmal je Rueckstellung. Ohne Zone-Climate geschieht nichts."""
         original = values.get("mode_select")
         lever = self.description.prepared_lever
         if original is None or original == KEINE_BETRIEBSART or lever is None or not self.needs_preparation():
@@ -150,10 +152,7 @@ class HaPlantBinding:
         if original != ZEITPROGRAMM_HVAC_MODE:
             logger.warning("Betriebsart der Zone war %s: bleibt, wird nicht zurueckgestellt", lesbar(str(original)))
             return
-        entity_id = entity_of(self.ref(lever))
-        if self._ha_api.get_raw_state(entity_id) == ZEITPROGRAMM_HVAC_MODE:
-            return
-        self._ha_api.set_hvac_mode(entity_id, ZEITPROGRAMM_HVAC_MODE)
+        self._ha_api.set_hvac_mode(entity_of(self.ref(lever)), ZEITPROGRAMM_HVAC_MODE)
         self.physical_writes += 1
         logger.warning("Betriebsart der Zone auf den Ursprungswert %s (Zeitprogramm) zurueckgestellt",
                        ZEITPROGRAMM_HVAC_MODE)

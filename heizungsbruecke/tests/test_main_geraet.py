@@ -524,6 +524,27 @@ def test_cleanup_after_removal_deletes_the_plant_state_and_helpers(geraet_env):
     assert not config.DERIVED_SENSORS_PATH.exists() and not config.AUFRAEUMEN_PATH.exists()
 
 
+def test_cleanup_deletes_the_unmigrated_old_backup_but_keeps_the_pre_copies(geraet_env):
+    """Die Sicherung im Format vor der Kreisordnung bindet an die alte Anlage: bliebe sie liegen, stoppte sie den Start
+    der naechsten Anlage. Die Sicherungen `*.pre-<Release>` der Migration loescht das Aufraeumen nicht."""
+    _entfernt_vorbereiten()
+    alt = config.ALTER_BACKUP_PATH
+    alt.write_text(json.dumps({"plant_id": "alt"}))
+    pre = alt.with_name("backup.json.pre-0.0.1")
+    pre.write_text("{}")
+    main_module.aufraeumen(DeletingHa())
+    assert _anlage_geloescht() and not alt.exists() and not config.AUFRAEUMEN_PATH.exists()
+    assert pre.exists()
+
+
+def test_an_old_backup_that_cannot_be_deleted_keeps_the_marker(geraet_env, monkeypatch):
+    _entfernt_vorbereiten()
+    config.ALTER_BACKUP_PATH.write_text("{}")
+    _unlink_scheitert_fuer(monkeypatch, config.ALTER_BACKUP_PATH, errno.EIO)
+    main_module.aufraeumen(DeletingHa())
+    assert config.ALTER_BACKUP_PATH.exists() and config.AUFRAEUMEN_PATH.exists()
+
+
 def test_cleanup_keeps_a_new_setup(geraet_env):
     _entfernt_vorbereiten()
     dateien.schreiben_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",

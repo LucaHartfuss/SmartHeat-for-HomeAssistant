@@ -11,8 +11,13 @@ die zusammengesetzte Sicht, `update(write_budget=...)` und `update(lifetime_writ
 Datei (`quota/vicare_cloud.json`), die alle Kreise desselben Treibers schon teilen.
 
 Die Anlagendatei kennt keine Uhr des vorigen Laufs (`last` faellt beim Laden weg, wie im Kreis). Zwei Kreise im selben
-Prozess teilen sich eine `AnlagenBudget` (ein Lock je Aufruf); wer eine Eintragsfolge lesen-aendern-schreiben will, ruft
-aus dem Worker-Thread seines Kreises."""
+Prozess teilen sich eine `AnlagenBudget` (ein Lock je Aufruf); wer ein Tageslimit pruefen und danach zaehlen will, haelt
+`transaktion()` ueber die ganze Folge.
+
+Auch ohne Transaktion verliert `update` keine fremde Zaehlung: `write_budget.put` liest die zusammengesetzte Sicht, aendert
+einen Eintrag und reicht die ganze Sicht zurueck, darin die Anlagenschluessel in dem Stand, den der Thread gelesen hat.
+`update` merkt sich je Thread die zuletzt ausgegebene Sicht und uebernimmt nur, was sich gegenueber ihr geaendert hat
+(gesetzt, entfernt, bei Zaehlern der Zuwachs), und fuegt es unter dem Lock der Anlage in den aktuellen Stand ein."""
 import logging
 import threading
 from collections.abc import Iterator
@@ -23,7 +28,7 @@ from pathlib import Path
 from smartheat_core.logtext import lesbar
 from smartheat_runtime import backup_store
 from smartheat_runtime.delivery import DeliveryState
-from smartheat_runtime.state import ANLAGE_SCHLUESSEL, BridgeState, StateStore, StorageError, parse_budget
+from smartheat_runtime.state import ANLAGE_SCHLUESSEL, BridgeState, StateStore, StorageError, _parse_budget
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +39,7 @@ def _zaehler(raw) -> tuple[dict, int]:
     """(Schreibbudget, Lebensdauer) aus dem Inhalt der Datei; jeder Formfehler gilt als leer."""
     if not isinstance(raw, dict):
         return {}, 0
-    budget = parse_budget(raw["write_budget"]) if "write_budget" in raw else {}
+    budget = _parse_budget(raw["write_budget"]) if "write_budget" in raw else {}
     lebensdauer = raw.get("lifetime_writes", 0)
     if isinstance(lebensdauer, bool) or not isinstance(lebensdauer, int) or lebensdauer < 0:
         lebensdauer = 0
@@ -119,6 +124,8 @@ class BudgetStore:
     def __init__(self, kreis: StateStore, anlage: AnlagenBudget) -> None:
         self._kreis = kreis
         self._anlage = anlage
+        # Die Sicht der Anlage, die der Thread zuletzt gelesen oder selbst geschrieben hat (Grundlage der Aenderung).
+        self._sicht = threading.local()
         self._uebernehmen()
 
     def _uebernehmen(self) -> None:
@@ -148,29 +155,53 @@ class BudgetStore:
     @property
     def state(self) -> BridgeState:
         kreis = self._kreis.state
-        return replace(kreis, write_budget={**_ohne_anlage(kreis.write_budget), **self._anlage.write_budget},
-                       lifetime_writes=self._anlage.lifetime_writes)
+        with self._anlage.transaktion():
+            anlage_budget, lebensdauer = self._anlage.write_budget, self._anlage.lifetime_writes
+        self._sicht.write_budget, self._sicht.lifetime_writes = anlage_budget, lebensdauer
+        return replace(kreis, write_budget={**_ohne_anlage(kreis.write_budget), **anlage_budget},
+                       lifetime_writes=lebensdauer)
 
     def update(self, **changes) -> None:
         """Verteilt `write_budget` nach Schluessel und gibt `lifetime_writes` an die Anlage; beide Orte werden versucht,
-        der erste Schreibfehler geht danach durch."""
-        anlage: dict = {}
-        if "write_budget" in changes:
-            gesamt = changes["write_budget"]
-            anlage["write_budget"] = {key: entry for key, entry in gesamt.items() if key in ANLAGE_SCHLUESSEL}
+        der erste Schreibfehler geht danach durch. Von der Anlage geht nur durch, was sich gegenueber der Sicht des
+        Threads geaendert hat (siehe Kopf der Datei)."""
+        gesamt = changes.get("write_budget")
+        lebensdauer = changes.pop("lifetime_writes", None)
+        if gesamt is not None:
             changes["write_budget"] = _ohne_anlage(gesamt)
-        if "lifetime_writes" in changes:
-            anlage["lifetime_writes"] = changes.pop("lifetime_writes")
         fehler: StorageError | None = None
-        for ziel, aenderungen in ((self._anlage, anlage), (self._kreis, changes)):
-            if not aenderungen:
-                continue
+        if gesamt is not None or lebensdauer is not None:
             try:
-                ziel.update(**aenderungen)
+                self._anlage_aendern(gesamt, lebensdauer)
+            except StorageError as error:
+                fehler = error
+        if changes:
+            try:
+                self._kreis.update(**changes)
             except StorageError as error:
                 fehler = fehler or error
         if fehler is not None:
             raise fehler
+
+    def _anlage_aendern(self, gesamt: dict | None, lebensdauer: int | None) -> None:
+        with self._anlage.transaktion():
+            aktuell = self._anlage.write_budget
+            gelesen = getattr(self._sicht, "write_budget", None)
+            gelesen_lebensdauer = getattr(self._sicht, "lifetime_writes", None)
+            aenderungen: dict = {}
+            if gesamt is not None:
+                neu = {key: entry for key, entry in gesamt.items() if key in ANLAGE_SCHLUESSEL}
+                merged = _eingefuegt(aktuell, neu, aktuell if gelesen is None else gelesen)
+                if merged != aktuell:
+                    aenderungen["write_budget"] = merged
+                self._sicht.write_budget = neu
+            if lebensdauer is not None:
+                merged_lebensdauer = _lebensdauer(self._anlage.lifetime_writes, lebensdauer, gelesen_lebensdauer)
+                if merged_lebensdauer != self._anlage.lifetime_writes:
+                    aenderungen["lifetime_writes"] = merged_lebensdauer
+                self._sicht.lifetime_writes = lebensdauer
+            if aenderungen:
+                self._anlage.update(**aenderungen)
 
     def update_saved(self, **changes) -> None:
         _nur_kreis(changes)
@@ -204,6 +235,47 @@ class BudgetStore:
                 fehler = fehler or error
         if fehler is not None:
             raise fehler
+
+
+def _eingefuegt(aktuell: dict, neu: dict, gelesen: dict) -> dict:
+    """Der aktuelle Stand der Anlage mit den Aenderungen des Threads (`neu` gegenueber `gelesen`): ein anderer Eintrag
+    wird gesetzt, ein fehlender entfernt, ein unveraenderter bleibt wie er jetzt ist."""
+    ergebnis = dict(aktuell)
+    for key in gelesen.keys() | neu.keys():
+        if neu.get(key) == gelesen.get(key):
+            continue
+        if key not in neu:
+            ergebnis.pop(key, None)
+        else:
+            ergebnis[key] = _eintrag_eingefuegt(aktuell.get(key), neu[key], gelesen.get(key))
+    return ergebnis
+
+
+def _eintrag_eingefuegt(aktuell: dict | None, neu: dict, gelesen: dict | None) -> dict:
+    """Ein Zaehlereintrag des gleichen Tages uebernimmt den Zuwachs des Threads auf den aktuellen Stand (zwei Kreise
+    zaehlen am selben Eintrag); sonst gilt der Eintrag des Threads."""
+    tag = neu.get("day")
+    if aktuell is None or aktuell.get("day") != tag or not _zaehler_eintrag(neu) or not _zaehler_eintrag(aktuell):
+        return neu
+    basis = gelesen["count"] if gelesen is not None and gelesen.get("day") == tag and _zaehler_eintrag(gelesen) else 0
+    letzte = [x for x in (neu.get("last"), aktuell.get("last")) if isinstance(x, int | float)]
+    eintrag = {**neu, "count": max(0, aktuell["count"] + neu["count"] - basis)}
+    if letzte:
+        eintrag["last"] = max(letzte)
+    return eintrag
+
+
+def _zaehler_eintrag(eintrag: dict) -> bool:
+    zaehler = eintrag.get("count")
+    return isinstance(zaehler, int) and not isinstance(zaehler, bool)
+
+
+def _lebensdauer(aktuell: int, neu: int, gelesen: int | None) -> int:
+    """Lebensdauerzaehler: ein Zuwachs gegenueber dem gelesenen Stand kommt auf den aktuellen Stand; ein Zuruecksetzen
+    auf 0 und ein Schreiben ohne gelesenen Stand gelten absolut."""
+    if gelesen is None or neu == 0:
+        return neu
+    return max(0, aktuell + neu - gelesen)
 
 
 def _ohne_anlage(budget: dict) -> dict:

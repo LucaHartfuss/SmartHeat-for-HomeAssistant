@@ -4,7 +4,7 @@ in jedem lokalen Check wiederholt werden.
 
 Ein Log je Schluessel in BridgeState.write_budget (backup.json): {"day", "count", "last",
 "limit_notified"?}. `count` zaehlt je nach Regel jeden Versuch oder nur Fehlschlaege des Tages.
-`last` laeuft auf der monotonen Worker-Uhr und wird beim Laden verworfen (state.parse_budget): nach
+`last` laeuft auf der monotonen Worker-Uhr und wird beim Laden verworfen (state._parse_budget): nach
 einem Neustart gilt das Tageslimit weiter, der Mindestabstand beginnt neu."""
 import logging
 from dataclasses import dataclass

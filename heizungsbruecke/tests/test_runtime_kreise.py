@@ -318,3 +318,121 @@ def test_ein_worker_der_nicht_endet_haelt_den_kreis_an_und_meldet_den_ausfall(en
     assert _warten(lambda: bool(fehler))
     assert isinstance(fehler[0], RuntimeError)
     beenden()
+
+
+def _in_start_anhalten(laufzeit, kreis, monkeypatch):
+    """Der Neustart von `kreis` (app.start) bleibt haengen, bis `frei` gesetzt wird; `drin` meldet, dass er laeuft."""
+    echt = laufzeit._starte_kreis
+    drin, frei = threading.Event(), threading.Event()
+
+    def starte(nummer):
+        if nummer == kreis:
+            drin.set()
+            assert frei.wait(10)
+        return echt(nummer)
+
+    monkeypatch.setattr(laufzeit, "_starte_kreis", starte)
+    return drin, frei
+
+
+def test_scheitert_der_neustart_des_kreises_geht_der_ausfall_an_den_aufseher(env, monkeypatch):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    alt = laufzeit.kreise()[2]
+    alt.store.update(abo_inactive_since=datetime.now().astimezone())
+
+    def kaputt(nummer):
+        raise Boom()
+
+    monkeypatch.setattr(laufzeit, "_starte_kreis", kaputt)
+
+    assert laufzeit.wiederaufnehmen(2) is False
+
+    with pytest.raises(Boom):  # der Prozess folgt dem Neustartweg des Hosts, der Kreis bleibt nicht ohne Regelung
+        laufzeit.run()
+
+
+def test_scheitert_der_neustart_im_laufenden_betrieb_erreicht_der_ausfall_den_lauf(env, monkeypatch):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    _, fehler = _lauf_im_thread(laufzeit)
+    laufzeit.kreise()[2].store.update(abo_inactive_since=datetime.now().astimezone())
+    monkeypatch.setattr(laufzeit, "_starte_kreis", lambda nummer: (_ for _ in ()).throw(Boom()))
+
+    assert laufzeit.wiederaufnehmen(2) is False
+
+    assert _warten(lambda: bool(fehler))
+    assert isinstance(fehler[0], Boom)
+
+
+def test_gelingt_der_neustart_gibt_es_keinen_ausfall(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    laufzeit.kreise()[2].store.update(abo_inactive_since=datetime.now().astimezone())
+
+    assert laufzeit.wiederaufnehmen(2) is True
+
+    assert laufzeit._ausfall.empty()
+
+
+def test_waehrend_ein_kreis_neu_startet_bleiben_die_anderen_erreichbar(env, monkeypatch):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    laufzeit.kreise()[1].store.update(abo_inactive_since=datetime.now().astimezone())
+    drin, frei = _in_start_anhalten(laufzeit, 1, monkeypatch)
+    aufnahme = threading.Thread(target=lambda: laufzeit.wiederaufnehmen(1), daemon=True)
+    aufnahme.start()
+    assert drin.wait(5)
+    gesehen, fertig = [], threading.Event()
+
+    def andere():
+        laufzeit.worker.register("probe", lambda event: gesehen.append(event.kind))
+        laufzeit.worker.post(Event("probe"))
+        laufzeit.kreise()
+        fertig.set()
+
+    thread = threading.Thread(target=andere, daemon=True)
+    thread.start()
+
+    erreichbar = fertig.wait(3)
+    frei.set()
+    aufnahme.join(10)
+    thread.join(10)
+    assert erreichbar, "register/post/kreise warten auf den Neustart eines anderen Kreises"
+    assert not aufnahme.is_alive()
+
+
+def test_ein_handler_der_waehrend_des_neustarts_kommt_erreicht_auch_den_neuen_kreis(env, monkeypatch):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    laufzeit.kreise()[1].store.update(abo_inactive_since=datetime.now().astimezone())
+    drin, frei = _in_start_anhalten(laufzeit, 1, monkeypatch)
+    aufnahme = threading.Thread(target=lambda: laufzeit.wiederaufnehmen(1), daemon=True)
+    aufnahme.start()
+    assert drin.wait(5)
+    gesehen = []
+
+    laufzeit.worker.register("spaet", lambda event: gesehen.append(event.kind))
+    frei.set()
+    aufnahme.join(10)
+
+    laufzeit.worker.post(Event("spaet"))
+    laufzeit.kreise()[1].worker.run_pending()
+    assert gesehen.count("spaet") == 1
+
+
+def test_eine_zweite_wiederaufnahme_desselben_kreises_waehrend_der_ersten_tut_nichts(env, monkeypatch):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    laufzeit.kreise()[1].store.update(abo_inactive_since=datetime.now().astimezone())
+    drin, frei = _in_start_anhalten(laufzeit, 1, monkeypatch)
+    ergebnis = []
+    aufnahme = threading.Thread(target=lambda: ergebnis.append(laufzeit.wiederaufnehmen(1)), daemon=True)
+    aufnahme.start()
+    assert drin.wait(5)
+
+    zweite = laufzeit.wiederaufnehmen(1)
+
+    frei.set()
+    aufnahme.join(10)
+    assert zweite is False and ergebnis == [True]

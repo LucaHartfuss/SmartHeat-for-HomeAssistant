@@ -86,9 +86,10 @@ class _Aufsicht:
         self._registriert: list[tuple[str, Handler]] = []
 
     def register(self, kind: str, handler: Handler) -> None:
-        self._registriert.append((kind, handler))
-        for ergebnis in self._laufzeit.kreise().values():
-            ergebnis.worker.register(kind, handler)
+        with self._laufzeit._sperre:  # gegen die Wiederaufnahme: der Handler erreicht jeden Kreis genau einmal
+            self._registriert.append((kind, handler))
+            for ergebnis in self._laufzeit.kreise().values():
+                ergebnis.worker.register(kind, handler)
 
     def anwenden(self, worker: RegulationWorker) -> None:
         for kind, handler in self._registriert:
@@ -107,6 +108,7 @@ class Laufzeit:
         self._host, self._clock, self._mqtt_factory, self._neustart = host, clock, mqtt_factory, neustart
         self._ergebnisse: dict[int, Runtime | IdleBridge] = {}
         self._threads: dict[int, threading.Thread] = {}
+        self._in_aufnahme: set[int] = set()
         self._ausfall: queue.Queue[BaseException] = queue.Queue()
         self._sperre = threading.RLock()
         self._laeuft = False
@@ -155,26 +157,40 @@ class Laufzeit:
 
     def wiederaufnehmen(self, kreis: int) -> bool:
         """Nimmt den Kreis wieder auf, wenn er auf sein Abo wartet: sein Worker endet, `app.start` laeuft fuer diesen
-        Kreis neu (liest das Abo frisch). False, wenn der Kreis nichts abwartet."""
+        Kreis neu (liest das Abo frisch). False, wenn der Kreis nichts abwartet, schon aufgenommen wird oder der
+        Neustart scheitert. Scheitert er, nachdem der alte Worker beendet ist, hat der Kreis keine Regelung mehr:
+        der Ausfall geht an den Aufseher (Neustart des Prozesses). Warten auf den Worker und `app.start` laufen
+        ausserhalb der Sperre, damit die anderen Kreise (`register`, `post`, `kreise`) erreichbar bleiben."""
         with self._sperre:
             alt = self._ergebnisse.get(kreis)
-            if alt is None or not ruhend(alt):
+            if alt is None or kreis in self._in_aufnahme or not ruhend(alt):
                 return False
-            alt.worker.beenden()
+            self._in_aufnahme.add(kreis)
             thread = self._threads.get(kreis)
+        try:
+            alt.worker.beenden()
             if thread is not None:
                 thread.join(ABWICKLUNG_SECONDS)
                 if thread.is_alive():
                     self._ausfall.put(RuntimeError("Worker eines Kreises endet nicht"))
                     return False
-            _anhalten(alt)
-            neu = self._starte_kreis(kreis)
-            self.worker.anwenden(neu.worker)
-            self._ergebnisse[kreis] = neu
-            if self._laeuft:
-                self._thread_starten(kreis)
+            try:
+                _anhalten(alt)
+                neu = self._starte_kreis(kreis)
+            except BaseException as fehler:  # noqa: BLE001 - ohne Worker regelt der Kreis nicht: Prozess neu starten
+                logger.exception("Kreis %s konnte die Arbeit nicht wieder aufnehmen", kreis)
+                self._ausfall.put(fehler)
+                return False
+            with self._sperre:  # Handler und Eintrag zusammen: ein gleichzeitiges `register` erreicht den neuen Kreis
+                self.worker.anwenden(neu.worker)
+                self._ergebnisse[kreis] = neu
+                if self._laeuft:
+                    self._thread_starten(kreis)
             logger.info("Kreis %s nimmt die Arbeit wieder auf", kreis)
             return True
+        finally:
+            with self._sperre:
+                self._in_aufnahme.discard(kreis)
 
     def konfiguration_geaendert(self, alt, neu) -> bool:
         """Ein neues Konfigurationsdokument: nimmt jeden Kreis wieder auf, dessen Abo wieder aktiv ist; True, wenn der

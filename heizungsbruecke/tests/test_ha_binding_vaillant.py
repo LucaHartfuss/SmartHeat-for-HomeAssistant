@@ -95,10 +95,23 @@ def test_restore_aux_puts_a_manual_zone_back_on_the_schedule_if_it_was_on_it_bef
     assert binding.physical_writes == 1
 
 
-def test_restore_aux_leaves_a_zone_alone_that_is_on_the_schedule_already():
+def test_restore_aux_writes_the_schedule_even_if_ha_still_shows_it():
+    """HA zeigt eine eigene Umstellung erst nach dem naechsten Abruf der Cloud (bis zu 2100 s): ein Lesen vor dem
+    Zurueckstellen wuerde die Zone auf Manuell lassen. Das Schreiben ist idempotent."""
     binding, ha = _binding("auto")
     binding.restore_aux({"mode_select": "auto"})
-    assert ha.calls == [] and binding.physical_writes == 0
+    assert ha.calls == [("mode", ZONE, ZEITPROGRAMM_HVAC_MODE)] and binding.physical_writes == 1
+
+
+def test_restore_aux_does_not_read_the_zone_before_it_writes():
+    class NoRead(FakeHa):
+        def get_raw_state(self, entity_id):
+            raise AssertionError("restore_aux darf die Betriebsart nicht vorher lesen")
+
+    ha = NoRead(MANUAL_HVAC_MODE)
+    binding = HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT)
+    binding.restore_aux({"mode_select": "auto"})
+    assert ha.calls == [("mode", ZONE, "auto")]
 
 
 @pytest.mark.parametrize("zone", ["off", "heat", "cool"])

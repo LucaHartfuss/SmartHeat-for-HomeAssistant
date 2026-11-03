@@ -162,7 +162,7 @@ def test_an_unknown_original_mode_is_remembered_not_written_and_logged(make_stor
 @pytest.mark.parametrize("always_restore", WEGE)
 def test_a_zone_the_customer_put_on_the_schedule_meanwhile_gets_no_setpoint_write(make_store, clock, always_restore):
     """Steht die Zone beim Zurueckstellen schon nicht auf Manuell, waere der Sollwert ein Quick-Veto: er entfaellt,
-    die uebrigen Hebel und die Betriebsart laufen."""
+    die uebrigen Hebel und die Betriebsart laufen (das Zeitprogramm wird ohne Lesen einmal geschrieben)."""
     pipeline, store, ha = _setup(make_store, clock, mode="auto")
     _smartheat_laeuft(pipeline, clock, ha)
     ha.modes[ZONE] = "auto"
@@ -175,7 +175,7 @@ def test_a_zone_the_customer_put_on_the_schedule_meanwhile_gets_no_setpoint_writ
     assert {ref: ha.states[ref] for ref in ORIGINAL if ref != ZONE_REF} == {
         ref: value for ref, value in ORIGINAL.items() if ref != ZONE_REF}
     assert ha.modes[ZONE] == "auto"
-    assert ha.mode_switches == []
+    assert ha.mode_switches == ["auto"]
     assert store.state.aux_originals == {}
 
 
@@ -293,3 +293,104 @@ def test_a_failing_mode_switch_keeps_the_restore_open(make_store, clock):
 
     assert pipeline.restore_and_clear(False) is False
     assert store.state.aux_originals == {"mode_select": "auto"}
+
+
+class VeralteteZoneHa(ZoneHa):
+    """Die Cloud zeigt eine Umstellung erst nach dem naechsten Abruf: HA meldet `modes` (angezeigt), die Zone steht
+    in `echt`. Das Quick-Veto wirkt nach dem echten Stand; `abruf` bringt die Anzeige nach."""
+
+    def __init__(self, mode="auto"):
+        super().__init__(mode)
+        self.echt = {ZONE: mode}
+
+    def set_climate_temperature(self, entity_id, value):
+        self.events.append(("write", ZONE_REF, value))
+        if self.echt[entity_id] != MANUAL_HVAC_MODE:
+            self.vetoes.append(value)
+            return
+        self.states[ZONE_REF] = value
+
+    def set_hvac_mode(self, entity_id, mode):
+        self.events.append(("mode", entity_id, mode))
+        self.echt[entity_id] = mode
+
+    def abruf(self):
+        self.modes.update(self.echt)
+
+
+def _setup_veraltet(make_store, clock, mode="auto"):
+    store = make_store()
+    ha = VeralteteZoneHa(mode)
+    pipeline = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
+    clock.advance(VAILLANT_MYPYLLANT.settle_seconds + 1)
+    return pipeline, store, ha
+
+
+def _umgestellt_aber_noch_alt_angezeigt(pipeline, ha):
+    """SmartHeat stellt die Zone um: echt Manuell, HA zeigt noch das Zeitprogramm."""
+    pipeline.apply_server_values(SERVER)
+    assert ha.echt[ZONE] == MANUAL_HVAC_MODE and ha.modes[ZONE] == "auto"
+    ha.events.clear()
+
+
+@pytest.mark.parametrize("always_restore", WEGE)
+def test_a_zone_that_ha_still_shows_on_the_schedule_goes_back_with_its_setpoint(make_store, clock, always_restore):
+    """Eigene Umstellung, HA zeigt sie noch nicht: weder entfaellt der Sollwert (das Veto wuerde sonst nicht nur den
+    Wert, sondern die Rueckstellung verfehlen) noch bleibt die Zone auf Manuell."""
+    pipeline, store, ha = _setup_veraltet(make_store, clock)
+    _umgestellt_aber_noch_alt_angezeigt(pipeline, ha)
+    clock.advance(60)
+
+    assert pipeline.restore_and_clear(always_restore) is True
+
+    assert ha.echt[ZONE] == "auto"
+    assert ha.mode_switches == ["auto"]
+    assert ha.vetoes == []
+    assert _ursprung(ha) == ORIGINAL
+    assert ha.events[-1] == ("mode", ZONE, "auto")
+    assert store.state.aux_originals == {}
+
+
+def test_the_stale_display_is_trusted_again_after_the_settle_time(make_store, clock):
+    """Randwert beidseitig: genau settle_seconds nach der eigenen Umstellung gilt die Zone noch als umgestellt, danach
+    entscheidet die Anzeige (hier: der Kunde hat sie inzwischen auf das Zeitprogramm gestellt, kein Veto)."""
+    settle = VAILLANT_MYPYLLANT.settle_seconds
+    for vergangen, sollwert_geschrieben in ((settle, True), (settle + 1, False)):
+        pipeline, store, ha = _setup_veraltet(make_store, clock)
+        _umgestellt_aber_noch_alt_angezeigt(pipeline, ha)
+        ha.echt[ZONE] = "auto"
+        ha.vetoes.clear()
+        clock.advance(vergangen)
+
+        assert pipeline.restore_and_clear(True) is True
+
+        assert (ZONE_REF in ha.written) is sollwert_geschrieben
+        assert ha.echt[ZONE] == "auto"
+        assert len(ha.vetoes) == (1 if sollwert_geschrieben else 0)
+
+
+def test_after_a_restart_the_zone_still_goes_back_even_if_the_setpoint_is_skipped(make_store, clock):
+    """Eine neue Pipeline kennt die eigene Umstellung nicht mehr: der Sollwert entfaellt (Anzeige veraltet), die
+    Betriebsart geht trotzdem zurueck."""
+    pipeline, store, ha = _setup_veraltet(make_store, clock)
+    _umgestellt_aber_noch_alt_angezeigt(pipeline, ha)
+    neu = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
+
+    assert neu.restore_and_clear(True) is True
+
+    assert ha.echt[ZONE] == "auto"
+    assert ha.vetoes == [] and ZONE_REF not in ha.written
+
+
+def test_the_own_switch_is_forgotten_after_the_zone_went_back(make_store, clock):
+    """Nach dem Zurueckstellen steht die Zone auf dem Zeitprogramm; ein neues Abo bereitet sie wieder vor, auch
+    innerhalb von settle_seconds nach der ersten Umstellung."""
+    pipeline, store, ha = _setup_veraltet(make_store, clock)
+    _umgestellt_aber_noch_alt_angezeigt(pipeline, ha)
+    clock.advance(60)
+    pipeline.restore_and_clear(True)
+    ha.abruf()
+
+    pipeline.apply_server_values(SERVER)
+
+    assert ha.echt[ZONE] == MANUAL_HVAC_MODE

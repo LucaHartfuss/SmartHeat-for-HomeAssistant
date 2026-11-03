@@ -199,6 +199,9 @@ def _anlage_loeschen(ha_api) -> bool:
     if not gescheitert:
         for path in zustandspfade.wiederherstellungspunkte(config.RUNTIME_DIR):
             entfernen(path, eintrag_weg)
+        # Die nie migrierte Sicherung im alten Format bindet ebenfalls an die alte Anlage; die Sicherungen
+        # `*.pre-<Release>` der Migration bleiben liegen.
+        entfernen(config.ALTER_BACKUP_PATH, eintrag_weg)
     if not gescheitert:
         entfernen(config.RUNTIME_DIR, shutil.rmtree)
     fertig = fertig and not gescheitert

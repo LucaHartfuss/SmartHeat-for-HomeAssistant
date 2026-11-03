@@ -22,6 +22,38 @@ def test_ein_unmigrierter_zustand_verhindert_den_start(env):
     assert env.paths["ALTER_BACKUP_PATH"].exists()
 
 
+def test_ein_leerer_kreisordner_gilt_nicht_als_migriert(env):
+    """Eine zurueckgenommene Migration kann den Ordner zurueckgelassen haben: die Sicherung selbst fehlt noch."""
+    kreis = env.paths["RUNTIME_DIR"] / "kreis-1"
+    kreis.mkdir(parents=True)
+    env.paths["ALTER_BACKUP_PATH"].write_text(json.dumps({"plant_id": "alt"}))
+
+    bridge = _start_bridge(env)
+
+    assert not _is_running(bridge)
+    assert bridge.status.flags.grund == app.GRUND_ZUSTAND_NICHT_MIGRIERT
+    assert list(kreis.iterdir()) == []  # die Fehlerroute legt nichts an
+
+
+def test_ein_unvollstaendiger_kreisordner_gilt_nicht_als_migriert(env):
+    kreis = env.paths["RUNTIME_DIR"] / "kreis-1"
+    kreis.mkdir(parents=True)
+    (kreis / "failsafe_state.json").write_text("{}")
+    env.paths["ALTER_BACKUP_PATH"].write_text(json.dumps({"plant_id": "alt"}))
+
+    assert not _is_running(_start_bridge(env))
+    assert not (kreis / "backup.json").exists()
+
+
+def test_ein_migrierter_kreisordner_mit_sicherung_startet(env):
+    kreis = env.paths["RUNTIME_DIR"] / "kreis-1"
+    kreis.mkdir(parents=True)
+    (kreis / "backup.json").write_text("{}")
+    env.paths["ALTER_BACKUP_PATH"].write_text("{}")  # Rest der Migration, der Betreiber raeumt auf
+
+    assert _is_running(_start_bridge(env))
+
+
 def test_der_grund_nennt_den_code_und_den_weg(env):
     env.paths["ALTER_BACKUP_PATH"].write_text("{}")
 

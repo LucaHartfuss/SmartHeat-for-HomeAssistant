@@ -139,7 +139,7 @@ def _is_energy_entry(value) -> bool:
             and isinstance(value.get("einheit", ""), str))
 
 
-def parse_budget(raw) -> dict | None:
+def _parse_budget(raw) -> dict | None:
     """Tag, Anzahl und Limit-Markierung je Schluessel; "last" (monotone Uhr des vorigen Laufs) faellt
     weg. None bei jedem Formfehler (dann gilt ein leeres Budget)."""
     if not isinstance(raw, dict):
@@ -214,7 +214,7 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
         else:
             _invalid(key)
     if "write_budget" in raw:
-        budget = parse_budget(raw["write_budget"])
+        budget = _parse_budget(raw["write_budget"])
         if budget is None:
             _invalid("write_budget")
         else:

@@ -665,8 +665,14 @@ class LeverPipeline:
         """False, wenn die Anlage ohne Vorbereitung (Wiederherstellung) den Sollwert des prepared_lever nicht annimmt:
         steht die Zone nicht auf Manuell, wuerde ein Schreiben als Quick-Veto der Hersteller-Cloud verworfen
         (preparation_resets_setpoint). Dann entfaellt der Hebel (Log), die uebrigen Hebel und die Hilfswerte laufen.
+        Hat diese Pipeline die Zone innerhalb von settle_seconds selbst umgestellt, gilt sie als umgestellt, auch wenn
+        die Anzeige noch das Zeitprogramm nennt; ein Neustart vergisst das (dann entscheidet die Anzeige).
         Nicht lesbare Betriebsart: DeviceWriteError, die Wiederherstellung wird wiederholt."""
         if not self._description.preparation_resets_setpoint or not self._binding.needs_preparation():
+            return True
+        if self._prepared_at is not None and self._clock() - self._prepared_at <= self._description.settle_seconds:
+            # Eigene Umstellung auf Manuell vor kurzem: HA zeigt sie womoeglich noch nicht (veraltete Anzeige der
+            # Cloud). Die Zone steht auf Manuell, der Sollwert wird angenommen.
             return True
         try:
             prepared = self._binding.is_prepared()
@@ -983,6 +989,8 @@ class LeverPipeline:
         before = self._binding.physical_writes
         try:
             self._binding.restore_aux(values, levers=levers)
+            # Die Zone steht (bei Vaillant) wieder auf dem Zeitprogramm: die eigene Umstellung gilt nicht mehr.
+            self._prepared_at = None
         finally:
             self._count_physical(self._binding.physical_writes - before)
 
