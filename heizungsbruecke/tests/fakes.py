@@ -55,7 +55,7 @@ VIESSMANN_ZUSTAND = {
 
 class HaEventSink:
     """StatusSink der Laufzeit-Tests (StatusReporter): das Ereignis unveraendert an fire_event. Produktiv sendet
-    geraet_status.GeraetStatus (Schema 3); dies ist der Ersatz fuer den entfallenen HaStatusSink."""
+    geraet_status.GeraetStatus (Schema 4); dies ist der Ersatz fuer den entfallenen HaStatusSink."""
 
     def __init__(self, ha_api) -> None:
         self._ha_api = ha_api

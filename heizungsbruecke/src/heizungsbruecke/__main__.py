@@ -39,7 +39,7 @@ from typing import BinaryIO
 from heizungsbruecke import config, derived_sensors, geraet_nachweis, stdin_befehl
 from heizungsbruecke.discovery import Discovery
 from heizungsbruecke.geraet_host import HaDeviceHost
-from heizungsbruecke.geraet_status import GeraetStatus
+from heizungsbruecke.geraet_status import GeraetStatus, lokale_sicht
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import HaAnlagenHost
 from heizungsbruecke.supervisor import SupervisorApi
@@ -47,7 +47,7 @@ from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import zustandspfade
 from smartheat_device import prozess
 from smartheat_device.device import DEVICE_DIR, Device
-from smartheat_device.documents import KONFIGURATION, DocumentStore
+from smartheat_device.documents import ANZEIGE, KONFIGURATION, DocumentStore
 from smartheat_runtime import aufraeumen as markierung
 from smartheat_runtime import kreise
 from smartheat_runtime.runtime import Runtime
@@ -211,8 +211,8 @@ def _anlage_loeschen(ha_api) -> bool:
 
 
 class _Laufzeit:
-    """Der Anlagen-Host des laufenden Starts: der Geraete-Thread liest daraus den wirksamen Raum-Soll (des ersten
-    Kreises) fuer das Status-Ereignis (GeraetStatus)."""
+    """Der Anlagen-Host des laufenden Starts: der Geraete-Thread liest daraus den wirksamen Raum-Soll je Kreis fuer
+    das Status-Ereignis (GeraetStatus)."""
 
     host: HaAnlagenHost | None = None
 
@@ -220,17 +220,25 @@ class _Laufzeit:
 status_holder = _Laufzeit()
 
 
-def _raum_soll() -> float | None:
+def _raum_soll(kreis: int) -> float | None:
     host = status_holder.host
-    store = host.store if host is not None else None
+    kreis_host = host.hosts.get(kreis) if host is not None else None
+    store = kreis_host.store if kreis_host is not None else None
     return store.value if store is not None else None
 
 
 def verdrahten(geraet: HaDeviceHost, device, ha_api, supervisor) -> GeraetStatus:
-    """Geraete-Host an den Geraetekern haengen: Status-Ereignis Schema 3 (laufzeit_merken legt das Laufzeit-Ereignis
+    """Geraete-Host an den Geraetekern haengen: Status-Ereignis Schema 4 (laufzeit_merken legt das Laufzeit-Ereignis
     fuer up/status und sign_off ab), Supervisor-Discovery und der jeweils aktuelle Uebernahme-Code."""
     geraet.verbinden(device)
-    status = GeraetStatus(ha_api, device.identity.device_id, _raum_soll,
+
+    def anzeige_inhalt() -> dict | None:
+        dokument = device.documents.aktuell(ANZEIGE)
+        return dokument.inhalt if dokument is not None else None
+
+    lokal = lokale_sicht(geraet.konfiguration, _raum_soll, lambda kreis: (geraet.raum(kreis) or {}).get("ist"),
+                         anzeige_inhalt)
+    status = GeraetStatus(ha_api, device.identity.device_id, lokal,
                           laufzeit_merken=lambda event: setattr(geraet, "runtime_status_event", event))
     geraet.status_sink = status
     geraet.discovery = Discovery(supervisor, config.DEVICE_DATA_DIR / DEVICE_DIR / "discovery.json")

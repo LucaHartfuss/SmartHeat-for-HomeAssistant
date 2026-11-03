@@ -50,7 +50,7 @@ from smartheat_gateway.paths import Paths
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import dokument_config
-from smartheat_runtime.status import STATUS_ABGEMELDET
+from smartheat_runtime.status import STATUS_ABGEMELDET, ohne_kreise
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ class StatusSink:
         self._zustand = zustand
 
     def publish(self, event: dict) -> None:
-        self._zustand.status = dict(event)
+        self._zustand.status = ohne_kreise(event)
 
 
 class ZustandsDatei:

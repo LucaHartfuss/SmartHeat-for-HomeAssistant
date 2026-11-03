@@ -228,6 +228,10 @@ class HaHost:
             for feld in dokument.optionale_felder(b))
         return Loaded(config=runtime, manifest=manifest, binding=binding, plant_id=plant_id, notices=notices)
 
+    def _anlagenkreise(self) -> list[int]:
+        """Alle Kreise der Anlage laut Dokument, dieser Kreis immer dabei."""
+        return sorted({*_kreisnummern(self._konfiguration), self.kreis})
+
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
         assert self._bindung is not None and self._runtime is not None and self.store is not None  # load() lief zuvor
         geraet = self._geraet
@@ -237,7 +241,8 @@ class HaHost:
             manifest, self._ha_api, worker, self.store, self.soll_entity,
             tagestick=self._runtime.daily_trigger_time, wache_s=self._runtime.local_check_interval,
             wunsch=lambda wert, herkunft, durch: geraet.wunsch(wert, herkunft=herkunft, durch=durch, kreis=self.kreis),
-            soll_quelle_aus=geraet.soll_quelle_aus, quelle=quelle, kreis=self.kreis)
+            soll_quelle_aus=geraet.soll_quelle_aus, quelle=quelle, kreis=self.kreis,
+            anlagenkreise=frozenset(self._anlagenkreise()))
         if self._angleichen and quelle is not None:
             self._soll_entity_angleichen(quelle)
         raum = self.raum
@@ -281,6 +286,10 @@ class HaHost:
             self.raum.publish()
 
 
+def _kreisnummern(konfiguration) -> list[int]:
+    return [k for eintrag in kreisansicht.kreise(konfiguration) if isinstance(k := eintrag.get("kreis"), int)]
+
+
 class HaAnlagenHost:
     """Die Sicht der Laufzeit auf die ganze Anlage (kreise.AnlagenHost): ein HaHost je Kreis des Dokuments, alle auf
     demselben Geraet, derselben HA-API und derselben Statussenke. `kreis_host` baut den Host des Kreises jedes Mal neu
@@ -294,8 +303,7 @@ class HaAnlagenHost:
     def kreise(self) -> list[int]:
         """Die Kreisnummern des Dokuments; ohne Einrichtung der eine Kreis 1 im Ruhezustand."""
         konfiguration, _ = self._geraet.laufzeit_konfiguration()
-        nummern = [k for eintrag in kreisansicht.kreise(konfiguration) if isinstance(k := eintrag.get("kreis"), int)]
-        return nummern or [1]
+        return _kreisnummern(konfiguration) or [1]
 
     def kreis_host(self, kreis: int) -> HaHost:
         host = HaHost(self._geraet, self._ha_api, clock=self._clock, kreis=kreis)

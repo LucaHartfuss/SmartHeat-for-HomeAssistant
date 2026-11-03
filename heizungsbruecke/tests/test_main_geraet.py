@@ -210,7 +210,7 @@ def test_start_without_document_waits_unconfigured_and_reports_through_the_devic
 
     geraet.anzeigen(_anzeige())
     ((typ, event),) = geraet_env.ha.events
-    assert typ == "smartheat_status" and event["schema"] == 3
+    assert typ == "smartheat_status" and event["schema"] == 4
     assert event["geraet_id"] == DEVICE_ID and event["geraet_zustand"] == "nicht_uebernommen"
     assert CLAIM_CODE not in json.dumps(event)
     assert supervisor.gemeldet == [{"geraet_id": DEVICE_ID, "zustand": "nicht_uebernommen", "claim_code": CLAIM_CODE}]
@@ -241,7 +241,7 @@ def test_start_with_document_regulates_and_wires_status_and_operations(geraet_en
     result.worker.run_pending()
     assert host.store.value == 22.5
     geraet.anzeigen(_anzeige("regelt", eingerichtet=True))
-    assert geraet_env.ha.events[-1][1]["raum_soll"] == 22.5  # wirksamer Raum-Soll aus dem Soll-Speicher
+    assert geraet_env.ha.events[-1][1]["kreise"][0]["raum_soll"] == 22.5  # wirksamer Raum-Soll aus dem Soll-Speicher
 
 
 def test_restarts_of_the_runtime_take_the_clean_restart_path(geraet_env):

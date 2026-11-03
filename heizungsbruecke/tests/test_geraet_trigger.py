@@ -48,7 +48,7 @@ class Aufbau:
                    "to_state": {"state": "heat", "attributes": {"temperature": wert}, "context": context or {}}})
 
     def ereignis(self, wert, context):
-        self.fire({"platform": "event", "event": {"event_type": "smartheat_wunsch", "data": {"raum_soll": wert},
+        self.fire({"platform": "event", "event": {"event_type": "smartheat_wunsch", "data": {"raum_soll": wert, "kreis": 1},
                                                   "context": context}})
 
 
@@ -170,11 +170,22 @@ def test_target_attribute_beyond_float_range_is_ignored(tmp_path, huge):
 def test_event_without_a_finite_number_is_ignored_and_logged(tmp_path, caplog, data):
     a = Aufbau(tmp_path)
     with caplog.at_level("WARNING"):
-        a.fire({"platform": "event", "event": {"event_type": "smartheat_wunsch", "data": data, "context": {}}})
+        a.fire({"platform": "event", "event": {"event_type": "smartheat_wunsch", "data": {**data, "kreis": 1},
+                                               "context": {}}})
     a.run()
     assert a.wuensche == [] and a.store.value == 21.0
     assert "smartheat_wunsch ohne gueltige raum_soll" in caplog.text
     assert "abc" not in caplog.text  # nur der Typ, nie der Inhalt
+
+
+def test_event_without_a_circuit_is_dropped_and_logged_without_names(tmp_path, caplog):
+    a = Aufbau(tmp_path)
+    with caplog.at_level("WARNING"):
+        a.fire({"platform": "event", "event": {"event_type": "smartheat_wunsch", "data": {"raum_soll": 23.0},
+                                               "context": {}}})
+    a.run()
+    assert a.wuensche == [] and a.store.value == 21.0
+    assert "ungueltigem Kreis" in caplog.text
 
 
 @pytest.mark.parametrize("raw,value", [("22.5", 22.5), (" 23 ", 23.0), (22, 22.0)])
@@ -243,7 +254,7 @@ def test_event_wish_reaches_the_device_core_buffer_without_a_connection(tmp_path
     client = geraet_trigger.build(manifest, a.ha, a.worker, a.store, SOLL, tagestick=None, wache_s=300,
                                   wunsch=wunsch, soll_quelle_aus=lambda aus, wirksam: None)
     client._on_trigger_event({"platform": "event", "event": {
-        "event_type": "smartheat_wunsch", "data": {"raum_soll": 23.0}, "context": {"user_id": "u1"}}})
+        "event_type": "smartheat_wunsch", "data": {"raum_soll": 23.0, "kreis": 1}, "context": {"user_id": "u1"}}})
     a.run()
     assert puffer.offen(1)
     payload = puffer.wunsch(1).payload()

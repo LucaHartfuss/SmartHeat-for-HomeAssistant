@@ -186,11 +186,13 @@ def test_ein_wunsch_an_kreis_2_aendert_kreis_1_nie(zwei):
     assert load_backup(config.room_target_path(1))["value"] == 21.0
 
 
-def test_ein_wunsch_ohne_kreis_gilt_dem_ersten(zwei):
+def test_ein_wunsch_ohne_kreis_wird_verworfen_und_gemeldet(zwei, caplog):
     welt = zwei()
-    _wunsch_an_alle(welt, {"raum_soll": 20.5})
-    assert welt.device.wuensche == [(1, 20.5)]
-    assert welt.anlage.hosts[1].store.value == 20.5 and welt.anlage.hosts[2].store.value == 22.0
+    with caplog.at_level(logging.WARNING):
+        _wunsch_an_alle(welt, {"raum_soll": 20.5})
+    assert welt.device.wuensche == []
+    assert (welt.anlage.hosts[1].store.value, welt.anlage.hosts[2].store.value) == (21.0, 22.0)
+    assert "ungueltigem Kreis" in caplog.text
 
 
 @pytest.mark.parametrize("kreis", [0, -1, "2", True, 1.5, None])
@@ -203,11 +205,21 @@ def test_ein_wunsch_mit_ungueltigem_kreis_wird_verworfen_und_gemeldet(zwei, capl
     assert "ungueltigem Kreis" in caplog.text
 
 
-def test_ein_wunsch_an_einen_unbekannten_kreis_erreicht_keinen_kreis(zwei):
+def test_ein_wunsch_an_einen_unbekannten_kreis_erreicht_keinen_kreis_und_wird_einmal_gemeldet(zwei, caplog):
     welt = zwei()
-    _wunsch_an_alle(welt, {"raum_soll": 19.0, "kreis": 3})
+    with caplog.at_level(logging.WARNING):
+        _wunsch_an_alle(welt, {"raum_soll": 19.0, "kreis": 3})
     assert welt.device.wuensche == []
     assert (welt.anlage.hosts[1].store.value, welt.anlage.hosts[2].store.value) == (21.0, 22.0)
+    meldungen = [r.getMessage() for r in caplog.records if "unbekanntem Kreis" in r.getMessage()]
+    assert len(meldungen) == 1  # nur der Client des ersten Kreises meldet, nicht jeder
+
+
+def test_ein_wunsch_an_einen_bekannten_kreis_wird_nicht_als_unbekannt_gemeldet(zwei, caplog):
+    welt = zwei()
+    with caplog.at_level(logging.WARNING):
+        _wunsch_an_alle(welt, {"raum_soll": 23.0, "kreis": 2})
+    assert "unbekanntem Kreis" not in caplog.text
 
 
 def test_die_bedienung_an_der_soll_entity_gilt_dem_kreis_der_entity(zwei):

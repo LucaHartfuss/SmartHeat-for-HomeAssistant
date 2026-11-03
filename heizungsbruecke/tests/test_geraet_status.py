@@ -1,4 +1,5 @@
-"""Status-Ereignis Schema 3 (Laufzeit-Status Schema 2 plus Geraet, wirksamer Soll, Hinweise)."""
+"""Status-Ereignis Schema 4: Anlage (Laufzeit-Status Schema 2 plus Geraet, Hinweise) und `kreise` mit Name, Raum, Soll
+und den Kreisfeldern der Laufzeit."""
 import logging
 import threading
 import time
@@ -23,13 +24,28 @@ def _anzeige(**changes):
     return Anzeige(**{**base, **changes})
 
 
+def _lokal_kreis(soll=21.5, ist=20.5, name="Wohnen"):
+    return {"name": name, "raum_soll": soll, "raum_ist": ist, "einlernphase_tag": None, "testphase_bis": None,
+            "befunde": []}
+
+
+def _lokal(soll=21.5, kreise=None):
+    """Die lokale Sicht (Konfiguration, Soll-Speicher, Raum, Anzeige-Dokument) mit einem Kreis oder den genannten."""
+    return lambda: {"anlage_name": "Zuhause", "kreise": kreise if kreise is not None else {1: _lokal_kreis(soll)}}
+
+
 def _status(ha, soll=21.5):
     seen = []
-    return geraet_status.GeraetStatus(ha, GERAET_ID, lambda: soll, laufzeit_merken=seen.append), seen
+    return geraet_status.GeraetStatus(ha, GERAET_ID, _lokal(soll), laufzeit_merken=seen.append), seen
 
 
 def _runtime_event(**changes):
     return {key: None for key in status.EVENT_FIELDS} | {"schema": 2, "status": "regelt"} | changes
+
+
+def _kreisliste(*nummern, je_kreis=None):
+    """`kreise` der Zusammenfassung: Kreisfelder None, je Kreis mit den Aenderungen aus je_kreis[nummer]."""
+    return [{"kreis": nr, **dict.fromkeys(status.KREIS_FELDER)} | (je_kreis or {}).get(nr, {}) for nr in nummern]
 
 
 def test_event_carries_runtime_and_device_fields():
@@ -38,9 +54,13 @@ def test_event_carries_runtime_and_device_fields():
     sink.publish(_runtime_event())
     sink.anzeige(_anzeige())
     event_type, data = ha.events[-1]
-    assert event_type == "smartheat_status" and data["schema"] == 3 and set(data) == set(geraet_status.EVENT_FIELDS)
-    assert (data["geraet_id"], data["geraet_zustand"], data["server_verbunden"], data["raum_soll"]) == (
-        GERAET_ID, "regelt", True, 21.5)
+    assert event_type == "smartheat_status" and data["schema"] == 4 and set(data) == set(geraet_status.EVENT_FIELDS)
+    assert (data["geraet_id"], data["geraet_zustand"], data["server_verbunden"], data["anlage_name"]) == (
+        GERAET_ID, "regelt", True, "Zuhause")
+    assert [kreis["kreis"] for kreis in data["kreise"]] == [1]
+    assert set(data["kreise"][0]) == set(geraet_status.KREIS_EVENT_FIELDS)
+    assert (data["kreise"][0]["raum_soll"], data["kreise"][0]["raum_ist"], data["kreise"][0]["name"]) == (
+        21.5, 20.5, "Wohnen")
     assert seen and seen[-1]["status"] == "regelt"
 
 
@@ -49,7 +69,8 @@ def test_event_before_any_input_is_a_valid_starting_snapshot():
     sink, _ = _status(ha)
     sink.anzeige(_anzeige(zustand="startet", server_ok=False))
     data = ha.events[-1][1]
-    assert set(data) == set(geraet_status.EVENT_FIELDS) and data["status"] == "startet" and data["schema"] == 3
+    assert set(data) == set(geraet_status.EVENT_FIELDS) and data["status"] == "startet" and data["schema"] == 4
+    assert [kreis["kreis"] for kreis in data["kreise"]] == [1] and data["kreise"][0]["boost"] is None
     assert data["geraet_zustand"] == "startet" and data["server_verbunden"] is False
 
 
@@ -65,13 +86,13 @@ def test_unchanged_display_sends_nothing_new():
 def test_changed_display_or_effective_target_sends_again_and_every_runtime_event_sends():
     ha = FakeHa()
     soll = [21.5]
-    sink = geraet_status.GeraetStatus(ha, GERAET_ID, lambda: soll[0], laufzeit_merken=lambda e: None)
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, lambda: _lokal(soll[0])(), laufzeit_merken=lambda e: None)
     sink.anzeige(_anzeige())
     sink.anzeige(_anzeige(server_ok=False))
     soll[0] = 19.0
     sink.anzeige(_anzeige(server_ok=False))  # Soll geaendert: inhaltliche Aenderung des Ereignisses
     assert [d["server_verbunden"] for _, d in ha.events] == [True, False, False]
-    assert ha.events[-1][1]["raum_soll"] == 19.0
+    assert ha.events[-1][1]["kreise"][0]["raum_soll"] == 19.0
     sink.publish(_runtime_event())
     sink.publish(_runtime_event())  # Lebenszeichen: auch ohne Aenderung
     assert len(ha.events) == 5
@@ -184,7 +205,7 @@ def test_runtime_event_kept_for_sign_off_completes_the_command(tmp_path, monkeyp
     konf = konfiguration_aus_optionen(OPTIONS)
     ha = FakeHa()
     host, _, _ = _host(tmp_path, monkeypatch, device=Device(konf), ha=ha)
-    sink = geraet_status.GeraetStatus(ha, GERAET_ID, lambda: None,
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, _lokal(),
                                       laufzeit_merken=lambda e: setattr(host, "runtime_status_event", e))
     host.status_sink = sink
     outcome = _register(host, tmp_path)._handlers["sign_off"]({})
@@ -217,7 +238,7 @@ class _DownHa(FakeHa):
 
 def _down_status(ha):
     clock = FakeClock()
-    sink = geraet_status.GeraetStatus(ha, GERAET_ID, lambda: 21.5, laufzeit_merken=lambda e: None, clock=clock)
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, _lokal(), laufzeit_merken=lambda e: None, clock=clock)
     return sink, clock
 
 
@@ -275,7 +296,85 @@ def test_the_ha_call_runs_outside_the_state_lock():
             super().fire_event(event_type, data)
 
     ha = _Pruefend()
-    sink = geraet_status.GeraetStatus(ha, GERAET_ID, lambda: 21.5, laufzeit_merken=lambda e: None)
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, _lokal(), laufzeit_merken=lambda e: None)
     sink.publish(_runtime_event())
     sink.anzeige(_anzeige())
     assert seen == [True, True]
+
+
+# --- Schema 4: Kreise ---
+
+
+def test_zwei_kreise_stehen_getrennt_und_aufsteigend_im_ereignis():
+    ha = FakeHa()
+    kreise = {2: _lokal_kreis(23.0, 22.0, "Bad"), 1: _lokal_kreis(20.0, 19.0, "Wohnen")}
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, _lokal(kreise=kreise), laufzeit_merken=lambda e: None)
+    sink.publish(_runtime_event(kreise=_kreisliste(1, 2, je_kreis={
+        1: {"abo": "aktiv", "boost": "komfort"}, 2: {"abo": "beendet", "boost": "keiner"}})))
+    kreise_im_ereignis = ha.events[-1][1]["kreise"]
+    assert [(k["kreis"], k["name"], k["raum_soll"], k["raum_ist"], k["abo"], k["boost"]) for k in kreise_im_ereignis] == [
+        (1, "Wohnen", 20.0, 19.0, "aktiv", "komfort"), (2, "Bad", 23.0, 22.0, "beendet", "keiner")]
+
+
+def test_die_kreise_der_konfiguration_stehen_auch_vor_dem_ersten_laufzeit_ereignis_da():
+    ha = FakeHa()
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, _lokal(kreise={1: _lokal_kreis(), 2: _lokal_kreis(name="Bad")}),
+                                      laufzeit_merken=lambda e: None)
+    sink.anzeige(_anzeige(zustand="startet", server_ok=False))
+    assert [(k["kreis"], k["abo"]) for k in ha.events[-1][1]["kreise"]] == [(1, None), (2, None)]
+
+
+def test_ein_kreis_nur_im_laufzeit_ereignis_steht_mit_leeren_lokalen_feldern_da():
+    ha = FakeHa()
+    sink, _ = _status(ha)
+    sink.publish(_runtime_event(kreise=_kreisliste(1, 3)))
+    kreis3 = ha.events[-1][1]["kreise"][1]
+    assert kreis3["kreis"] == 3 and kreis3["name"] is None and kreis3["raum_soll"] is None
+    assert kreis3["befunde"] == [] and kreis3["einlernphase_tag"] is None
+
+
+def test_laufzeit_merken_bekommt_das_flache_ereignis_ohne_kreisliste():
+    ha = FakeHa()
+    sink, seen = _status(ha)
+    sink.publish(_runtime_event(kreise=_kreisliste(1), boost="komfort"))
+    assert "kreise" not in seen[-1] and seen[-1]["boost"] == "komfort"
+    assert "boost" not in ha.events[-1][1]  # kein Alt-Feld neben den Kreisfeldern
+
+
+def test_ein_kreis_ohne_wert_im_soll_speicher_sendet_none_und_ein_geaenderter_soll_des_zweiten_kreises_sendet_neu():
+    ha = FakeHa()
+    soll = {1: None, 2: 22.0}
+    sink = geraet_status.GeraetStatus(
+        ha, GERAET_ID, lambda: _lokal(kreise={nr: _lokal_kreis(wert) for nr, wert in soll.items()})(),
+        laufzeit_merken=lambda e: None)
+    sink.anzeige(_anzeige())
+    assert [k["raum_soll"] for k in ha.events[-1][1]["kreise"]] == [None, 22.0]
+    soll[2] = 23.0
+    sink.anzeige(_anzeige())
+    assert [k["raum_soll"] for k in ha.events[-1][1]["kreise"]] == [None, 23.0]
+
+
+def test_der_kreisname_steht_nie_im_log(caplog):
+    ha = _DownHa()
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, _lokal(kreise={1: _lokal_kreis(name="GeheimerName")}),
+                                      laufzeit_merken=lambda e: None)
+    with caplog.at_level(logging.DEBUG):
+        sink.anzeige(_anzeige())
+    assert caplog.text and "GeheimerName" not in caplog.text
+
+
+def _sicht(konfiguration, soll=lambda n: 20.0, ist=lambda n: 19.0, anzeige=lambda: None):
+    return geraet_status.lokale_sicht(lambda: konfiguration, soll, ist, anzeige)()
+
+
+def test_die_lokale_sicht_uebernimmt_nur_namen_vom_typ_text_und_kreise_mit_echter_nummer():
+    sicht = _sicht({"anlage_name": "Haus", "kreise": [
+        {"kreis": 1, "name": "Wohnen"}, {"kreis": 2, "name": 7}, {"kreis": True, "name": "Falsch"},
+        {"kreis": "3", "name": "Text"}, "kein Objekt"]})
+    assert sicht["anlage_name"] == "Haus"
+    assert {n: k["name"] for n, k in sicht["kreise"].items()} == {1: "Wohnen", 2: None}
+
+
+def test_die_lokale_sicht_hat_ohne_text_als_anlagenname_keinen_namen():
+    assert _sicht({"anlage_name": 5, "kreise": []})["anlage_name"] is None
+    assert _sicht(None)["anlage_name"] is None

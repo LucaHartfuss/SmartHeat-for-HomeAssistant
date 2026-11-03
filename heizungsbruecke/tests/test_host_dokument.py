@@ -287,7 +287,7 @@ def test_trigger_source_is_built_on_the_real_entity_and_wishes_reach_the_device(
     assert {"platform": "state", "entity_id": OPTIONS["entity_room_target"],
             "for": {"seconds": 10}} in client.kwargs["triggers"]
     client.kwargs["on_trigger_event"]({"platform": "event", "event": {
-        "event_type": "smartheat_wunsch", "data": {"raum_soll": 22.0}, "context": {"parent_id": "p"}}})
+        "event_type": "smartheat_wunsch", "data": {"raum_soll": 22.0, "kreis": 1}, "context": {"parent_id": "p"}}})
     worker.run_pending()
     assert geraet.wuensche == [(22.0, "ha", "automation")]
 

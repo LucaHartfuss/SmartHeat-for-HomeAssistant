@@ -906,12 +906,13 @@ def test_status_event_carries_the_full_state(env):
     _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.95, shift=23.0)
 
     event = _last_event(env)
-    assert (event["schema"], event["tenant_id"], event["status"], event["boost"], event["abo"]) == (
-        geraet_status.EVENT_SCHEMA, "test_tenant", "regelt", "keiner", "aktiv",
-    )
-    assert event["hebelsatz"] == "vaillant_vrc720"
-    assert event["hebel"] == {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0, "min_flow": 20.5}
-    assert event["gelernt"] == {"curve": 1.0, "heat_limit": 16.0}
+    assert (event["schema"], event["tenant_id"], event["status"]) == (geraet_status.EVENT_SCHEMA, "test_tenant", "regelt")
+    assert "boost" not in event and "hebel" not in event  # Kreisfelder stehen nur in kreise
+    (kreis,) = event["kreise"]
+    assert (kreis["kreis"], kreis["boost"], kreis["abo"]) == (1, "keiner", "aktiv")
+    assert kreis["hebelsatz"] == "vaillant_vrc720"
+    assert kreis["hebel"] == {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0, "min_flow": 20.5}
+    assert kreis["gelernt"] == {"curve": 1.0, "heat_limit": 16.0}
     assert event["letzte_serverantwort"] is not None
     assert event["hinweise"] == {
         "raumfuehler_ausgefallen": ["sensor.a"], "batterie_niedrig": ["sensor.b"], "manueller_eingriff": None,

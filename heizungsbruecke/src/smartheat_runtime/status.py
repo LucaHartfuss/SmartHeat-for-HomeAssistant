@@ -62,8 +62,15 @@ EVENT_FIELDS = (
     "schema", "tenant_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
     "boost", "letzte_serverantwort", "hebelsatz", "hebel", "gelernt", "abo", "abo_frist_ende", "hinweise",
 )
-# Felder der Anlage (folgen dem schlechtesten Kreis); alle anderen gehoeren zum Kreis (niedrigster Kreis).
-_ANLAGEN_FELDER = ("status", "grund", "datenfehler", "letzte_serverantwort", "hinweise")
+#: Felder der Anlage und Felder des Kreises: zusammen genau EVENT_FIELDS. Das Ereignis eines Kreises ist flach (Server,
+#: up/status); die Zusammenfassung der Anlage fuehrt die Kreisfelder zusaetzlich je Kreis in `kreise`.
+ANLAGE_FELDER = (
+    "schema", "tenant_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler", "letzte_serverantwort",
+    "hinweise",
+)
+KREIS_FELDER = ("boost", "hebelsatz", "hebel", "gelernt", "abo", "abo_frist_ende")
+# Felder der Anlage, die dem schlechtesten Kreis folgen (der Notbetrieb ist ein ODER, die uebrigen kommen vom ersten).
+_SCHLECHTESTER = ("status", "grund", "datenfehler", "letzte_serverantwort", "hinweise")
 
 
 @dataclass(frozen=True)
@@ -261,8 +268,8 @@ class StatusReporter:
 def zusammenfassen(ereignisse: Mapping[int, dict]) -> dict:
     """Ein Ereignis der Anlage aus den Ereignissen ihrer Kreise (Schluessel: Kreisnummer). Status, Grund, Datenfehler,
     letzte Serverantwort und Hinweise folgen dem schlechtesten Kreis (bei Gleichstand dem mit Grund, dann dem niedrigeren),
-    der Notbetrieb steht, sobald ein Kreis ihn meldet; Boost, Hebelsatz, Hebel, Gelerntes und Abo kommen vom niedrigsten
-    Kreis. Abgemeldet ist die Anlage erst, wenn jeder Kreis es ist: solange ein anderer Kreis regelt oder wartet, zaehlt
+    der Notbetrieb steht, sobald ein Kreis ihn meldet; Boost, Hebelsatz, Hebel, Gelerntes und Abo stehen je Kreis in
+    `kreise` (aufsteigend nach Kreisnummer) und flach, wie das Laufzeit-Ereignis sie kennt, vom niedrigsten Kreis. Abgemeldet ist die Anlage erst, wenn jeder Kreis es ist: solange ein anderer Kreis regelt oder wartet, zaehlt
     der schlechteste der uebrigen (sonst gaelte die Anlage als zurueckgesetzt, obwohl ein Kreis noch regelt)."""
     if not ereignisse:
         raise ValueError("Ohne Kreis kein Ereignis der Anlage")
@@ -271,10 +278,17 @@ def zusammenfassen(ereignisse: Mapping[int, dict]) -> dict:
     schlechtester = min(kandidaten, key=lambda kreis: (
         SCHWERE.index(ereignisse[kreis]["status"]), ereignisse[kreis]["grund"] is None, kreis))
     erg = dict(ereignisse[kreise[0]])
-    for feld in _ANLAGEN_FELDER:
+    for feld in _SCHLECHTESTER:
         erg[feld] = ereignisse[schlechtester][feld]
     erg["notbetrieb"] = any(ereignisse[kreis]["notbetrieb"] for kreis in kreise)
+    erg["kreise"] = [{"kreis": kreis, **{feld: ereignisse[kreis][feld] for feld in KREIS_FELDER}} for kreis in kreise]
     return erg
+
+
+def ohne_kreise(ereignis: Mapping) -> dict:
+    """Das flache Laufzeit-Ereignis (Schema 2) ohne die Kreisliste der Zusammenfassung: das, was Server, up/status und
+    das Abmelden lesen."""
+    return {feld: wert for feld, wert in ereignis.items() if feld != "kreise"}
 
 
 class Statussammler:

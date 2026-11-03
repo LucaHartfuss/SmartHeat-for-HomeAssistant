@@ -81,9 +81,9 @@ def pruefe_soll_ref(soll_ref: str | None) -> None:
 
 
 def _wunsch_kreis(daten) -> int | None:
-    """Der Kreis, dem das Ereignis smartheat_wunsch gilt: `kreis` der Ereignisdaten, ohne Angabe Kreis 1; ein
-    ungueltiger Wert (kein ganzzahliger Kreis ab 1) ist None."""
-    wert = daten.get("kreis", KREIS) if isinstance(daten, dict) else KREIS
+    """Der Kreis, dem das Ereignis smartheat_wunsch gilt: `kreis` der Ereignisdaten (Pflicht); fehlt er oder ist er
+    ungueltig (kein ganzzahliger Kreis ab 1), ist das Ergebnis None."""
+    wert = daten.get("kreis") if isinstance(daten, dict) else None
     return wert if isinstance(wert, int) and not isinstance(wert, bool) and wert >= 1 else None
 
 
@@ -132,9 +132,11 @@ class HaSollQuelle:
 
 def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_ref: str | None, *,
           tagestick: str | None, wache_s: float, wunsch, soll_quelle_aus,
-          quelle: HaSollQuelle | None = None, kreis: int = KREIS) -> HaTriggerClient:
-    """kreis: der Heizkreis des Clients; ein Ereignis smartheat_wunsch gilt dem Kreis seiner Ereignisdaten (ohne Angabe
-    Kreis 1) und erreicht nur den Client dieses Kreises. soll_ref: die echte Soll-Entity aus der Konfiguration (nicht manifest.refs["room_target"], das ist SOLL_REF).
+          quelle: HaSollQuelle | None = None, kreis: int = KREIS,
+          anlagenkreise: frozenset[int] | None = None) -> HaTriggerClient:
+    """kreis: der Heizkreis des Clients; ein Ereignis smartheat_wunsch gilt dem Kreis seiner Ereignisdaten (Pflicht;
+    ohne gueltigen Kreis wird es verworfen) und erreicht nur den Client dieses Kreises. anlagenkreise: alle Kreise der
+    Anlage; gilt ein Wunsch keinem davon, meldet das nur der Client des niedrigsten Kreises (sonst eine Meldung je Kreis). soll_ref: die echte Soll-Entity aus der Konfiguration (nicht manifest.refs["room_target"], das ist SOLL_REF).
     tagestick: Uhrzeit des taeglichen Ticks (HH:MM) oder None; wache_s: Takt des lokalen Checks (RuntimeConfig).
     Der Bericht der Soll-Entity (EV_SOLL_BERICHT) geht als Eingabe der Soll-Quelle in den Soll-Eingang. Faellt er in
     das Echo-Fenster nach dem eigenen Schreiben, verwirft ihn der Soll-Speicher; HA meldet einen unveraenderten Wert
@@ -297,6 +299,10 @@ def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_r
             ziel = _wunsch_kreis(event.get("data"))
             if ziel is None:
                 logger.warning("Ereignis %s mit ungueltigem Kreis verworfen", EREIGNIS_WUNSCH)
+                return
+            if anlagenkreise is not None and ziel not in anlagenkreise:
+                if kreis == min(anlagenkreise):
+                    logger.warning("Ereignis %s mit unbekanntem Kreis verworfen", EREIGNIS_WUNSCH)
                 return
             if ziel != kreis:
                 return  # gilt dem Client eines anderen Kreises

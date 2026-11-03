@@ -15,7 +15,7 @@ from device_helpers import SENSOR
 from fakes import KONFIG_EINTRAG, FakeClock, FakeHa
 
 from heizungsbruecke import config, geraet_host
-from heizungsbruecke.geraet_status import GeraetStatus
+from heizungsbruecke.geraet_status import GeraetStatus, lokale_sicht
 from heizungsbruecke.ha_sinks import HaNotifySink
 from heizungsbruecke.host import HaHost
 from smartheat_device.commands import CommandRegister
@@ -23,6 +23,7 @@ from smartheat_device.geraet_host_basis import GeraetHostBasis
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import app, aufraeumen, dokument_config, entitlement
 from smartheat_runtime.roles import LEVER_ROLES
+from smartheat_runtime.status import Statussammler
 
 _HEBEL = {f"entity_{role}": lever for lever, role in LEVER_ROLES.items()}
 #: Plattform des Kreises je Hebelsatz in den Test-Dokumenten (als Literal, test_dokument haelt
@@ -126,15 +127,20 @@ class FakeGeraet:
         self.neustarts: list[int] = []
         self.host = None
         self._ha = ha
-        self.status_sink = self if ha is None else GeraetStatus(ha, GERAET_ID, self._raum_soll,
-                                                                laufzeit_merken=self.status.append)
+        self.status_sink = self if ha is None else GeraetStatus(
+            ha, GERAET_ID, lokale_sicht(self.konfiguration, self._raum_soll, self._raum_ist, lambda: None),
+            laufzeit_merken=self.status.append)
 
     def neustart(self):
         self.neustarts.append(1)
 
-    def _raum_soll(self):
-        store = self.host.store if self.host is not None else None
+    def _raum_soll(self, kreis):
+        kreis_host = self.host.hosts.get(kreis) if hasattr(self.host, "hosts") else self.host if kreis == 1 else None
+        store = kreis_host.store if kreis_host is not None else None
         return store.value if store is not None else None
+
+    def _raum_ist(self, kreis):
+        return (self.raeume.get(kreis) or {}).get("ist")
 
     # Geraete-Host-Sicht fuer HaHost
     def konfiguration(self):
@@ -208,8 +214,10 @@ def start_bridge(env, *, options, abo=entitlement.ACTIVE, abgemeldet=False, bedi
                         start_markierung=start_markierung)
     geraet.sent.connected = verbunden
     geraet.host = HaHost(geraet, env.ha, clock=env.clock)
+    # wie die Laufzeit der Kreise: ein Statussammler fasst das Ereignis des einen Kreises fuer die Statussenke zusammen
+    sammler = Statussammler(geraet.host.status_sink)
     bridge = app.start(geraet.host, env.clock, mqtt_factory=geraet.kanal,
-                       neustart=geraet.neustart if neustart is None else neustart)
+                       neustart=geraet.neustart if neustart is None else neustart, status_sink=sammler.senke(1))
     return bridge, geraet
 
 
