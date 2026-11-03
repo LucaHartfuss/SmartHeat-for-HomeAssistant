@@ -186,3 +186,47 @@ def test_aux_zulaessig_takes_short_texts_for_aux_names_only(paths, clock):
     assert driver.aux_zulaessig("mode_select", "") is False
     assert driver.aux_zulaessig("mode_select", "x" * 65) is False
     assert driver.aux_zulaessig("curve", "eco") is False
+
+
+# --- zwei Heizkreise ---
+
+def test_jeder_heizkreis_hat_seinen_eigenen_anlagenzustand(paths, clock):
+    eins = _sim(paths, clock, heizkreis=0)
+    zwei = _sim(paths, clock, heizkreis=1)
+    eins.write("curve", 1.7)
+    assert eins.read("curve") == 1.7 and zwei.read("curve") != 1.7
+    zwei.write("curve", 0.6)
+    assert (paths.sim_dir / "plant.json").is_file() and (paths.sim_dir / "plant-1.json").is_file()
+    assert eins.read("curve") == 1.7 and zwei.read("curve") == 0.6
+    assert eins.physical_writes == 1 and zwei.physical_writes == 1
+
+
+def test_ohne_heizkreis_gilt_die_datei_des_ersten_kreises(paths, clock):
+    _sim(paths, clock).write("curve", 1.4)
+    assert _sim(paths, clock, heizkreis=0).read("curve") == 1.4
+    assert not (paths.sim_dir / "plant-1.json").exists()
+
+
+def test_der_zweite_kreis_ist_nur_schreibbar_wenn_die_steuerdatei_es_verlangt(paths, clock):
+    standard = _sim(paths, clock).erkennung()["features"]
+    assert [f["properties"]["schreibbar"]["value"] for f in standard] == [True, False]
+    paths.sim_dir.mkdir(parents=True, exist_ok=True)
+    (paths.sim_dir / "control.json").write_text(json.dumps({"heizkreise": 2}))
+    zwei = _sim(paths, clock).erkennung()["features"]
+    assert [f["feature"] for f in zwei] == ["simulation.heizkreis.0", "simulation.heizkreis.1"]
+    assert [f["properties"]["schreibbar"]["value"] for f in zwei] == [True, True]
+    assert all("hebel" in f["properties"] for f in zwei)
+
+
+@pytest.mark.parametrize("wert", [0, 3, True, "2", 1.5])
+def test_eine_unbrauchbare_kreiszahl_der_steuerdatei_gilt_als_ein_kreis(paths, clock, wert):
+    paths.sim_dir.mkdir(parents=True, exist_ok=True)
+    (paths.sim_dir / "control.json").write_text(json.dumps({"heizkreise": wert}))
+    features = _sim(paths, clock).erkennung()["features"]
+    assert [f["properties"]["schreibbar"]["value"] for f in features] == [True, False]
+
+
+@pytest.mark.parametrize("wert", [-1, 1.5, "1", True, 10**6])
+def test_ein_unbrauchbarer_heizkreis_wird_abgelehnt(paths, clock, wert):
+    with pytest.raises(ValueError, match="heizkreis"):
+        create("simulation", {"lever_set": "viessmann_vicare", "heizkreis": wert}, paths, clock=clock)
