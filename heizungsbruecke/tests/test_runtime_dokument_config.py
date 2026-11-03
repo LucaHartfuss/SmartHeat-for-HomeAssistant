@@ -487,3 +487,14 @@ def test_beschreibung_mit_unbekanntem_weg_ist_ein_konfigurationsfehler(weg):
     konfiguration = {"hebelsatz": "vaillant_vrc720", "weg": weg, "bindungsparameter": parameter("vaillant_vrc720")}
     with pytest.raises(ConfigError, match="Weg"):
         dc.beschreibung(konfiguration)
+
+
+def test_boot_info_und_runtime_config_tragen_die_kreisnummer(tmp_path):
+    """Die Nummer des Kreises kommt aus dem Dokument; sie bestimmt Pfade, Kennung und `kreis` auf dem Draht."""
+    zwei = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF, nummer=2)])
+    assert _boot(zwei, tmp_path).kreis == 2
+    config = dc.runtime_config(zwei, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                               abo_source=lambda: entitlement.ACTIVE)
+    assert config.kreis == 2
+    assert dc.kreisnummer(zwei) == 2
+    assert dc.kreisnummer({}) == 1  # nicht eingerichtet: der erste Kreis, die Nummer bestimmt dann nur Pfade

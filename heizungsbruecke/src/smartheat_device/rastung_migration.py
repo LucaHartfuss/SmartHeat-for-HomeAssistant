@@ -43,7 +43,7 @@ _RELEASE = re.compile(r"[0-9A-Za-z._-]{1,32}")
 _KONFIGURATION = "konfiguration.json"
 
 
-def _bestaetigte_konfiguration(ordner: Path, host: str):
+def bestaetigte_konfiguration(ordner: Path, host: str):
     """(Inhalt, None) oder (None, Code): eingerichtet, in der Form des Speichers und von der lokalen Pruefung ohne
     Rastung angenommen."""
     roh = dateien.lesen_json(ordner / _KONFIGURATION)
@@ -100,7 +100,7 @@ def migrieren(ordner: Path, *, host: str, release: str) -> str:
         return BEREITS_AKTUELL
     if gelesen is not None and gelesen.sperre != "altes_format":
         return RASTUNG_GESPERRT
-    inhalt, code = _bestaetigte_konfiguration(ordner, host)
+    inhalt, code = bestaetigte_konfiguration(ordner, host)
     if inhalt is None:
         return code or KONFIGURATION_UNGUELTIG
     neu = rastung.aus_konfiguration(inhalt)

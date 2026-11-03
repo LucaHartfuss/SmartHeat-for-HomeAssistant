@@ -10,7 +10,7 @@ import dataclasses
 import logging
 import time
 
-from smartheat_core import bindungsparameter, kreisansicht, wallclock
+from smartheat_core import bindungsparameter, kennung, kreisansicht, wallclock
 from smartheat_core.logtext import lesbar
 from smartheat_core.safety import resolve_local_safety
 from smartheat_gateway import config as gateway_config
@@ -95,9 +95,12 @@ class GatewayHost:
 
     def boot_info(self) -> BootInfo:
         abgemeldet = self._leer_abmelden or gateway_config.abgemeldet(self._paths, self.konfiguration)
+        kreis = dokument_config.kreisnummer(self.konfiguration)
         boot = dokument_config.boot_info(
-            self.konfiguration, abgemeldet=abgemeldet, client_version=GATEWAY_VERSION, backup_path=self._paths.backup,
-            failsafe_path=self._paths.failsafe, aufraeumen_path=self._paths.aufraeumen)
+            self.konfiguration, abgemeldet=abgemeldet, client_version=GATEWAY_VERSION, backup_path=self._paths.backup(kreis),
+            failsafe_path=self._paths.failsafe(kreis), aufraeumen_path=self._paths.aufraeumen,
+            alter_zustand=self._paths.alter_backup,
+            anlage_budget_path=self._paths.anlage_budget)
         if not boot.configured and not boot.signed_off:
             logger.info(NOT_CONFIGURED_HINT)
         return boot
@@ -156,6 +159,10 @@ class GatewayHost:
             check_lever_set(driver, runtime.lever_set_id)
         except ConfigError as error:
             raise StartFailure(str(error), KEY_CONFIG) from error
+        try:
+            plant_id = registry.plant_id(bindung.driver_spec())
+        except kennung.KennungFehler as error:
+            raise StartFailure(f"Konfiguration: {error}", KEY_CONFIG) from error
         self._activate(driver)  # erste Abfrage vor dem Manifest: optionale Signale stehen dann im Cache
         try:
             manifest = build_manifest(driver)
@@ -166,7 +173,8 @@ class GatewayHost:
         bedienung, dirty = self._geraet.bedienung()
         bedient = bedienung_start(bedienung)
         start = bedient if bedient is not None else DEFAULT_RAUM_SOLL
-        store = TargetStore(self._paths.room_target, start, self._clock, lambda: wallclock.now().isoformat(),
+        kreis = dokument_config.kreisnummer(self.konfiguration)
+        store = TargetStore(self._paths.room_target(kreis), start, self._clock, lambda: wallclock.now().isoformat(),
                             on_change=self._raum_changed)
         self._angleichen = bedient is not None and not dirty
         self._bedienung_start = start if self._angleichen and store.value != start else None
@@ -176,8 +184,7 @@ class GatewayHost:
         zustand = self._geraet.zustand
         self.raum = RaumPublisher(lambda raum: setattr(zustand, "raum", raum), self.signals, store, REF_ROOM_MEAN,
                                   lambda: wallclock.now().isoformat())
-        return Loaded(config=runtime, manifest=manifest, binding=driver,
-                      plant_id=registry.plant_id(bindung.driver_spec()))
+        return Loaded(config=runtime, manifest=manifest, binding=driver, plant_id=plant_id)
 
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
         assert self._store is not None and self._bindung is not None and self._runtime_config is not None

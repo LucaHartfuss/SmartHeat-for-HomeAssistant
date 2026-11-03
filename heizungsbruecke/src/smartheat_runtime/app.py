@@ -31,6 +31,7 @@ from smartheat_runtime import (
     telemetry,
     ticks,
 )
+from smartheat_runtime.budget_store import AnlagenBudget, BudgetStore, ZustandsSpeicher
 from smartheat_runtime.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
 from smartheat_runtime.notifier import STATE_OK, Notifier
 from smartheat_runtime.ports import (
@@ -80,6 +81,10 @@ CONFIG_RECHECK_SECONDS = 900
 # Verbindungsabrisse bleiben darunter.
 CONNECTION_LOSS_PROBE_SECONDS = 900
 IDLE_NOT_CONFIGURED = "nicht_eingerichtet"
+GRUND_ZUSTAND_NICHT_MIGRIERT = (
+    "zustand_nicht_migriert: der Zustand liegt noch im alten Pfad, die Migration des Zustands und der Rastung "
+    "nachholen (python -m smartheat_device.zustand_migration), danach neu starten"
+)
 CONFIG_OK_MESSAGE = "SmartHeat: Einrichtung in Ordnung, die Heizungssteuerung läuft."
 CONFIG_ERROR_MESSAGE = (
     "SmartHeat: Konfigurationsfehler – {grund}. Die Heizungssteuerung ist gestoppt, "
@@ -483,7 +488,7 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
         boost_active=state.boost_active, failsafe_active=state.delivery.notbetrieb,
         datenfehler=datenfehler, room_target=state.stable_target,
         energy=telemetry.energy_normalizer(rt.store, rt.override.binding.description.energy_counters),
-        einheiten=rt.override.binding.description.energie,
+        einheiten=rt.override.binding.description.energie, kreis=rt.config.kreis,
     )
 
 
@@ -684,8 +689,22 @@ def _prepare_zone(rt: Runtime) -> None:
     rt.zone_prepared = True
 
 
+def _zustandsspeicher(boot: BootInfo) -> ZustandsSpeicher:
+    """Der Zustand des Kreises; mit Anlagendatei in der BootInfo gehoeren die Zaehler der ganzen Anlage dieser Datei."""
+    kreis = StateStore(boot.backup_path, boot.failsafe_path)
+    if boot.anlage_budget_path is None:
+        return kreis
+    return BudgetStore(kreis, AnlagenBudget(boot.anlage_budget_path))
+
+
+def _zustand_nicht_migriert(boot: BootInfo) -> bool:
+    """Eine Sicherung im alten Pfad ohne Kreisordner: die Zustandsmigration steht noch aus."""
+    return (boot.alter_zustand is not None and boot.alter_zustand.exists()
+            and not boot.backup_path.parent.exists())
+
+
 def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
-          mqtt_factory: Callable[[RegulationWorker], MqttChannel],
+          mqtt_factory: Callable[[RegulationWorker, int], MqttChannel],
           neustart: Callable[[], None]) -> Runtime | IdleBridge:
     """Gibt den gestarteten Laufzeit-Kontext zurueck oder den Ruhezustand, wenn gar nicht erst geregelt wird: nicht
     eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen. mqtt_factory (Pflicht): die
@@ -698,10 +717,16 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     # Erst warten, bis die Quelle antwortet: Status und Meldungen sollen ankommen, und ohne sie geht ohnehin nichts.
     host.wait_until_ready()
     assert boot.tenant_id is not None  # configured bzw. signed_off setzen ihn voraus
-    store = StateStore(boot.backup_path, boot.failsafe_path)
+    store = _zustandsspeicher(boot)
+    status = StatusReporter(host.status_sink, boot.tenant_id, store, boot.lever_set, boot.client_version)
+    if _zustand_nicht_migriert(boot):
+        # Vor jedem Schreiben: Meldung und Fehlerroute wuerden einen frischen Zustand im Kreisordner anlegen.
+        logger.error("FEHLER: %s", GRUND_ZUSTAND_NICHT_MIGRIERT)
+        status.update(konfigurationsfehler=True, grund=GRUND_ZUSTAND_NICHT_MIGRIERT)
+        return _idle(clock, status, STATUS_KONFIGURATIONSFEHLER, neustart=neustart,
+                     recheck_after=CONFIG_RECHECK_SECONDS)
     notifier = Notifier(store, host.notify_sink, boot.notify_hints_off)
     ticks.seed_notices(notifier, store.state.delivery)
-    status = StatusReporter(host.status_sink, boot.tenant_id, store, boot.lever_set, boot.client_version)
     status.publish()
     if boot.signed_off:
         return _sign_off(host.sign_off_parts(), store, notifier, status, clock, boot.local_check_interval,
@@ -754,7 +779,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     _register_handlers(rt, melder)
     abo_inactive = rt.store.state.abo_inactive_since is not None
     if not abo_inactive:
-        rt.mqtt_client = mqtt_factory(rt.worker)
+        rt.mqtt_client = mqtt_factory(rt.worker, rt.config.kreis)
     stale_notbetrieb = not abo_inactive and _is_stale_notbetrieb(rt)
     if stale_notbetrieb:
         # vor _prime: dessen lokaler Check startete sonst einen Notfall-Boost

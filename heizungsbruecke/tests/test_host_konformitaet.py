@@ -25,7 +25,7 @@ def _fuehler_lesen(roh):
 
 @pytest.fixture
 def welt(tmp_path, monkeypatch):
-    for name in ("RUNTIME_DIR", "ABGEMELDET_PATH", "AUFRAEUMEN_PATH", "ROOM_TARGET_PATH", "BACKUP_PATH",
+    for name in ("RUNTIME_DIR", "ABGEMELDET_PATH", "AUFRAEUMEN_PATH", "ALTER_BACKUP_PATH",
                  "RASTUNG_PATH"):
         monkeypatch.setattr(config, name, tmp_path / getattr(config, name).name)
     clock = FakeClock()

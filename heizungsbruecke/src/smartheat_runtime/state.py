@@ -7,10 +7,14 @@ import logging
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime import backup_store
 from smartheat_runtime.delivery import DeliveryState, from_persisted, to_persisted
+
+if TYPE_CHECKING:
+    from smartheat_runtime.budget_store import ZustandsSpeicher
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +137,7 @@ def _is_energy_entry(value) -> bool:
             and isinstance(value.get("einheit", ""), str))
 
 
-def _parse_budget(raw) -> dict | None:
+def parse_budget(raw) -> dict | None:
     """Tag, Anzahl und Limit-Markierung je Schluessel; "last" (monotone Uhr des vorigen Laufs) faellt
     weg. None bei jedem Formfehler (dann gilt ein leeres Budget)."""
     if not isinstance(raw, dict):
@@ -208,7 +212,7 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
         else:
             _invalid(key)
     if "write_budget" in raw:
-        budget = _parse_budget(raw["write_budget"])
+        budget = parse_budget(raw["write_budget"])
         if budget is None:
             _invalid("write_budget")
         else:
@@ -398,7 +402,7 @@ _SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")
 UEBERNAHME_TEXT = "Anlagen-Kennung aus dem Heizkreis übernommen"
 
 
-def bind_to_tenant(store: "StateStore", tenant_id: str | None, plant_id: str, *, frueher: str | None = None) -> str:
+def bind_to_tenant(store: "ZustandsSpeicher", tenant_id: str | None, plant_id: str, *, frueher: str | None = None) -> str:
     """Bindet den Zustand an Einrichtung und Anlage. Ein Bestand ohne Bindung gilt als gebunden
     (nichts verwerfen). Andere Anlage: anlagenbezogene Felder auf den Standardwert. Neue Einrichtung
     derselben Anlage: Ursprungswerte bleiben, nur Tick-Buchung und Zustellung beginnen neu.

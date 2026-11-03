@@ -166,6 +166,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 20.0,
      "boost_active": false,
      "failsafe_active": false,
@@ -180,7 +181,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000001",
      "trigger": "target_change",
      "ts": "2026-01-15T08:00:00+01:00",
@@ -232,13 +234,13 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 21.0,
     "last_published_target_rt": 21.0,
     "boost_active": false,
     "emergency_boost_active": false,
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 0.9,
      "room_setpoint": 21.0
@@ -253,7 +255,7 @@
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": {
@@ -261,7 +263,7 @@
      "trigger": "target_change"
     }
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "portal",
     "ts": "2026-01-15T08:00:00+01:00",
     "value": 21.0
@@ -336,14 +338,14 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 21.0,
     "last_published_target_rt": 21.0,
     "boost_active": false,
     "emergency_boost_active": false,
     "last_ack_at": "2026-01-15T08:00:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 0.95,
      "room_setpoint": 23.0,
@@ -364,12 +366,12 @@
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "portal",
     "ts": "2026-01-15T08:00:00+01:00",
     "value": 21.0
@@ -383,7 +385,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000002",
      "trigger": "daily",
      "ts": "2026-01-15T12:01:00+01:00",
@@ -450,7 +453,7 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 21.0,
     "last_published_target_rt": 21.0,
     "boost_active": false,
@@ -458,7 +461,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 1.0,
      "room_setpoint": 23.5,
@@ -479,12 +482,12 @@
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "portal",
     "ts": "2026-01-15T08:00:00+01:00",
     "value": 21.0
@@ -498,7 +501,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000003",
      "trigger": "target_change",
      "ts": "2026-01-15T12:01:00+01:00",
@@ -565,7 +569,7 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -573,7 +577,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 1.0,
      "room_setpoint": 23.0,
@@ -594,12 +598,12 @@
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:01:00+01:00",
     "value": 20.5
@@ -631,7 +635,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000004",
      "trigger": "target_change",
      "ts": "2026-01-15T12:01:00+01:00",
@@ -725,7 +730,16 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 22.0,
     "last_published_target_rt": 22.0,
     "boost_active": true,
@@ -734,7 +748,7 @@
     "last_ack_at": "2026-01-15T12:01:00+01:00",
     "boost_since": "2026-01-15T12:01:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 1.0,
      "room_setpoint": 24.0,
@@ -751,23 +765,16 @@
      "curve": 1.0,
      "heat_limit": 16.0
     },
-    "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1030.0
-     }
-    },
     "aux_originals": {
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:01:00+01:00",
     "value": 22.0
@@ -842,7 +849,16 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 22.0,
     "last_published_target_rt": 22.0,
     "boost_active": false,
@@ -850,7 +866,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 1.0,
      "room_setpoint": 24.0,
@@ -867,23 +883,16 @@
      "curve": 1.0,
      "heat_limit": 16.0
     },
-    "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1030.0
-     }
-    },
     "aux_originals": {
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:01:00+01:00",
     "value": 22.0
@@ -897,7 +906,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000005",
      "trigger": "target_change",
      "ts": "2026-01-15T12:01:00+01:00",
@@ -915,7 +925,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000005",
      "trigger": "target_change",
      "ts": "2026-01-15T12:01:30+01:00",
@@ -983,7 +994,16 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 21.5,
     "last_published_target_rt": 21.5,
     "boost_active": false,
@@ -991,7 +1011,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "notbetrieb": "aktiv"
     },
@@ -1014,18 +1034,11 @@
      "curve": 1.0,
      "heat_limit": 16.0
     },
-    "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1030.0
-     }
-    },
     "aux_originals": {
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": {
@@ -1033,7 +1046,7 @@
      "trigger": "target_change"
     }
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:01:00+01:00",
     "value": 21.5
@@ -1102,7 +1115,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 21.5,
     "last_published_target_rt": 21.5,
     "boost_active": false,
@@ -1110,7 +1137,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "notbetrieb": "aktiv"
     },
@@ -1133,23 +1160,11 @@
      "curve": 1.0,
      "heat_limit": 16.0
     },
-    "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1030.0
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1090.0
-     }
-    },
     "aux_originals": {
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": {
@@ -1157,7 +1172,7 @@
      "trigger": "target_change"
     }
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:01:00+01:00",
     "value": 21.5
@@ -1210,6 +1225,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 18.0,
      "boost_active": false,
      "failsafe_active": true,
@@ -1224,7 +1240,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000005",
      "trigger": "target_change",
      "ts": "2026-01-15T12:07:00+01:00",
@@ -1314,7 +1331,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 21.5,
     "last_published_target_rt": 21.5,
     "boost_active": false,
@@ -1322,7 +1353,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:07:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 1.0,
      "room_setpoint": 23.5,
@@ -1339,28 +1370,16 @@
      "curve": 1.0,
      "heat_limit": 16.0
     },
-    "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1030.0
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1090.0
-     }
-    },
     "aux_originals": {
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:01:00+01:00",
     "value": 21.5
@@ -1431,7 +1450,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000006",
      "trigger": "target_change",
      "ts": "2026-01-15T12:07:30+01:00",
@@ -1509,7 +1529,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 21.5,
     "last_published_target_rt": 21.0,
     "boost_active": false,
@@ -1517,7 +1551,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:07:30+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 1.0,
      "room_setpoint": 23.0,
@@ -1534,28 +1568,16 @@
      "curve": 1.0,
      "heat_limit": 16.0
     },
-    "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1030.0
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1090.0
-     }
-    },
     "aux_originals": {
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:00+01:00",
     "value": 21.0
@@ -1569,7 +1591,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000007",
      "trigger": "target_change",
      "ts": "2026-01-15T12:07:30+01:00",
@@ -1642,7 +1665,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000008",
      "trigger": "target_change",
      "ts": "2026-01-15T12:07:30+01:00",
@@ -1708,7 +1732,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 21.0,
     "last_published_target_rt": 21.0,
     "boost_active": false,
@@ -1716,7 +1754,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:07:30+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 1.0,
      "room_setpoint": 23.0,
@@ -1733,28 +1771,16 @@
      "curve": 1.0,
      "heat_limit": 16.0
     },
-    "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1030.0
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1090.0
-     }
-    },
     "aux_originals": {
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 21.0
@@ -1768,7 +1794,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000009",
      "trigger": "target_change",
      "ts": "2026-01-15T12:07:30+01:00",
@@ -1850,7 +1877,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000009",
      "trigger": "target_change",
      "ts": "2026-01-15T12:08:00+01:00",
@@ -1934,7 +1962,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -1942,7 +1984,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 1.05,
      "room_setpoint": 23.5,
@@ -1959,28 +2001,16 @@
      "curve": 1.0,
      "heat_limit": 16.0
     },
-    "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1030.0
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1090.0
-     }
-    },
     "aux_originals": {
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -2033,6 +2063,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
@@ -2086,6 +2117,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
@@ -2139,6 +2171,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
@@ -2192,6 +2225,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
@@ -2245,6 +2279,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
@@ -2298,6 +2333,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
@@ -2351,6 +2387,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
@@ -2404,6 +2441,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
@@ -2457,6 +2495,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
@@ -2577,6 +2616,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
@@ -2628,7 +2668,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -2636,7 +2690,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 1.05,
      "room_setpoint": 23.5,
@@ -2663,16 +2717,6 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1030.0
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1090.0
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1,
@@ -2683,12 +2727,12 @@
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -2741,6 +2785,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
@@ -2800,7 +2845,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -2808,7 +2867,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig"
     },
@@ -2838,16 +2897,6 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1030.0
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1090.0
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1,
@@ -2858,12 +2907,12 @@
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -3004,6 +3053,7 @@
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
@@ -3057,7 +3107,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -3065,7 +3129,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig"
     },
@@ -3095,16 +3159,6 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1030.0
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1090.0
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1,
@@ -3115,12 +3169,12 @@
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -3231,7 +3285,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -3239,7 +3307,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
      "abo": "inaktiv"
@@ -3273,14 +3341,6 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
@@ -3290,15 +3350,15 @@
      "mode_select": "auto"
     }
    },
-   "entitlement_state.json": {
+   "runtime/kreis-1/entitlement_state.json": {
     "inactive_since": "2026-01-15T13:03:00+01:00"
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -3355,7 +3415,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -3363,7 +3437,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
      "abo": "inaktiv"
@@ -3397,14 +3471,6 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
@@ -3414,12 +3480,12 @@
      "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -3517,7 +3583,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -3525,7 +3605,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
      "abo": "inaktiv",
@@ -3560,14 +3640,6 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
@@ -3577,15 +3649,15 @@
      "mode_select": "auto"
     }
    },
-   "entitlement_state.json": {
+   "runtime/kreis-1/entitlement_state.json": {
     "inactive_since": "2026-02-15T13:08:00+01:00"
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -3726,7 +3798,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -3734,7 +3820,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
      "abo": "beendet",
@@ -3769,29 +3855,21 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
      }
     }
    },
-   "entitlement_state.json": {
+   "runtime/kreis-1/entitlement_state.json": {
     "inactive_since": "2026-02-15T13:08:00+01:00"
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -3898,7 +3976,24 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/abgemeldet.json": {
+    "anlage": "golden"
+   },
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -3906,7 +4001,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 0.9,
      "room_setpoint": 22.0,
@@ -3933,32 +4028,21 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
      }
     }
    },
-   "entitlement_state.json": {
+   "runtime/kreis-1/entitlement_state.json": {
     "inactive_since": "2026-02-15T13:08:00+01:00"
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/abgemeldet.json": {
-    "anlage": "golden"
-   },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5

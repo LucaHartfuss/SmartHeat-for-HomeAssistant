@@ -1304,7 +1304,7 @@ def test_answer_with_heat_limit_writes_all_three_values(env):
     assert ("number.curve_current", 1.0) in _regulation_writes(env)
 
 
-@pytest.mark.parametrize("schema", [_OMIT, None, 2, 3, "3", True, 3.0])
+@pytest.mark.parametrize("schema", [_OMIT, None, 2, 3, 4, "3", True, 3.0])
 def test_answer_with_unknown_schema_counts_as_server_fault_without_writing(env, schema):
     _quiet_backup(env)
     bridge = _start(env)
@@ -1461,13 +1461,13 @@ def test_minus_infinity_as_lever_value_is_a_server_fault(env, hebel):
     _ist_serverfehler_ohne_schreiben(env, bridge, vorher)
 
 
-def test_snapshot_payload_is_schema_4(env):
+def test_snapshot_payload_is_schema_5_and_names_its_circuit(env):
     _quiet_backup(env)
     bridge = _start(env)
     _set_room_target(env, bridge, 20.5)
 
     snapshot = _mqtt(env).snapshots[-1]
-    assert snapshot["schema"] == 4
+    assert (snapshot["schema"], snapshot["kreis"]) == (5, 1)
     assert snapshot["readonly"] == []
     assert set(snapshot["levers"]) == {"curve", "room_setpoint", "heat_limit", "min_flow"}
     assert snapshot["room_target"] == 20.5

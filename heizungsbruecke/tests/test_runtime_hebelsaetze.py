@@ -8,6 +8,7 @@ from runtime_helpers import (
     WEISHAUPT,
     WEISHAUPT_STATES,
     _advance,
+    _anlage_budget,
     _backup,
     _ha_verbunden,
     _last_event,
@@ -49,8 +50,9 @@ def test_weishaupt_start_remembers_originals_prepares_and_reports_its_levers(env
     assert env.ha.writes[1:] == [
         ("number.hk", 0.8), ("number.komfort", 23.0), ("number.normal", 23.0), ("number.swu", 17.0),
     ]
-    assert _backup(env)["lifetime_writes"] == 5
-    assert _backup(env)["write_budget"]["writes:total"]["count"] == 5
+    assert _anlage_budget(env)["lifetime_writes"] == 5
+    assert _anlage_budget(env)["write_budget"]["writes:total"]["count"] == 5
+    assert "lifetime_writes" not in _backup(env) and "writes:total" not in _backup(env).get("write_budget", {})
 
 
 def test_weishaupt_basis_reports_the_curve_readonly_and_writes_only_the_room_setpoint(env):
@@ -193,7 +195,7 @@ def test_weishaupt_daily_energy_reaches_the_server_as_a_growing_sum(env):
 #: Kennung, die Add-on 1.1.0 fuer OPTIONS schrieb (roles.lever_refs_identity der Hebel-Referenzen), woertlich.
 KENNUNG_1_1_0 = ('{"curve": "number.curve_current", "heat_limit": "number.heat_limit", "min_flow": "number.min_flow", '
                  '"room_setpoint": "number.shift_current"}')
-KREIS_KENNUNG = '{"anlage": "S", "nummer": "0", "plattform": "mypyllant"}'
+KREIS_KENNUNG = '{"anlage":"S","hersteller":"vaillant","nummer":0}'
 UEBERNAHME = "Anlagen-Kennung aus dem Heizkreis übernommen"
 GAS = {"sensor.gas": 812.5, "sensor.gas::device_class": "energy", "sensor.gas::unit_of_measurement": "kWh"}
 
@@ -241,7 +243,8 @@ def test_bestand_von_1_1_0_behaelt_ursprungswerte_und_energiesummen(env, caplog)
     backup = _backup(env)
     assert backup["plant_id"] == KREIS_KENNUNG and backup["tenant_id"] == "test_tenant"
     assert backup["originals"] == bestand["originals"] and backup["restore_point"] == bestand["restore_point"]
-    assert backup["energy_state"] == bestand["energy_state"] and backup["lifetime_writes"] == 42
+    assert backup["energy_state"] == bestand["energy_state"]
+    assert _anlage_budget(env)["lifetime_writes"] == 42 and "lifetime_writes" not in backup  # wandert in die Anlagendatei
     assert _uebernahmen(caplog) == [UEBERNAHME]
     assert "Andere Anlage" not in caplog.text
     caplog.clear()

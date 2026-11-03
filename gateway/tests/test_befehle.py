@@ -436,7 +436,7 @@ def test_sign_off_marks_restarts_and_finishes_when_the_runtime_is_signed_off(ctx
     assert outcome.check() is None
     ctx.umgebung.status = {"status": "abgemeldet", "tenant_id": "andere", "grund": None}
     assert outcome.check() is None
-    dateien.schreiben_json(ctx.paths.backup, {"restore_point": {"curve": 1.1, "room_setpoint": 21.0}}, modus=dateien.LESBAR)
+    dateien.schreiben_json(ctx.paths.backup(1), {"restore_point": {"curve": 1.1, "room_setpoint": 21.0}}, modus=dateien.LESBAR)
     ctx.umgebung.status = {"status": "abgemeldet", "tenant_id": "test-tenant", "grund": None}
     assert outcome.check() == Done({"zurueckgesetzt": True, "werte": {"curve": 1.1, "room_setpoint": 21.0}})
 

@@ -6,6 +6,14 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+# Die Namen stehen hier woertlich, weil der Host dieses Modul ohne den Geraetekern installiert (nur `dateien.py` daneben);
+# ein Test haelt sie gleich `smartheat_core.zustandspfade`.
+_ANLAGE_BUDGET = "anlage_budget.json"
+_BACKUP = "backup.json"
+_FAILSAFE = "failsafe_state.json"
+_ENTITLEMENT = "entitlement_state.json"
+_ROOM_TARGET = "room_target.json"
+
 
 @dataclass(frozen=True)
 class Paths:
@@ -16,11 +24,10 @@ class Paths:
     rastung = property(lambda self: self.data / "device" / "sicherheitssatz.json")  # = device_dir / rastung.DATEI
     agent_state = property(lambda self: self.data / "agent_state.json")
     runtime_dir = property(lambda self: self.data / "runtime")
-    backup = property(lambda self: self.data / "runtime" / "backup.json")
-    failsafe = property(lambda self: self.data / "runtime" / "failsafe_state.json")
-    entitlement = property(lambda self: self.data / "runtime" / "entitlement_state.json")
-    room_target = property(lambda self: self.data / "runtime" / "room_target.json")
     inventur = property(lambda self: self.data / "inventur.json")
+    #: Sicherung im Format vor der Kreisordnung; die Laufzeit liest sie nie, nur ihr Vorhandensein stoppt den Start
+    alter_backup = property(lambda self: self.data / "runtime" / "backup.json")
+    anlage_budget = property(lambda self: self.runtime_dir / _ANLAGE_BUDGET)
     abgemeldet = property(lambda self: self.data / "runtime" / "abgemeldet.json")
     werksreset_bereit = property(lambda self: self.data / "werksreset_bereit.json")
     #: Vermerk des Geraete-Hosts: diese Abmeldung (abgemeldet.json) stammt von einer Reset-Anfrage {seq, ts, anlage}
@@ -31,6 +38,24 @@ class Paths:
     software_quittung = property(lambda self: self.data / "software_quittung.json")
     quota_dir = property(lambda self: self.data / "quota")
     sim_dir = property(lambda self: self.data / "sim")
+
+    def kreis_dir(self, kreis: int) -> Path:
+        """Zustandsordner eines Heizkreises: runtime/kreis-<n>/."""
+        if isinstance(kreis, bool) or not isinstance(kreis, int) or not 1 <= kreis <= 9999:
+            raise ValueError("Kreisnummer ausserhalb des Bereichs")
+        return self.runtime_dir / f"kreis-{kreis}"
+
+    def backup(self, kreis: int) -> Path:
+        return self.kreis_dir(kreis) / _BACKUP
+
+    def failsafe(self, kreis: int) -> Path:
+        return self.kreis_dir(kreis) / _FAILSAFE
+
+    def entitlement(self, kreis: int) -> Path:
+        return self.kreis_dir(kreis) / _ENTITLEMENT
+
+    def room_target(self, kreis: int) -> Path:
+        return self.kreis_dir(kreis) / _ROOM_TARGET
 
 
 def from_env() -> Paths:

@@ -245,8 +245,8 @@ def test_event_wish_reaches_the_device_core_buffer_without_a_connection(tmp_path
     client._on_trigger_event({"platform": "event", "event": {
         "event_type": "smartheat_wunsch", "data": {"raum_soll": 23.0}, "context": {"user_id": "u1"}}})
     a.run()
-    assert puffer.offen()
-    payload = puffer.wunsch.payload()
+    assert puffer.offen(1)
+    payload = puffer.wunsch(1).payload()
     assert payload["werte"] == {"raum_soll": 23.0} and payload["herkunft"] == "ha"
     assert payload["durch"] == "nutzer"
 

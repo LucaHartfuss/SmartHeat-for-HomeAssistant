@@ -104,7 +104,7 @@ def test_gateway_scenario(world):
     world.bedienung_senden({**bedienung(15.0), "quelle": "geraet"}, 2)
     assert _ergebnis(world, dokument="bedienung", version=2)["ok"] is True
     assert world.device.bedienung()["kreise"][0]["raum_soll"] == 15.0
-    assert json.loads(world.paths.room_target.read_text())["value"] == 15.0 and _thermostat(world)[-1] == 15.0
+    assert json.loads(world.paths.room_target(1).read_text())["value"] == 15.0 and _thermostat(world)[-1] == 15.0
 
     # 5. zwei Ack-Timeouts -> Notbetrieb, LED stoerung
     world.advance(30)

@@ -121,9 +121,12 @@ class HaHost:
 
     def boot_info(self) -> BootInfo:
         abgemeldet = self._leer_abmelden or dokument_config.abgemeldet(config.ABGEMELDET_PATH, self._konfiguration)
+        kreis = dokument_config.kreisnummer(self._konfiguration)
         boot = dokument_config.boot_info(
-            self._konfiguration, abgemeldet=abgemeldet, client_version=ADDON_VERSION, backup_path=config.BACKUP_PATH,
-            failsafe_path=config.FAILSAFE_PATH, aufraeumen_path=config.AUFRAEUMEN_PATH)
+            self._konfiguration, abgemeldet=abgemeldet, client_version=ADDON_VERSION, backup_path=config.backup_path(kreis),
+            failsafe_path=config.failsafe_path(kreis), aufraeumen_path=config.AUFRAEUMEN_PATH,
+            alter_zustand=config.ALTER_BACKUP_PATH,
+            anlage_budget_path=config.anlage_budget_path())
         vorab = self._bindung_oder_none()
         boot = dataclasses.replace(boot, notify_hints_off=vorab.hinweise_aus if vorab else ())
         if not boot.configured and not boot.signed_off:
@@ -166,8 +169,9 @@ class HaHost:
                 raise ConfigError(text)
             b = dokument.bindung(self._konfiguration)
             geraet_trigger.pruefe_soll_ref(b.soll_entity)
+            kreis = dokument_config.kreisnummer(self._konfiguration)
             runtime = dokument_config.runtime_config(
-                self._konfiguration, rastung_pfad=config.RASTUNG_PATH, entitlement_path=config.ENTITLEMENT_PATH,
+                self._konfiguration, rastung_pfad=config.RASTUNG_PATH, entitlement_path=config.entitlement_path(kreis),
                 abo_source=self._geraet.abo_status)
             # Ohne gueltige Bindungsparameter kein Start
             description = dokument_config.beschreibung(self._konfiguration)
@@ -183,6 +187,7 @@ class HaHost:
             rollen = {rolle: ref for rolle, ref in b.rollen.items() if ref not in ungelesen}
             manifest = build_manifest({**rollen, "room_target": SOLL_REF}, derived.entity_ids, b.hebelsatz)
             binding = binding_for(description, self._ha_api, manifest)
+            plant_id = dokument.anlagen_kennung(b)
         except StartupError as error:
             raise StartFailure(str(error), error.key) from error
         except (ConfigError, ManifestError) as error:
@@ -195,8 +200,8 @@ class HaHost:
         bedienung, dirty = self._geraet.bedienung()
         bedient = bedienung_start(bedienung)
         start_value = bedient if bedient is not None else _angezeigter_start(self._ha_api, self.soll_entity)
-        self.store = TargetStore(config.ROOM_TARGET_PATH, start_value, self._clock, lambda: wallclock.now().isoformat(),
-                                 on_change=self._raum_changed)
+        self.store = TargetStore(config.room_target_path(dokument_config.kreisnummer(self._konfiguration)), start_value, self._clock,
+                                 lambda: wallclock.now().isoformat(), on_change=self._raum_changed)
         self._angleichen = bedient is not None and not dirty
         if self._angleichen and self.store.value != start_value:
             self.store.apply_portal(start_value)  # Bedienung kam waehrend eines Neustarts
@@ -217,8 +222,7 @@ class HaHost:
             Notice(f"entity_fehlt:{feld}", "fehlt", ENTITY_FEHLT_MESSAGE.format(feld=feld)) if feld in fehlend
             else Notice(f"entity_fehlt:{feld}", STATE_OK, ENTITY_DA_MESSAGE.format(feld=feld))
             for feld in dokument.optionale_felder(b))
-        return Loaded(config=runtime, manifest=manifest, binding=binding, plant_id=dokument.anlagen_kennung(b),
-                      notices=notices)
+        return Loaded(config=runtime, manifest=manifest, binding=binding, plant_id=plant_id, notices=notices)
 
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
         assert self._bindung is not None and self._runtime is not None and self.store is not None  # load() lief zuvor

@@ -115,9 +115,9 @@ class _Link:
         """Der Link des Geraets ist (wieder) verbunden (Geraete-Thread)."""
         self._geraet.channel.verbunden()
 
-    def answer(self, seq, status="ok", curve=0.95, shift=23.0, reason=None, schema=4, heat_limit=16.0, min_flow=20.5,
-               levers=None):
-        """Server-Antwort (Schema 4) ueber den Link einspeisen. levers=None baut die Hebel aus curve/shift/heat_limit/min_flow
+    def answer(self, seq, status="ok", curve=0.95, shift=23.0, reason=None, schema=5, heat_limit=16.0, min_flow=20.5,
+               levers=None, kreis=1):
+        """Server-Antwort (Schema 5) ueber den Link einspeisen. levers=None baut die Hebel aus curve/shift/heat_limit/min_flow
         (ein Wert _OMIT laesst den Hebel weg); schema=_OMIT bzw. levers=_OMIT: Feld fehlt."""
         if levers is None:
             levers = {
@@ -126,7 +126,7 @@ class _Link:
                 ) if value is not _OMIT
             }
         payload = {
-            "schema": schema, "seq": seq, "ts": "x", "status": status, "reason": reason, "levers": levers,
+            "schema": schema, "kreis": kreis, "seq": seq, "ts": "x", "status": status, "reason": reason, "levers": levers,
             "learned": {"curve": 1.0, "heat_limit": 16.0},
         }
         if schema is _OMIT:
@@ -136,7 +136,7 @@ class _Link:
         self._geraet.channel.setpoints(payload)
 
     def answer_raw(self, seq, **fields):
-        payload = {"schema": 4, "seq": seq, "ts": "x", "status": "ok", "reason": None,
+        payload = {"schema": 5, "kreis": 1, "seq": seq, "ts": "x", "status": "ok", "reason": None,
                    "levers": {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0, "min_flow": 20.5},
                    "learned": None, **fields}
         self._geraet.channel.setpoints(payload)
@@ -218,6 +218,11 @@ def _backup(env):
     return load_backup(env.paths["BACKUP_PATH"])
 
 
+def _anlage_budget(env):
+    """Die Zaehler der ganzen Anlage (runtime/anlage_budget.json), neben den Kreisordnern."""
+    return load_backup(env.paths["RUNTIME_DIR"] / "anlage_budget.json")
+
+
 def _failsafe_file(env):
     return load_backup(env.paths["FAILSAFE_PATH"])
 
@@ -270,15 +275,19 @@ def _frische_umgebung(verzeichnis: Path, mp, clock):
     sie je Beispiel direkt (ein Beispiel = eine Umgebung). `derived["replaced"]` setzt der Test fuer einen Quellwechsel
     der Hilfssensoren; `abo["queries"]` zaehlt die Abo-Pruefungen der Laufzeit (Boot, Tick-Zustellung, Fristende)."""
     paths = {}
-    for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "AUFRAEUMEN_PATH",
-                 "RASTUNG_PATH"):
+    for name in ("DERIVED_SENSORS_PATH", "AUFRAEUMEN_PATH", "RASTUNG_PATH"):
         paths[name] = verzeichnis / f"{name.lower()}.json"
         mp.setattr(f"heizungsbruecke.config.{name}", paths[name])
     laufzeit = verzeichnis / "runtime"
-    for name, wert in (("RUNTIME_DIR", laufzeit), ("ROOM_TARGET_PATH", laufzeit / "room_target.json"),
-                       ("ABGEMELDET_PATH", laufzeit / "abgemeldet.json")):
+    for name, wert in (("RUNTIME_DIR", laufzeit), ("ABGEMELDET_PATH", laufzeit / "abgemeldet.json"),
+                       ("ALTER_BACKUP_PATH", verzeichnis / "backup.json")):
         paths[name] = wert
         mp.setattr(f"heizungsbruecke.config.{name}", wert)
+    # Zustand des (einzigen) Heizkreises; die Schluessel bleiben die der frueheren Konstanten.
+    kreis = laufzeit / "kreis-1"
+    for name, datei in (("BACKUP_PATH", "backup.json"), ("FAILSAFE_PATH", "failsafe_state.json"),
+                        ("ENTITLEMENT_PATH", "entitlement_state.json"), ("ROOM_TARGET_PATH", "room_target.json")):
+        paths[name] = kreis / datei
     derived = {"replaced": ()}
     mp.setattr("heizungsbruecke.derived_sensors.ensure_all",
                lambda **kwargs: DerivedSensors({**DERIVED, "room_actual": "sensor.room_actual"}, derived["replaced"],

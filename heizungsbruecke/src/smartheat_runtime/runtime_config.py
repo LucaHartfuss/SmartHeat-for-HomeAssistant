@@ -32,14 +32,23 @@ class BootInfo:
     local_check_interval: float
     backup_path: Path
     failsafe_path: Path
+    # Nummer des Heizkreises, den diese Laufzeit fuehrt (V1b: `kreis` auf dem Draht).
+    kreis: int
     # Aufraeum-Markierung des Hosts; nach gelungenem Zuruecksetzen erledigt die Laufzeit
     # sie und startet neu (None: der Host hat keine).
     aufraeumen_path: Path | None = None
+    # Pfad der Sicherung im Format vor der Kreisordnung; sie wird nie gelesen, nur ihr Vorhandensein stoppt den Start
+    # (None: der Host hat keinen alten Pfad).
+    alter_zustand: Path | None = None
+    # Datei der Zaehler der ganzen Anlage (Schreibbudget der Anlage, Lebensdauer) neben den Kreisordnern; None: die Zaehler
+    # liegen im Zustand des Kreises (nur Tests).
+    anlage_budget_path: Path | None = None
 
 
 @dataclass(frozen=True)
 class RuntimeConfig:
     tenant_id: str
+    kreis: int
     lever_set_id: str
     local_safety: LocalSafety
     daily_trigger_time: str | None

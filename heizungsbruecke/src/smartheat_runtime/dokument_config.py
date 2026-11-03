@@ -107,8 +107,15 @@ def _e2e_intervalle() -> dict:
     return werte
 
 
+def kreisnummer(konfiguration) -> int:
+    """Nummer des (ersten) Heizkreises im Dokument; ohne brauchbaren Eintrag 1 (die BootInfo wirft nie)."""
+    nummer = kreisansicht.erste(konfiguration).get("kreis")
+    return nummer if isinstance(nummer, int) and not isinstance(nummer, bool) and nummer >= 1 else 1
+
+
 def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_path: Path,
-              failsafe_path: Path, aufraeumen_path: Path | None = None) -> BootInfo:
+              failsafe_path: Path, aufraeumen_path: Path | None = None,
+              alter_zustand: Path | None = None, anlage_budget_path: Path | None = None) -> BootInfo:
     """Wirft nie (wie die BootInfo der Hosts): ein unbekannter Hebelsatz faellt fuer das Statusereignis auf den
     Standard zurueck; runtime_config meldet ihn danach als Konfigurationsfehler."""
     intervalle = _e2e_intervalle()  # einmal je Aufruf lesen (und loggen)
@@ -120,7 +127,8 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
         configured=anlage is not None and not abgemeldet, signed_off=anlage is not None and abgemeldet,
         tenant_id=anlage, lever_set=lever_set, client_version=client_version, notify_hints_off=(),
         local_check_interval=intervalle.get("pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
-        backup_path=backup_path, failsafe_path=failsafe_path, aufraeumen_path=aufraeumen_path,
+        backup_path=backup_path, failsafe_path=failsafe_path, kreis=kreisnummer(konfiguration),
+        aufraeumen_path=aufraeumen_path, alter_zustand=alter_zustand, anlage_budget_path=anlage_budget_path,
     )
 
 
@@ -151,7 +159,7 @@ def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
         raise ConfigError("Konfiguration: keine Raumfühler")
     intervalle = _e2e_intervalle()  # einmal je Aufruf lesen (und loggen)
     return RuntimeConfig(
-        tenant_id=konfiguration["anlage"], lever_set_id=hebelsatz,
+        tenant_id=konfiguration["anlage"], kreis=kreisnummer(konfiguration), lever_set_id=hebelsatz,
         local_safety=safety, daily_trigger_time=daily,
         local_check_interval=intervalle.get("pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
         telemetry_interval=intervalle.get("telemetrie_s", DEFAULT_TELEMETRY_INTERVAL_SECONDS),

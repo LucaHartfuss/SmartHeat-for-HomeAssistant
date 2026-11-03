@@ -36,7 +36,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from smartheat_core import dateien
+from smartheat_core import dateien, zustandspfade
 from smartheat_core.logtext import lesbar
 from smartheat_device import fehler, nachrichten, wire
 from smartheat_device.commands import CommandRegister
@@ -121,7 +121,7 @@ def vergessen(paths: Paths) -> bool:
     """Leere Konfiguration nach einer Einrichtung: Laufzeit-Ordner (Ursprungswerte, Notbetrieb, Abo-Frist,
     Soll-Speicher, Abmelde-Markierung), Inventur-Proben und die Anmeldedaten aller Cloud-Treiber weg; Geraetekern
     (device/, auch die Rastung) und Simulation bleiben. Beim Start eines frischen Prozesses, bevor die Laufzeit liest.
-    Wirft nie; True nur, wenn alles weg ist. runtime/backup.json (Bindung an Einrichtung und Anlage) zuletzt und nur,
+    Wirft nie; True nur, wenn alles weg ist. runtime/kreis-<n>/backup.json (Bindung an Einrichtung und Anlage) zuletzt und nur,
     wenn alles andere weg ist: bleibt etwas liegen, verwirft bind_to_tenant es bei der Einrichtung einer anderen Anlage.
     Scheitert ein Loeschen (EACCES, EIO), bleibt die Aufraeum-Markierung fuer den naechsten Start (wie im Add-on);
     exists() steht mit im try (wirft bei EIO/EACCES im stat)."""
@@ -148,8 +148,7 @@ def vergessen(paths: Paths) -> bool:
 
     eintraege: list[Path] = []
     try:
-        if paths.runtime_dir.exists():
-            eintraege = sorted(path for path in paths.runtime_dir.iterdir() if path != paths.backup)
+        eintraege = zustandspfade.ohne_wiederherstellungspunkt(paths.runtime_dir)
     except OSError as error:
         gescheitert = True
         logger.warning("%s nicht geloescht (%s), neuer Versuch beim naechsten Start", paths.runtime_dir.name,
@@ -166,11 +165,17 @@ def vergessen(paths: Paths) -> bool:
         except Exception as error:
             gescheitert = True
             logger.error("Anmeldedaten von %s nicht geloescht (%s)", lesbar(str(driver_id)), type(error).__name__)
-    # Erst backup.json, dann der (bis auf Neues) leere Ordner; jeder Schritt nur nach vollem Erfolg der vorigen.
-    for path, wie in ((paths.backup, datei_weg), (paths.runtime_dir, shutil.rmtree)):
+    # Erst die backup.json der Kreise, dann der (bis auf Neues) leere Ordner; jeder Schritt nur nach vollem Erfolg der
+    # vorigen.
+    if gescheitert:
+        return False
+    for path in zustandspfade.wiederherstellungspunkte(paths.runtime_dir):
         if gescheitert:
             return False
-        entfernen(path, wie)
+        entfernen(path, datei_weg)
+    if gescheitert:
+        return False
+    entfernen(paths.runtime_dir, shutil.rmtree)
     if gescheitert:
         return False
     logger.info("Anlagengebundener Zustand geloescht (Gateway nicht mehr eingerichtet)")

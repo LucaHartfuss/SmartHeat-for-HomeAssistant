@@ -165,7 +165,7 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     try:
         publish_snapshot(
             rt.mqtt_client, seq=seq, trigger=trigger, room_target=read.room_target, levers=read.levers,
-            manual_override=pending_override, readonly=read.readonly,
+            manual_override=pending_override, readonly=read.readonly, kreis=rt.config.kreis,
         )
         rt.manual_override_sent = pending_override
         rt.manual_override_seq = seq
@@ -271,7 +271,7 @@ def _valid_levers(levers, expected: tuple[str, ...]) -> TypeGuard[dict[str, floa
 
 
 def handle_setpoints(rt: Runtime, payload: dict) -> None:
-    """Server-Antwort (nur Schema 4), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
+    """Server-Antwort (nur Schema 5), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
     Werte gehen vor dem Ack auf die Anlage. Ein unbekanntes Schema, ein unbekannter Status oder
     ungueltige Werte zaehlen als Datenfehler vom Server. Kann die Anlage die Werte nicht
     uebernehmen, ist das eine Antwort mit eigenem Datenfehler (`WriteFailed`), kein Serverausfall."""
@@ -288,10 +288,18 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
 
     schema = payload.get("schema")
     if type(schema) is not int or schema != SNAPSHOT_SCHEMA_VERSION:
-        # Nur Schema 4 wird verstanden; alles andere zaehlt wie eine ungueltige Antwort (Datenfehler
+        # Nur Schema 5 wird verstanden; alles andere zaehlt wie eine ungueltige Antwort (Datenfehler
         # vom Server, sofort sichtbar) statt still verworfen zu werden und erst ueber den
         # Ack-Timeout im Notbetrieb zu enden.
         reason = _kuerzen(f"ungültige Serverantwort (unbekanntes Schema {schema!r})")
+        logger.warning("Setpoints-Antwort (seq=%s): %s - nichts geschrieben", seq, reason)
+        deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
+        return
+
+    kreis = payload.get("kreis")
+    if type(kreis) is not int or kreis != rt.config.kreis:
+        # Die Antwort gilt einem anderen Kreis (oder nennt keinen): ihre Werte gehoeren nicht auf diese Anlage.
+        reason = "ungültige Serverantwort (Kreis passt nicht zu diesem Kreis)"
         logger.warning("Setpoints-Antwort (seq=%s): %s - nichts geschrieben", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
         return

@@ -345,17 +345,25 @@ def test_load_reports_the_plant_identity_of_the_driver(data_dir, clock):
     loaded = _host(Paths(data_dir), konfiguration(), clock).load()
     assert loaded.plant_id == registry.plant_id(
         {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 0}})
+    assert loaded.plant_id == '{"anlage":"viessmann_vicare","hersteller":"simulation","nummer":0}'
+
+
+def test_ohne_heizkreis_im_treiber_gibt_es_keine_kennung_und_der_start_scheitert_laut(data_dir, clock):
+    ohne = {"treiber": {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare"}}, "thermostat": None}
+    with pytest.raises(StartFailure) as fehler:
+        _host(Paths(data_dir), konfiguration(bindung=ohne), clock).load()
+    assert fehler.value.key == "konfiguration"
 
 
 def test_die_uebernahme_der_frueheren_ha_kennung_greift_beim_gateway_nie(data_dir, clock):
     """app.start reicht frueher=lever_refs_identity(manifest) auch beim Gateway weiter. Seine Kennung traegt den
-    Schluessel "id", den kein Hebel hat: frueher ist nie gleich, ein Bestand einer anderen Anlage wird weiter
+    Schluessel "hersteller", den kein Hebel hat: frueher ist nie gleich, ein Bestand einer anderen Anlage wird weiter
     verworfen."""
     loaded = _host(Paths(data_dir), konfiguration(), clock).load()
     frueher = lever_refs_identity(loaded.manifest)
-    assert frueher != loaded.plant_id and "id" in json.loads(loaded.plant_id) and "id" not in json.loads(frueher)
+    assert frueher != loaded.plant_id and "hersteller" in json.loads(loaded.plant_id) and "hersteller" not in json.loads(frueher)
     store = StateStore(Path(data_dir) / "backup.json", Path(data_dir) / "failsafe_state.json")
-    store.update(tenant_id="t1", plant_id=registry.plant_id({"id": "simulation", "parameter": {"heizkreis": 1}}),
+    store.update(tenant_id="t1", plant_id=registry.plant_id({"id": "simulation", "parameter": {"lever_set": "x", "heizkreis": 1}}),
                  originals={"curve": 1.4})
     assert bind_to_tenant(store, "t1", loaded.plant_id, frueher=frueher) == "andere_anlage"
     assert store.state.originals == {}
@@ -468,7 +476,7 @@ def test_the_start_writes_nothing_to_a_thermostat_whose_last_known_state_is_off(
     Frostschutz-Stellung gemeldet. Weder die Bedienung des Servers beim Start noch das Angleichen erreicht es; die
     Bedienung gilt im Speicher."""
     _thermostat_an(world, **zustand)
-    dateien.schreiben_json(world.paths.room_target, {"value": gespeichert, "source": "portal", "ts": "t"},
+    dateien.schreiben_json(world.paths.room_target(1), {"value": gespeichert, "source": "portal", "ts": "t"},
                            modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration())
     dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
@@ -485,7 +493,7 @@ def test_an_open_local_change_keeps_the_start_from_aligning_the_thermostat(world
     und das Thermostat wird beim Start angeglichen; mit offener Aenderung (dirty) bleibt das lokale Soll, nichts geht
     ans Thermostat. Das Thermostat hat vor dem Start gemeldet (bekannter Zustand, an)."""
     _thermostat_an(world)
-    dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
+    dateien.schreiben_json(world.paths.room_target(1), {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration())
     dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
                            {"version": 1, "inhalt": bedienung(22.5), "dirty": dirty}, modus=dateien.PRIVAT)
@@ -519,7 +527,7 @@ def test_the_operation_equal_to_the_stored_target_aligns_the_thermostat_only_wit
     """Der zweite Pfad des Angleichens: die Bedienung des Servers entspricht schon dem gespeicherten Soll (kein
     Portal-Ereignis), das Thermostat bekommt es direkt, ausser eine lokale Aenderung ist offen. Bekannter Zustand: an."""
     _thermostat_an(world)
-    dateien.schreiben_json(world.paths.room_target, {"value": 22.5, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
+    dateien.schreiben_json(world.paths.room_target(1), {"value": 22.5, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration())
     dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
                            {"version": 1, "inhalt": bedienung(22.5), "dirty": dirty}, modus=dateien.PRIVAT)
@@ -535,7 +543,7 @@ def test_an_operation_at_start_reaches_a_bound_w100_only_after_it_reports_on(wor
     world.z2m.add_w100(w100)
     world.z2m.report(w100, thermostat_mode="OFF", system_mode="heat", occupied_heating_setpoint=20,
                      local_temperature=20.0)
-    dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
+    dateien.schreiben_json(world.paths.room_target(1), {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
     bindung = {**kreis_bindung(), "thermostat": w100}
     dokumente_schreiben(world.paths, konfiguration(bindung=bindung))
     dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
@@ -558,7 +566,7 @@ def test_the_start_puts_a_bound_w100_into_thermostat_mode_and_aligns_it_rounded(
     w100 = "0x54ef44100140eb34"  # Testwert
     world.z2m.add_w100(w100)
     world.z2m.report(w100, thermostat_mode="ON", system_mode="heat", occupied_heating_setpoint=20, local_temperature=20.0)
-    dateien.schreiben_json(world.paths.room_target, {"value": 22.5, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
+    dateien.schreiben_json(world.paths.room_target(1), {"value": 22.5, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
     bindung = {**kreis_bindung(), "thermostat": w100}
     dokumente_schreiben(world.paths, konfiguration(bindung=bindung))
     dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
@@ -568,3 +576,10 @@ def test_the_start_puts_a_bound_w100_into_thermostat_mode_and_aligns_it_rounded(
     assert [body for ieee, body in world.z2m.set_requests if ieee == w100] == [
         {"thermostat_mode": "ON"}, {"auto_hide_middle_line": False}, {"occupied_heating_setpoint": 23.0}]
     assert world.host._store.value == 22.5
+
+
+def test_die_boot_info_nennt_die_anlagendatei_neben_den_kreisordnern(data_dir, clock):
+    paths = Paths(data_dir)
+    boot = _host(paths, konfiguration(), clock).boot_info()
+    assert boot.anlage_budget_path == paths.runtime_dir / "anlage_budget.json"
+    assert boot.backup_path.parent.parent == boot.anlage_budget_path.parent

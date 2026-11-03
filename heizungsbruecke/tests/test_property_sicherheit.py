@@ -329,7 +329,7 @@ def test_serverantwort_mit_beliebigen_schrittweiten_und_anlagenbereichen_schreib
                 _ha_verbunden(env, bridge)
                 snapshot = _mqtt(env).snapshots[-1]
                 vorher = len(env.ha.writes)
-                antwort = {"seq": snapshot["seq"], "schema": 4, "ts": "x", "status": "ok", "reason": None,
+                antwort = {"seq": snapshot["seq"], "schema": 5, "kreis": 1, "ts": "x", "status": "ok", "reason": None,
                            "levers": levers, "learned": None}
                 env.geraet.channel.setpoints(json.loads(json.dumps(antwort)))
                 bridge.worker.run_pending()

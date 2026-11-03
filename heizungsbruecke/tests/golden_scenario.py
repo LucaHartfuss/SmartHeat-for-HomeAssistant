@@ -27,9 +27,8 @@ TRIGGER_CLIENT = "heizungsbruecke.geraet_trigger.HaTriggerClient"
 BERLIN = ZoneInfo("Europe/Berlin")
 START = datetime(2026, 1, 15, 8, 0, tzinfo=BERLIN)
 FILES = {
-    "BACKUP_PATH": "backup.json", "FAILSAFE_PATH": "failsafe_state.json",
-    "ENTITLEMENT_PATH": "entitlement_state.json", "DERIVED_SENSORS_PATH": "derived_sensors.json",
-    "AUFRAEUMEN_PATH": "aufraeumen.json", "RUNTIME_DIR": "runtime", "ROOM_TARGET_PATH": "runtime/room_target.json",
+    "ALTER_BACKUP_PATH": "backup.json", "DERIVED_SENSORS_PATH": "derived_sensors.json",
+    "AUFRAEUMEN_PATH": "aufraeumen.json", "RUNTIME_DIR": "runtime",
     "ABGEMELDET_PATH": "runtime/abgemeldet.json", "RASTUNG_PATH": "device/sicherheitssatz.json",
 }
 #: Testdaten; die Laufzeit liest sie als Konfigurationsdokument (geraet_helpers.konfiguration_aus_optionen).
@@ -215,7 +214,7 @@ class World:
         # Der Server sendet den Mindestvorlauf wie bisher das Geraet ihn abgeleitet hat: das Raum-Soll.
         min_flow = self.state().stable_target
         payload = {
-            "schema": 4, "seq": self.last_seq(), "ts": "2026-01-15T00:00:00+01:00", "status": status, "reason": reason,
+            "schema": 5, "kreis": 1, "seq": self.last_seq(), "ts": "2026-01-15T00:00:00+01:00", "status": status, "reason": reason,
             "levers": {"curve": curve, "room_setpoint": shift, "heat_limit": heat_limit, "min_flow": min_flow},
             "learned": {"curve": 1.0, "heat_limit": 16.0},
         }

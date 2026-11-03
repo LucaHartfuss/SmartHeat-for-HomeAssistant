@@ -127,8 +127,9 @@ class GatewayWorld:
 
     def answer(self, levers: dict, status: str = "ok", reason=None) -> None:
         seq = self.link.of("up/snapshot")[-1]["seq"]
-        self.server("down/setpoints", {"schema": 4, "seq": seq, "ts": "2026-01-15T00:00:00+01:00", "status": status,
-                                       "reason": reason, "levers": levers, "learned": {}})
+        self.server("down/setpoints", {"schema": 5, "kreis": 1, "seq": seq,
+                                       "ts": "2026-01-15T00:00:00+01:00", "status": status, "reason": reason,
+                                       "levers": levers, "learned": {}})
 
     def status(self) -> dict | None:
         return self.geraet.zustand.status if self.geraet is not None else None

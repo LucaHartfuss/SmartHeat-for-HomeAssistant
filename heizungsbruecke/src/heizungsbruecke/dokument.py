@@ -15,14 +15,13 @@ erneut zu, ein Neustart des Hosts haette das Geraet sonst festgesetzt. zuordnung
 Geraet haelt das Dokument zurueck und prueft spaeter erneut). Bleiben Bindung, Raumfuehler und Hebelsatz gegenueber der
 uebernommenen Konfiguration gleich (z. B. nur das Abo oder der Tagestick aendert sich), entfaellt der HA-Teil.
 Ablehnungen sind details (Rollen, nie Entity-IDs), nur lokal_pruefen liefert den lokalen Text."""
-import json
 import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from heizungsbruecke.inventur import einstellbare_plattformen, entity_erlaubt, entity_klasse
-from smartheat_core import kreisansicht
+from smartheat_core import kennung, kreisansicht
 from smartheat_core.bindungsparameter import ENERGIE_KANAELE
 from smartheat_core.config_check import NichtPruefbar
 from smartheat_core.levers import LEVER_SETS
@@ -122,19 +121,18 @@ def bindung(konfiguration) -> HaBindung:
         kreis=dict(_mapping(raw.get("kreis"))))
 
 
-#: Was den Heizkreis bestimmt: ohne config_entry, eine Neuanlage der Integration bleibt dieselbe Anlage.
-# Achtung: Felder und Format bestimmen die plant_id jeder HA-Installation. anlage und nummer leitet der
-# Server ab (einrichtung/ha_erkennung.py, _normalize: Praefix der unique_id; Kreismuster des Katalogs); aendert er die
-# Ableitung, gilt beim naechsten Speichern im Assistenten jede HA-Anlage als andere Anlage, bind_to_tenant verwirft
-# Ursprungswerte, Wiederherstellungspunkt und Energiesummen (offene-punkte.md A6-36-Format).
-KREIS_KENNUNG = ("plattform", "anlage", "nummer")
-
-
 def anlagen_kennung(b: HaBindung) -> str:
-    """Anlagen-Kennung des HA-Hosts (Loaded.plant_id): der Heizkreis als JSON. Eine umbenannte oder neu
-    zugeordnete Hebel-Entity desselben Kreises bleibt dieselbe Anlage (frueher waren es die Hebel-Referenzen,
-    roles.lever_refs_identity; app.start uebernimmt einen solchen Bestand einmal)."""
-    return json.dumps({key: b.kreis.get(key) for key in KREIS_KENNUNG}, sort_keys=True)
+    """Anlagen-Kennung des HA-Hosts (Loaded.plant_id): `{hersteller, anlage, nummer}` des Heizkreises, ohne Weg und
+    ohne config_entry (eine Neuanlage der Integration bleibt dieselbe Anlage). Eine umbenannte oder neu zugeordnete
+    Hebel-Entity desselben Kreises bleibt ebenfalls dieselbe Anlage.
+    Achtung: Felder und Format bestimmen die plant_id jeder HA-Installation. anlage und nummer leitet der Server ab
+    (einrichtung/ha_erkennung.py); aendert er die Ableitung, gilt beim naechsten Speichern im Assistenten jede
+    HA-Anlage als andere Anlage, bind_to_tenant verwirft Ursprungswerte, Wiederherstellungspunkt und Energiesummen.
+    ConfigError, wenn das Dokument keine gueltige Kennung ergibt."""
+    try:
+        return kennung.aus_ha_kreis(b.kreis.get("plattform"), b.kreis.get("anlage"), b.kreis.get("nummer"))
+    except kennung.KennungFehler as error:
+        raise ConfigError(f"Heizkreis: {error} – {RECONFIGURE_HINT}") from error
 
 
 def _entity(ref: str) -> str:

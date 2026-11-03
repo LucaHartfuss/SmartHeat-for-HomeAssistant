@@ -44,6 +44,7 @@ from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import HaHost
 from heizungsbruecke.supervisor import SupervisorApi
 from heizungsbruecke.version import ADDON_VERSION
+from smartheat_core import zustandspfade
 from smartheat_device import prozess
 from smartheat_device.device import DEVICE_DIR, Device
 from smartheat_device.documents import KONFIGURATION, DocumentStore
@@ -164,25 +165,42 @@ def _anlage_loeschen(ha_api) -> bool:
             logger.warning("Home Assistant nicht bereit: Hilfssensoren werden beim naechsten Start entfernt")
     geloescht = gescheitert = False
 
-    def datei_weg(path) -> None:
-        path.unlink(missing_ok=True)  # zwischen exists und unlink verschwunden: weg
+    def eintrag_weg(path) -> None:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)  # zwischen exists und unlink verschwunden: weg
 
-    # backup.json (Bindung an Einrichtung und Anlage) zuletzt und nur, wenn alle anderen Dateien geloescht sind (die
-    # Hilfssensoren zaehlen nicht): bleibt etwas liegen, verwirft bind_to_tenant es bei der Einrichtung einer anderen
-    # Anlage. Scheitert ein Loeschen (EACCES, EIO), bleibt die Markierung fuer den naechsten Start; der Start geht
-    # weiter wie bei nicht loeschbaren Hilfssensoren. exists() steht mit im try (wirft bei EIO/EACCES im stat).
-    for path, entfernen in ((config.FAILSAFE_PATH, datei_weg), (config.ENTITLEMENT_PATH, datei_weg),
-                            (config.RUNTIME_DIR, shutil.rmtree), (config.BACKUP_PATH, datei_weg)):
-        if gescheitert and path == config.BACKUP_PATH:
-            break
+    def entfernen(path, wie) -> None:
+        nonlocal geloescht, gescheitert
         try:
             if path.exists():
-                entfernen(path)
+                wie(path)
                 geloescht = True
         except OSError as error:
             gescheitert = True
             logger.warning("%s nicht geloescht (%s), neuer Versuch beim naechsten Start", path.name,
                            type(error).__name__)
+
+    # Die backup.json der Kreise (Bindung an Einrichtung und Anlage) zuletzt und nur, wenn alle anderen Dateien
+    # geloescht sind (die Hilfssensoren zaehlen nicht): bleibt etwas liegen, verwirft bind_to_tenant es bei der
+    # Einrichtung einer anderen Anlage. Scheitert ein Loeschen (EACCES, EIO), bleibt die Markierung fuer den naechsten
+    # Start; der Start geht weiter wie bei nicht loeschbaren Hilfssensoren. exists() steht mit im try (wirft bei
+    # EIO/EACCES im stat).
+    try:
+        eintraege = zustandspfade.ohne_wiederherstellungspunkt(config.RUNTIME_DIR)
+    except OSError as error:
+        eintraege = []
+        gescheitert = True
+        logger.warning("%s nicht geloescht (%s), neuer Versuch beim naechsten Start", config.RUNTIME_DIR.name,
+                       type(error).__name__)
+    for path in eintraege:
+        entfernen(path, eintrag_weg)
+    if not gescheitert:
+        for path in zustandspfade.wiederherstellungspunkte(config.RUNTIME_DIR):
+            entfernen(path, eintrag_weg)
+    if not gescheitert:
+        entfernen(config.RUNTIME_DIR, shutil.rmtree)
     fertig = fertig and not gescheitert
     if geloescht and fertig:
         logger.info("Anlagengebundener Zustand geloescht (Add-on nicht mehr eingerichtet)")

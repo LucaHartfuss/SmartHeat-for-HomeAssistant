@@ -16,7 +16,7 @@ def test_tick_and_answer_go_over_the_device_link(env):
     (snapshot,) = env.geraet.sent.of("up/snapshot")
     assert snapshot["room_target"] == 20.5 and "raum_soll_wirksam" not in snapshot  # Feld ohne Wirkung
     assert env.geraet.sent.of("telemetry")
-    env.geraet.channel.setpoints({"schema": 4, "seq": snapshot["seq"], "ts": "x", "status": "ok", "reason": None,
+    env.geraet.channel.setpoints({"schema": 5, "kreis": 1, "seq": snapshot["seq"], "ts": "x", "status": "ok", "reason": None,
                                   "levers": {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0, "min_flow": 20.5},
                                   "learned": {"curve": 1.0, "heat_limit": 16.0}})
     bridge.worker.run_pending()

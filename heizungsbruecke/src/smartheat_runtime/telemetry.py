@@ -63,7 +63,7 @@ def _warne_einmal(schluessel: str, error: Exception) -> None:
 def run_telemetry_tick(
     manifest, signals, mqtt_client, boost_active: bool, failsafe_active: bool,
     datenfehler: DataFault | None = None, room_target: float | None = None,
-    energy: Callable[[dict, dict], dict] | None = None, einheiten: Mapping[str, str] | None = None,
+    energy: Callable[[dict, dict], dict] | None = None, einheiten: Mapping[str, str] | None = None, *, kreis: int,
 ) -> None:
     """Liest room_actual selbst (lokaler HA-REST-Aufruf, kein Cloud-Roundtrip). `energy` normalisiert die
     Energie-Rohwerte (Tageszaehler, None = unveraendert), `einheiten` ist je Energiekanal die erwartete
@@ -87,7 +87,7 @@ def run_telemetry_tick(
         publish_telemetry(
             mqtt_client=mqtt_client, room_actual=room_actual,
             boost_active=boost_active, failsafe_active=failsafe_active,
-            kpi_fields=kpi_fields, datenfehler=datenfehler, regulation_fields=regulation_fields,
+            kpi_fields=kpi_fields, datenfehler=datenfehler, regulation_fields=regulation_fields, kreis=kreis,
         )
         if "room_actual" in _AUSFALL_GEWARNT:  # erst nach dem gelungenen Senden
             _AUSFALL_GEWARNT.discard("room_actual")
@@ -106,9 +106,10 @@ def run_telemetry_tick(
 
 def publish_telemetry(
     mqtt_client, room_actual: float, boost_active: bool, failsafe_active: bool, kpi_fields: dict | None = None,
-    datenfehler: DataFault | None = None, regulation_fields: dict | None = None,
+    datenfehler: DataFault | None = None, regulation_fields: dict | None = None, *, kreis: int,
 ) -> None:
     payload = {
+        "kreis": kreis,
         "room_actual": room_actual,
         "boost_active": boost_active,
         "failsafe_active": failsafe_active,

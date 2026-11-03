@@ -1,7 +1,7 @@
 """Treiber-Registry. Die Server-Seite (G3 shg_catalog) nennt dieselben IDs (Contract-Check)."""
-import json
 import time
 
+from smartheat_core import kennung
 from smartheat_core.binding import BindingDescription
 from smartheat_gateway.drivers.base import Driver
 from smartheat_gateway.drivers.simulation import SimulationDriver
@@ -28,8 +28,6 @@ def create(
 
 
 def plant_id(spec: dict) -> str:
-    """Kennung der Anlage aus Treiber und identifizierenden Parametern (Loaded.plant_id)."""
-    driver = DRIVERS[spec["id"]]
-    parameter = spec.get("parameter") or {}
-    return json.dumps({"id": spec["id"], **{key: parameter.get(key) for key in driver.IDENTITY_PARAMETERS}},
-                      sort_keys=True)
+    """Kennung des Heizkreises aus Treiber und Parametern (Loaded.plant_id): `{hersteller, anlage, nummer}` ohne
+    Treiber-ID und Weg. KennungFehler, wenn die Parameter die Anlage nicht benennen."""
+    return kennung.aus_treiber(spec["id"], spec.get("parameter") or {})

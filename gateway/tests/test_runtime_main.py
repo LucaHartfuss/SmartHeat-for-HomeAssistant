@@ -135,12 +135,12 @@ def test_a_software_only_configuration_does_not_restart(world):
 
 
 def test_the_cleanup_runs_at_the_next_start_after_an_empty_configuration(world):
-    for path in (world.paths.backup, world.paths.abgemeldet, world.paths.inventur,
+    for path in (world.paths.backup(1), world.paths.abgemeldet, world.paths.inventur,
                  world.paths.driver_secrets_dir / "vicare.json"):
         dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
     dateien.schreiben_json(world.paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
     world.start_runtime()
-    assert not world.paths.backup.exists() and not world.paths.abgemeldet.exists()
+    assert not world.paths.backup(1).exists() and not world.paths.abgemeldet.exists()
     assert not world.paths.inventur.exists() and not (world.paths.driver_secrets_dir / "vicare.json").exists()
     assert not world.paths.aufraeumen.exists()
 
@@ -166,7 +166,7 @@ def test_a_marker_from_before_a_new_setup_deletes_nothing(world):
 
 def _offenes_zuruecksetzen(world):
     """Zustand und Treiber-Anmeldung der eingerichteten Anlage, gespeichert ist schon die leere Konfiguration."""
-    for path in (world.paths.backup, world.paths.inventur, world.paths.driver_secrets_dir / "vicare.json"):
+    for path in (world.paths.backup(1), world.paths.inventur, world.paths.driver_secrets_dir / "vicare.json"):
         dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
     aufraeumen.markieren(world.paths.aufraeumen, konfiguration())
     dokumente_schreiben(world.paths, {**konfiguration(), "anlage": None})
@@ -177,7 +177,7 @@ def test_the_cleanup_waits_while_the_reset_is_pending(world):
     braucht sie) und Markierung."""
     _offenes_zuruecksetzen(world)
     runtime_main.aufraeumen(world.paths)
-    assert world.paths.runtime_dir.exists() and world.paths.backup.exists()
+    assert world.paths.runtime_dir.exists() and world.paths.backup(1).exists()
     assert (world.paths.driver_secrets_dir / "vicare.json").exists() and world.paths.inventur.exists()
     assert world.paths.aufraeumen.exists()
 
@@ -385,7 +385,7 @@ def test_a_newer_operation_replaces_the_stored_target_at_start(world, erste):
     """Gespeichert 20, Bedienung 22,5 (kam waehrend des Neustarts, nicht dirty): sie gilt sofort im Soll-Speicher.
     Ohne bekannten Zustand des Thermostats geht sie erst mit seiner ersten Live-Meldung hinaus, wie das Angleichen;
     meldet es aus, erst mit "wieder an"."""
-    dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"},
+    dateien.schreiben_json(world.paths.room_target(1), {"value": 20.0, "source": "portal", "ts": "t"},
                            modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.5))
     world.start_runtime()

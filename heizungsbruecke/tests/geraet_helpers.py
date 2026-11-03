@@ -161,7 +161,7 @@ class FakeGeraet:
     def publish(self, event):
         self.status.append(event)
 
-    def kanal(self, worker):
+    def kanal(self, worker, kreis):
         self.channel = RuntimeChannel(self.sent.publish, lambda: self.sent.connected, lambda: self.sent.failures)
         self.channels.append(self.channel)
         return self.channel.binden(worker)
@@ -250,7 +250,7 @@ class FakeDevice:
     def stop(self):
         self.order.append("stop")
 
-    def laufzeit_kanal(self, worker):
+    def laufzeit_kanal(self, worker, kreis):
         return RuntimeChannel(lambda name, payload: self.sent.append(name) or len(self.sent), lambda: True,
                               lambda: 0).binden(worker)
 
@@ -326,7 +326,7 @@ class Device:
 
 
 def _paths(tmp_path, monkeypatch):
-    for name in ("RUNTIME_DIR", "ABGEMELDET_PATH", "AUFRAEUMEN_PATH", "ROOM_TARGET_PATH", "BACKUP_PATH",
+    for name in ("RUNTIME_DIR", "ABGEMELDET_PATH", "AUFRAEUMEN_PATH", "ALTER_BACKUP_PATH",
                  "RASTUNG_PATH"):
         monkeypatch.setattr(config, name, tmp_path / getattr(config, name).name)
 

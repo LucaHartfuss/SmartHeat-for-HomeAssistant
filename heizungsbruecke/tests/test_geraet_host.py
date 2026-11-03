@@ -410,7 +410,8 @@ def test_the_ha_check_gets_the_accepted_configuration(tmp_path, monkeypatch):
 def test_sign_off_marks_restarts_and_reports_the_restore_point(tmp_path, monkeypatch):
     konf = konfiguration_aus_optionen(OPTIONS)
     host, _, clock = _host(tmp_path, monkeypatch, device=Device(konf))
-    config.BACKUP_PATH.write_text(json.dumps({"restore_point": {"curve": 1.1}}))
+    config.kreis_dir(1).mkdir(parents=True)
+    config.backup_path(1).write_text(json.dumps({"restore_point": {"curve": 1.1}}))
     register = _register(host, tmp_path)
     outcome = register._handlers["sign_off"]({})
     assert isinstance(outcome, Waiting) and host._neustart

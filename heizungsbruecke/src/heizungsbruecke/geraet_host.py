@@ -218,7 +218,7 @@ class HaDeviceHost(GeraetHostBasis):
             return Failed("nicht_eingerichtet")
         anlage = ergebnis[0]
 
-        return abmeldung_abwarten(anlage, lambda: self.runtime_status_event, config.BACKUP_PATH,
+        return abmeldung_abwarten(anlage, lambda: self.runtime_status_event, config.backup_path(dokument_config.kreisnummer(self.konfiguration())),
                                   self._clock() + SIGN_OFF_WAIT_SECONDS)
 
     def _diagnostics(self, payload: dict) -> Done:
