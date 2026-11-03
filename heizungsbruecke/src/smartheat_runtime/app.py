@@ -264,16 +264,17 @@ def _end_boosts(store, parts: RestoreParts | None, clock) -> bool:
     return not (store.state.boost_active or store.state.emergency_boost_active)
 
 
-def _nach_zuruecksetzen(bridge: IdleBridge, pfad: Path | None, anlage: str) -> None:
+def _nach_zuruecksetzen(bridge: IdleBridge, pfad: Path | None, anlage: str, kreis: int = 1,
+                       kreise_der_anlage: int = 1) -> None:
     """War das ein Zuruecksetzen nach einer leeren Konfiguration, die Markierung erledigen
-    und neu starten; der Start danach loescht dann den anlagengebundenen Zustand. Ueber ein Ereignis wie jeder Neustart
+    und neu starten (bei mehreren Kreisen erst, wenn der letzte Kreis zurueckgesetzt ist); der Start danach loescht dann den anlagengebundenen Zustand. Ueber ein Ereignis wie jeder Neustart
     der Laufzeit: der Rueckruf des Hosts (bridge.neustart) laeuft erst im Worker, nachdem start zurueckgekehrt ist und
     der Host den Worker gebunden hat. Laesst sich die Markierung nicht schreiben, kein Neustart: ohne `zurueckgesetzt`
     setzte jeder Start nur erneut zurueck (Kreis); der Zustand bleibt, der naechste Start versucht es erneut."""
     if pfad is None:
         return
     try:
-        erledigt = aufraeumen.zurueckgesetzt(pfad, anlage)
+        erledigt = aufraeumen.zurueckgesetzt(pfad, anlage, kreis, kreise_der_anlage)
     except OSError as error:
         logger.error("Aufraeum-Markierung nicht geschrieben (%s), Zustand bleibt bis zum naechsten Start",
                      type(error).__name__)
@@ -289,6 +290,7 @@ def _nach_zuruecksetzen(bridge: IdleBridge, pfad: Path | None, anlage: str) -> N
 
 def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_seconds: float, *,
               neustart: Callable[[], None], aufraeumen_path: Path | None = None, anlage: str,
+              kreis: int = 1, kreise_der_anlage: int = 1,
               server_originals: Callable[[], Mapping[str, object]] | None = None) -> IdleBridge:
     """Abmelden (die Integration bzw. das Portal entfernt den Client) und leer heisst abmelden:
     laufenden Boost auf den Wiederherstellungspunkt zuruecknehmen, alle Meldungen entfernen, dann
@@ -323,13 +325,13 @@ def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_
     status.update(abgemeldet=True, grund=grund)
     bridge = _idle(clock, status, STATUS_ABGEMELDET, neustart=neustart)
     if restored:
-        _nach_zuruecksetzen(bridge, aufraeumen_path, anlage)
+        _nach_zuruecksetzen(bridge, aufraeumen_path, anlage, kreis, kreise_der_anlage)
     if restorer is not None and not restored:
         def _retry(event: Event) -> None:
             if restorer.restore_and_clear(always_restore=False):
                 abo.report_restore(notifier, ok=True)
                 status.update(grund=None)
-                _nach_zuruecksetzen(bridge, aufraeumen_path, anlage)
+                _nach_zuruecksetzen(bridge, aufraeumen_path, anlage, kreis, kreise_der_anlage)
                 return
             bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
 
@@ -737,13 +739,16 @@ def _zustand_nicht_migriert(boot: BootInfo) -> bool:
 def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
           mqtt_factory: Callable[[RegulationWorker, int], MqttChannel],
           neustart: Callable[[], None], status_sink: StatusSink | None = None,
-          notify_sink: NotifySink | None = None) -> Runtime | IdleBridge:
+          notify_sink: NotifySink | None = None,
+          prozess_neustart: Callable[[], None] | None = None) -> Runtime | IdleBridge:
     """Gibt den gestarteten Laufzeit-Kontext zurueck oder den Ruhezustand, wenn gar nicht erst geregelt wird: nicht
     eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen. mqtt_factory (Pflicht): die
     Laufzeit nutzt die Verbindung des Geraets; einen eigenen MQTT-Client gibt es nicht. neustart (Pflicht):
     der Neustart des Hosts; die Laufzeit ruft ihn nur im Worker-Thread (Abo am Fristende wieder aktiv,
     Neupruefung im Konfigurationsfehler, Neustart nach dem Zuruecksetzen). status_sink und notify_sink ersetzen
-    die Senken des Hosts (kreise.start: ein Sammler fuer das Ereignis der Anlage, Meldungen mit Kreis-Praefix)."""
+    die Senken des Hosts (kreise.start: ein Sammler fuer das Ereignis der Anlage, Meldungen mit Kreis-Praefix).
+    prozess_neustart: der Neustart des ganzen Prozesses fuer das Ende des Zuruecksetzens (ohne Angabe `neustart`);
+    `neustart` darf bei mehreren Kreisen nur den einen Kreis neu aufnehmen."""
     boot = host.boot_info()
     if not boot.signed_off and not boot.configured:
         return _idle(clock, None, IDLE_NOT_CONFIGURED, neustart=neustart)
@@ -764,7 +769,8 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     status.publish()
     if boot.signed_off:
         return _sign_off(host.sign_off_parts(), store, notifier, status, clock, boot.local_check_interval,
-                         neustart=neustart, aufraeumen_path=boot.aufraeumen_path, anlage=boot.tenant_id,
+                         neustart=prozess_neustart or neustart, aufraeumen_path=boot.aufraeumen_path,
+                         anlage=boot.tenant_id, kreis=boot.kreis, kreise_der_anlage=boot.kreise_der_anlage,
                          server_originals=host.ursprungswerte_server)
     try:
         loaded = host.load()

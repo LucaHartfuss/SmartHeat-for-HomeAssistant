@@ -260,12 +260,16 @@ class StatusReporter:
 
 def zusammenfassen(ereignisse: Mapping[int, dict]) -> dict:
     """Ein Ereignis der Anlage aus den Ereignissen ihrer Kreise (Schluessel: Kreisnummer). Status, Grund, Datenfehler,
-    letzte Serverantwort und Hinweise folgen dem schlechtesten Kreis (bei Gleichstand dem niedrigeren), der Notbetrieb
-    steht, sobald ein Kreis ihn meldet; Boost, Hebelsatz, Hebel, Gelerntes und Abo kommen vom niedrigsten Kreis."""
+    letzte Serverantwort und Hinweise folgen dem schlechtesten Kreis (bei Gleichstand dem mit Grund, dann dem niedrigeren),
+    der Notbetrieb steht, sobald ein Kreis ihn meldet; Boost, Hebelsatz, Hebel, Gelerntes und Abo kommen vom niedrigsten
+    Kreis. Abgemeldet ist die Anlage erst, wenn jeder Kreis es ist: solange ein anderer Kreis regelt oder wartet, zaehlt
+    der schlechteste der uebrigen (sonst gaelte die Anlage als zurueckgesetzt, obwohl ein Kreis noch regelt)."""
     if not ereignisse:
         raise ValueError("Ohne Kreis kein Ereignis der Anlage")
     kreise = sorted(ereignisse)
-    schlechtester = min(kreise, key=lambda kreis: (SCHWERE.index(ereignisse[kreis]["status"]), kreis))
+    kandidaten = [kreis for kreis in kreise if ereignisse[kreis]["status"] != STATUS_ABGEMELDET] or kreise
+    schlechtester = min(kandidaten, key=lambda kreis: (
+        SCHWERE.index(ereignisse[kreis]["status"]), ereignisse[kreis]["grund"] is None, kreis))
     erg = dict(ereignisse[kreise[0]])
     for feld in _ANLAGEN_FELDER:
         erg[feld] = ereignisse[schlechtester][feld]

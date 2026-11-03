@@ -78,11 +78,12 @@ def thermostat_unzulaessig(mirror: ZigbeeMirror, ieee) -> bool:
 
 
 class GeraetZustand:
-    """Status (Status-Modell Schema 2) und Raum (ist, soll, soll_quelle, ts) der Laufzeit; None = keiner."""
+    """Status (Status-Modell Schema 2, die Zusammenfassung der Anlage) und je Kreis der Raum (ist, soll, soll_quelle, ts)
+    der Laufzeit; None = keiner."""
 
     def __init__(self) -> None:
         self.status: dict | None = None
-        self.raum: dict | None = None
+        self.raeume: dict[int, dict | None] = {}
 
 
 class StatusSink:
@@ -294,8 +295,12 @@ class GatewayDeviceHost(GeraetHostBasis):
     def runtime_status(self) -> dict | None:
         return self.zustand.status
 
-    def raum(self) -> dict | None:
-        return self.zustand.raum
+    def raum_merken(self, kreis: int, raum: dict | None) -> None:
+        """Worker-Thread des Kreises (raum.RaumPublisher): {ist, soll, soll_quelle, ts} fuer up/status."""
+        self.zustand.raeume[kreis] = raum
+
+    def raum(self, kreis: int = 1) -> dict | None:
+        return self.zustand.raeume.get(kreis)
 
     def anzeigen(self, anzeige: Anzeige) -> None:
         self.letzte_anzeige = anzeige

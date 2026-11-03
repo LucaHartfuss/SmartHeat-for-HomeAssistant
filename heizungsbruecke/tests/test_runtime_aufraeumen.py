@@ -46,6 +46,29 @@ def test_after_the_reset_the_state_is_deleted(tmp_path):
     assert _laufzeit(LEER, None) == (LEER, False)
 
 
+def test_the_marker_closes_only_after_every_circuit_has_reset(tmp_path):
+    """Mit mehreren Kreisen erledigt erst der letzte fertige Kreis die Markierung: der Neustart danach loescht den
+    Zustand aller Kreise, also muss jeder zurueckgesetzt sein."""
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    assert aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=2, kreise_der_anlage=2) is False
+    assert aufraeumen.entscheiden(pfad, LEER)[0] == aufraeumen.ZURUECKSETZEN
+    assert aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=2, kreise_der_anlage=2) is False  # derselbe Kreis zaehlt einmal
+    assert aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=1, kreise_der_anlage=2) is True
+    assert aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=1, kreise_der_anlage=2) is False
+    assert aufraeumen.entscheiden(pfad, LEER) == (aufraeumen.LOESCHEN, None)
+
+
+def test_an_unfinished_circuit_keeps_the_marker_open_for_the_next_start(tmp_path):
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=1, kreise_der_anlage=3)
+    aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=2, kreise_der_anlage=3)
+    entscheidung, gelesen = aufraeumen.entscheiden(pfad, LEER)
+    assert entscheidung == aufraeumen.ZURUECKSETZEN and gelesen is not None and gelesen.konfiguration == ALT
+    assert aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=3, kreise_der_anlage=3) is True
+
+
 def test_reset_of_another_plant_does_not_count(tmp_path):
     pfad = tmp_path / "aufraeumen.json"
     aufraeumen.markieren(pfad, ALT)

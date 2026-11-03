@@ -32,10 +32,11 @@ class GatewayBindung:
         return {"id": self.driver_id, "parameter": dict(self.driver_parameter)}
 
 
-def bindung(konfiguration) -> GatewayBindung:
-    """Bindung des Gateways aus dem Konfigurationsdokument: bindung.treiber, bindung.thermostat,
-    raumfuehler. Wirft ConfigError (StartFailure beim Start); config_check hat das Dokument beim Uebernehmen geprueft."""
-    sicht = kreisansicht.erste(konfiguration)  # die Laufzeit fuehrt genau einen Kreis
+def bindung(konfiguration, kreis: int | None = None) -> GatewayBindung:
+    """Bindung des Heizkreises `kreis` (ohne Angabe des ersten) aus dem Konfigurationsdokument: bindung.treiber,
+    bindung.thermostat, raumfuehler. Wirft ConfigError (StartFailure beim Start); config_check hat das Dokument beim
+    Uebernehmen geprueft."""
+    sicht = kreisansicht.sicht(konfiguration, kreis)
     raw = sicht.get("bindung")
     treiber = raw.get("treiber") if isinstance(raw, Mapping) else None
     driver_id = treiber.get("id") if isinstance(treiber, Mapping) else None
@@ -52,12 +53,14 @@ def bindung(konfiguration) -> GatewayBindung:
     return GatewayBindung(driver_id, dict(parameter), tuple(sensors), thermostat)
 
 
-def parse_dokument(konfiguration, paths: Paths,
-                   abo_source: Callable[[], str]) -> tuple[RuntimeConfig, GatewayBindung]:
-    kreis = dokument_config.kreisnummer(konfiguration)
+def parse_dokument(konfiguration, paths: Paths, abo_source: Callable[[], str],
+                   kreis: int | None = None) -> tuple[RuntimeConfig, GatewayBindung]:
+    """Laufzeitkonfiguration und Bindung des Heizkreises `kreis` (ohne Angabe des ersten)."""
+    nummer = dokument_config.kreisnummer(konfiguration, kreis)
     runtime = dokument_config.runtime_config(
-        konfiguration, rastung_pfad=paths.rastung, entitlement_path=paths.entitlement(kreis), abo_source=abo_source)
-    return runtime, bindung(konfiguration)
+        konfiguration, rastung_pfad=paths.rastung, entitlement_path=paths.entitlement(nummer), abo_source=abo_source,
+        kreis=kreis)
+    return runtime, bindung(konfiguration, kreis)
 
 
 def treiber_pruefen(paths: Paths, bindung_inhalt) -> dict | None:

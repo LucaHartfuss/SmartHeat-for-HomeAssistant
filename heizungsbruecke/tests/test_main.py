@@ -356,8 +356,10 @@ def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(mon
 
     assert result.entity_ids == {"room_actual": "sensor.smartheat_t1_raumtemperatur"}
     assert sleeps == [5, 10]
-    assert ha_api.create_template_sensor.call_args_list[-1:] == [  # Wirkung als Aufruf an der HA-Grenze
+    # Wirkung als Aufrufe an der HA-Grenze: die Vorlage des Kreises und die des einen Raums, je aus dem Raumfuehler
+    assert ha_api.create_template_sensor.call_args_list[-2:] == [
         call(name="SmartHeat t1 Raumtemperatur", template=room_temperature_template(["sensor.rt"])),
+        call(name="SmartHeat t1 K1 R1 Raumtemperatur", template=room_temperature_template(["sensor.rt"])),
     ]
 
 

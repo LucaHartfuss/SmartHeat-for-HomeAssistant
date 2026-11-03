@@ -42,7 +42,7 @@ def _thermostat_writes(world):
 def test_not_configured_is_idle_without_status_and_room(world):
     result = world.start_runtime()
     assert isinstance(result, IdleBridge) and result.reason == IDLE_NOT_CONFIGURED
-    assert world.status() is None and world.geraet.zustand.raum is None
+    assert world.status() is None and world.geraet.raum() is None
 
 
 def test_an_operation_while_not_configured_is_not_posted_to_the_idle_worker(world, caplog):
@@ -115,7 +115,7 @@ def test_abo_reactivation_restarts_through_the_reload_path(world, monkeypatch):
     world.start_runtime()
     world.connect()
     first = world.link
-    monkeypatch.setattr(world.device, "abo_status", lambda: "active")
+    monkeypatch.setattr(world.device, "abo_status", lambda kreis=None: "active")
     world.wall.advance(31 * 86400)
     world.clock.advance(31 * 86400)
     with pytest.raises(prozess.Neustart):
@@ -344,7 +344,7 @@ def test_room_is_kept_in_the_process_on_a_new_operation(world):
     world.start_runtime()
     world.connect()
     world.bedienung_senden(bedienung(21.5), 1)
-    raum = world.geraet.zustand.raum
+    raum = world.geraet.raum()
     assert (raum["soll"], raum["soll_quelle"], raum["ist"]) == (21.5, "portal", 20.0)
     assert 21.5 in _thermostat_writes(world)
 
@@ -353,10 +353,10 @@ def test_room_is_refreshed_every_tick(world):
     dokumente_schreiben(world.paths, konfiguration())
     world.start_runtime()
     world.connect()
-    first = world.geraet.zustand.raum["ts"]
+    first = world.geraet.raum()["ts"]
     world.wall.advance(1)
     world.advance(runtime_main.RAUM_SECONDS)
-    assert world.geraet.zustand.raum["ts"] != first
+    assert world.geraet.raum()["ts"] != first
 
 
 def test_the_operation_is_applied_and_the_thermostat_aligned_at_start(world):

@@ -72,7 +72,8 @@ class Anlage:
         self.geraet = main_module.HaDeviceHost(env.ha, supervisor, clock=env.clock)
         self.world = World(daten, self.geraet)
         status = main_module.verdrahten(self.geraet, self.world.device, env.ha, supervisor)
-        self.bridge, _ = main_module.start(self.geraet, self.world.device, env.ha, status, clock=env.clock)
+        laufzeit, _ = main_module.start(self.geraet, self.world.device, env.ha, status, clock=env.clock)
+        self.bridge = laufzeit.kreise()[1]  # die Laufzeit des einen Kreises
         self.bridge.worker.run_pending()
         self.world.verbinden()
         env.trigger_clients[-1].kwargs["on_connected"]()

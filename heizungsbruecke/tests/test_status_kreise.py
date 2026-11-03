@@ -96,6 +96,34 @@ def test_die_felder_des_kreises_kommen_vom_niedrigsten_kreis():
     assert erg["status"] == "abo_inaktiv"  # die Anlage zeigt den schlechtesten Kreis
 
 
+def test_ein_abgemeldeter_kreis_macht_die_anlage_nicht_abgemeldet_solange_andere_regeln():
+    """Abgemeldet ist die Anlage erst, wenn jeder Kreis es ist: sonst hielte der Server (und sign_off) sie fuer
+    zurueckgesetzt, obwohl ein Kreis noch regelt."""
+    abgemeldet = _ereignis(Flags(abgemeldet=True))
+    regelt = _ereignis(Flags(gestartet=True))
+    assert zusammenfassen({1: abgemeldet, 2: regelt})["status"] == "regelt"
+    assert zusammenfassen({1: regelt, 2: abgemeldet})["status"] == "regelt"
+    assert zusammenfassen({1: abgemeldet, 2: abgemeldet})["status"] == "abgemeldet"  # Grenze: alle Kreise
+
+
+def test_der_schlechteste_der_uebrigen_kreise_zaehlt_neben_einem_abgemeldeten():
+    abgemeldet = _ereignis(Flags(abgemeldet=True))
+    fehler = _ereignis(Flags(konfigurationsfehler=True, grund="Hebelsatz"))
+    erg = zusammenfassen({1: abgemeldet, 2: fehler})
+    assert erg["status"] == "konfigurationsfehler"
+    assert erg["grund"] == "Hebelsatz"
+
+
+def test_abgemeldet_mit_grund_bleibt_im_ereignis_der_anlage_wenn_alle_abgemeldet_sind():
+    """Ein Kreis, dessen Zuruecksetzen scheiterte (grund), darf die Anlage nicht als zurueckgesetzt zeigen, auch wenn
+    ein niedrigerer Kreis ohne Grund abgemeldet ist."""
+    sauber = _ereignis(Flags(abgemeldet=True))
+    offen = _ereignis(Flags(abgemeldet=True, grund="Zuruecksetzen gescheitert"))
+    assert zusammenfassen({1: sauber, 2: offen})["grund"] == "Zuruecksetzen gescheitert"
+    assert zusammenfassen({1: offen, 2: sauber})["grund"] == "Zuruecksetzen gescheitert"
+    assert zusammenfassen({1: sauber, 2: sauber})["grund"] is None
+
+
 def test_das_ergebnis_hat_genau_die_felder_des_vertrags():
     erg = zusammenfassen({1: _ereignis(), 2: _ereignis(Flags(abo_beendet=True))})
     assert tuple(erg) == EVENT_FIELDS

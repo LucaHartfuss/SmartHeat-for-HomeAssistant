@@ -90,6 +90,7 @@ class FakeHost:
         self.synchron: bool | None = True
         self.konfigurationen, self.bedienungen, self.software, self.anzeigen_liste = [], [], [], []
         self.status: dict | None = {"status": "regelt"}
+        self.raum_werte: dict[int, dict | None] = {}  # Raum je weiterem Kreis
         self.raum_wert: dict | None = {"ist": 20.0, "soll": 21.0, "soll_quelle": "portal", "ts": "t0"}
         self.treiber_details: dict | None = None
         self.handlers: dict = {}
@@ -129,8 +130,8 @@ class FakeHost:
     def runtime_status(self):
         return self.status
 
-    def raum(self):
-        return self.raum_wert
+    def raum(self, kreis=1):
+        return self.raum_wert if kreis == 1 else self.raum_werte.get(kreis)
 
     def anzeigen(self, anzeige):
         self.anzeigen_liste.append(anzeige)

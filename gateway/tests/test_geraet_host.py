@@ -73,7 +73,7 @@ def test_clock_sync_comes_from_the_host_status(welt):
 
 def test_status_and_room_stay_in_the_process(welt):
     welt.host.status_sink.publish({"schema": 2, "status": "regelt"})
-    welt.host.zustand.raum = {"ist": 20.0, "soll": 21.0, "soll_quelle": "portal", "ts": "t"}
+    welt.host.raum_merken(1, {"ist": 20.0, "soll": 21.0, "soll_quelle": "portal", "ts": "t"})
     assert welt.host.runtime_status() == {"schema": 2, "status": "regelt"}
     assert welt.host.raum()["soll"] == 21.0
 

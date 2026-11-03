@@ -41,15 +41,15 @@ from heizungsbruecke.discovery import Discovery
 from heizungsbruecke.geraet_host import HaDeviceHost
 from heizungsbruecke.geraet_status import GeraetStatus
 from heizungsbruecke.ha_api import HomeAssistantApi
-from heizungsbruecke.host import HaHost
+from heizungsbruecke.host import HaAnlagenHost
 from heizungsbruecke.supervisor import SupervisorApi
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import zustandspfade
 from smartheat_device import prozess
 from smartheat_device.device import DEVICE_DIR, Device
 from smartheat_device.documents import KONFIGURATION, DocumentStore
-from smartheat_runtime import app
 from smartheat_runtime import aufraeumen as markierung
+from smartheat_runtime import kreise
 from smartheat_runtime.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -211,10 +211,10 @@ def _anlage_loeschen(ha_api) -> bool:
 
 
 class _Laufzeit:
-    """Der HaHost des laufenden Starts: der Geraete-Thread liest daraus den wirksamen Raum-Soll fuer das
-    Status-Ereignis (GeraetStatus)."""
+    """Der Anlagen-Host des laufenden Starts: der Geraete-Thread liest daraus den wirksamen Raum-Soll (des ersten
+    Kreises) fuer das Status-Ereignis (GeraetStatus)."""
 
-    host: HaHost | None = None
+    host: HaAnlagenHost | None = None
 
 
 status_holder = _Laufzeit()
@@ -239,16 +239,23 @@ def verdrahten(geraet: HaDeviceHost, device, ha_api, supervisor) -> GeraetStatus
 
 
 def start(geraet: HaDeviceHost, device, ha_api, status: GeraetStatus,
-          clock=time.monotonic) -> tuple[Runtime | app.IdleBridge, HaHost]:
-    """Laufzeit auf dem Link des Geraets starten (mqtt_factory); alle Neustarts gehen ueber prozess.Neustart (der
-    Rueckruf neustart der Laufzeit und EV_RELOAD des Geraete-Hosts)."""
+          clock=time.monotonic) -> tuple[kreise.Laufzeit, HaAnlagenHost]:
+    """Laufzeit der Anlage auf dem Link des Geraets starten (mqtt_factory): ein Worker je Kreis. Alle Neustarts des
+    Prozesses gehen ueber prozess.Neustart (der Rueckruf neustart der Laufzeit und EV_RELOAD des Geraete-Hosts); ein
+    Kreis mit wieder aktivem Abo oder geaenderter Konfiguration startet allein neu (Laufzeit.konfiguration_geaendert,
+    vom Geraete-Host nach jedem Konfigurationsdokument gefragt)."""
     geraet.status_sink = status
-    host = HaHost(geraet, ha_api, clock=clock)
-    status_holder.host = host
-    result = app.start(host, clock, mqtt_factory=device.laufzeit_kanal, neustart=prozess.neustart_der_laufzeit)
-    prozess.reload_anhaengen(result)
-    geraet.worker_binden(result.worker, soll_eingang=isinstance(result, Runtime))  # Ruhezustand: kein Soll-Eingang
-    return result, host
+    anlage = HaAnlagenHost(geraet, ha_api, clock=clock)
+    status_holder.host = anlage
+
+    def gestartet(kreis: int, ergebnis) -> None:  # Ruhezustand: kein Soll-Eingang
+        geraet.worker_binden(ergebnis.worker, kreis=kreis, soll_eingang=isinstance(ergebnis, Runtime))
+
+    laufzeit = kreise.start(anlage, clock, mqtt_factory=device.laufzeit_kanal, neustart=prozess.neustart_der_laufzeit,
+                            gestartet=gestartet)
+    prozess.reload_anhaengen(laufzeit)
+    geraet.laufzeit_binden(laufzeit)
+    return laufzeit, anlage
 
 
 def laufen(geraet: HaDeviceHost, device, ha_api, status: GeraetStatus, clock=time.monotonic) -> None:

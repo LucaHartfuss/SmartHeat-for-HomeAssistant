@@ -4,7 +4,7 @@ import copy
 import konfig_form
 import pytest
 from bindung_beispiele import parameter
-from geraet_helpers import gateway_konfiguration, ha_konfiguration
+from geraet_helpers import gateway_konfiguration, ha_konfiguration, ha_kreis
 from rastung_beispiele import fuer
 
 from smartheat_core import config_check as cc
@@ -50,16 +50,7 @@ def _kreis_ohne_raum(kreis: dict, **raum) -> dict:
 
 
 def _ha_kreis(nummer: int, **bindung) -> dict:
-    basis = ha_konfiguration()["kreise"][0]
-    neu = copy.deepcopy(basis)
-    neu["kreis"] = nummer
-    neu["bindung"]["kreis"]["nummer"] = str(nummer)
-    neu["bindung"]["rollen"] = {rolle: f"{ref.split('.')[0]}.{ref.split('.')[1].split('::')[0]}_{nummer}"
-                                + ("::" + ref.split("::")[1] if "::" in ref else "")
-                                for rolle, ref in neu["bindung"]["rollen"].items()}
-    neu["bindung"].update(bindung)
-    neu["raeume"][0]["fuehler"] = [f"sensor.raum_{nummer}_temperatur"]
-    return neu
+    return ha_kreis(nummer, **bindung)
 
 
 # --- Anzahl der Kreise -------------------------------------------------------------------------------------------

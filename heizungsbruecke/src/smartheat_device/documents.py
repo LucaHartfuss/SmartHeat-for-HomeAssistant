@@ -48,7 +48,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeGuard
 
-from smartheat_core import config_check, dateien, rastung, wallclock
+from smartheat_core import config_check, dateien, kreisansicht, rastung, wallclock
 from smartheat_core.rastung import Rastung
 from smartheat_device import fehler, nachrichten, wire
 from smartheat_runtime import soll_speicher
@@ -468,4 +468,15 @@ class DocumentStore:
         if self._update_anlass is not None:
             return config_check.Ablehnung(UPDATE_NOETIG)
         self._rastung = self._rastung_laden()  # vor jeder Annahme neu lesen (Migration im laufenden Betrieb)
-        return config_check.pruefen(inhalt, self._rastung, host=self._host, treiber_pruefen=self._treiber_pruefen)
+        ablehnung = config_check.pruefen(inhalt, self._rastung, host=self._host, treiber_pruefen=self._treiber_pruefen)
+        return ablehnung or self._kreis_entfernt(inhalt)
+
+    def _kreis_entfernt(self, inhalt: dict) -> config_check.Ablehnung | None:
+        """Ein Kreis der eingerichteten Anlage darf nicht fehlen (der Server verbietet es ebenfalls): das Geraet haelt
+        den Kreis nicht an, es gaebe sonst einen laufenden Kreis ohne Dokument. Eine andere Anlage ist eine neue
+        Einrichtung, die leere Konfiguration das Abmelden; beide entfernen keinen Kreis."""
+        alt = self.inhalt(KONFIGURATION)
+        if alt is None or config_check.ist_leer(alt) or alt.get("anlage") != inhalt.get("anlage"):
+            return None
+        fehlend = {kreis["kreis"] for kreis in kreisansicht.kreise(alt)} - {kreis["kreis"] for kreis in kreisansicht.kreise(inhalt)}
+        return config_check.Ablehnung(UNGUELTIG, fehler.details("kreise", "nicht_erlaubt")) if fehlend else None

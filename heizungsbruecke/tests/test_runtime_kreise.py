@@ -12,6 +12,7 @@ from heizungsbruecke import config
 from heizungsbruecke.host import HaHost
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import app, entitlement, kreise
+from smartheat_runtime.app import EV_RECHECK, StartFailure
 from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.worker import Event, WorkerBeendet
 
@@ -55,6 +56,7 @@ class Anlage:
         self.sent = Sent()
         self.kanaele: list[tuple[int, RuntimeChannel]] = []
         self.hosts = {}
+        self.defekt: set[int] = set()  # Kreise, deren Konfiguration beim Laden scheitert
 
     def kreise(self):
         return self.nummern
@@ -63,6 +65,10 @@ class Anlage:
         geraet = FakeGeraet(_dokument(kreis), abo=lambda: self.abo[kreis], bedienung={"raum_soll": 21.0})
         host = HaHost(geraet, self.env.ha, clock=self.env.clock)
         host.notify_sink = self.senke
+        if kreis in self.defekt:
+            def kaputt():
+                raise StartFailure("Konfiguration: kaputt")
+            host.load = kaputt
         self.hosts[kreis] = host
         return host
 
@@ -78,8 +84,10 @@ class Anlage:
         monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
 
 
-def _laufzeit(anlage, env):
-    return kreise.start(anlage, env.clock, mqtt_factory=anlage.kanal, neustart=lambda: None)
+def _laufzeit(anlage, env, neustarts=None):
+    """`neustarts` sammelt die Neustarts des ganzen Prozesses."""
+    neustart = (lambda: neustarts.append("prozess")) if neustarts is not None else (lambda: None)
+    return kreise.start(anlage, env.clock, mqtt_factory=anlage.kanal, neustart=neustart)
 
 
 def _lauf_im_thread(laufzeit):
@@ -436,3 +444,152 @@ def test_eine_zweite_wiederaufnahme_desselben_kreises_waehrend_der_ersten_tut_ni
     frei.set()
     aufnahme.join(10)
     assert zweite is False and ergebnis == [True]
+
+
+def _ersetzt(laufzeit, kreis, alt):
+    return _warten(lambda: laufzeit.kreise()[kreis] is not alt)
+
+
+def test_die_neupruefung_eines_kreises_im_konfigurationsfehler_startet_nur_diesen_kreis(env):
+    anlage = Anlage(env)
+    anlage.defekt.add(1)
+    neustarts = []
+    laufzeit = _laufzeit(anlage, env, neustarts)
+    _, fehler = _lauf_im_thread(laufzeit)
+    eins, zwei = laufzeit.kreise()[1], laufzeit.kreise()[2]
+    assert isinstance(eins, app.IdleBridge) and eins.reason == app.STATUS_KONFIGURATIONSFEHLER
+    anlage.defekt.clear()
+
+    eins.worker.post(Event(EV_RECHECK))
+
+    assert _ersetzt(laufzeit, 1, eins)
+    assert isinstance(laufzeit.kreise()[1], Runtime)  # der Kreis regelt wieder
+    assert laufzeit.kreise()[2] is zwei  # der andere Kreis lief durch
+    assert neustarts == [] and not fehler  # kein Neustart des Prozesses
+
+
+def test_die_neupruefung_eines_weiter_fehlerhaften_kreises_bleibt_im_fehler_ohne_prozessneustart(env):
+    anlage = Anlage(env)
+    anlage.defekt.add(1)
+    neustarts = []
+    laufzeit = _laufzeit(anlage, env, neustarts)
+    _, fehler = _lauf_im_thread(laufzeit)
+    eins, zwei = laufzeit.kreise()[1], laufzeit.kreise()[2]
+
+    eins.worker.post(Event(EV_RECHECK))
+
+    assert _ersetzt(laufzeit, 1, eins)
+    neu = laufzeit.kreise()[1]
+    assert isinstance(neu, app.IdleBridge) and neu.reason == app.STATUS_KONFIGURATIONSFEHLER
+    assert laufzeit.kreise()[2] is zwei and neustarts == [] and not fehler
+    # Die naechste Neupruefung laeuft wieder ueber den Kreis (der neue Ruhezustand plant sie selbst).
+    anlage.defekt.clear()
+    neu.worker.post(Event(EV_RECHECK))
+    assert _warten(lambda: isinstance(laufzeit.kreise()[1], Runtime))
+
+
+def test_eine_einkreisanlage_startet_bei_der_neupruefung_weiter_den_prozess_neu(env):
+    anlage = Anlage(env, nummern=(1,))
+    anlage.defekt.add(1)
+    neustarts = []
+    laufzeit = _laufzeit(anlage, env, neustarts)
+    eins = laufzeit.kreise()[1]
+
+    eins.worker.post(Event(EV_RECHECK))
+    eins.worker.run_pending()
+
+    assert neustarts == ["prozess"] and laufzeit.kreise()[1] is eins
+
+
+def test_eine_laufzeitrelevante_aenderung_eines_kreises_startet_nur_diesen_kreis_neu(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    eins, zwei = laufzeit.kreise()[1], laufzeit.kreise()[2]
+    alt = _dokument(1)
+    alt["kreise"].append(_dokument(2)["kreise"][0])
+    neu = {**alt, "kreise": [alt["kreise"][0], {**alt["kreise"][1], "probe": 1}]}
+
+    assert laufzeit.konfiguration_geaendert(alt, neu) is False  # der Prozess bleibt
+
+    assert laufzeit.kreise()[1] is eins  # Kreis 1 unveraendert
+    assert laufzeit.kreise()[2] is not zwei and isinstance(laufzeit.kreise()[2], Runtime)
+
+
+def test_eine_anlagenweite_aenderung_verlangt_den_neustart_ohne_einen_kreis_anzufassen(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    vorher = dict(laufzeit.kreise())
+    alt = _dokument(1)
+    alt["kreise"].append(_dokument(2)["kreise"][0])
+
+    assert laufzeit.konfiguration_geaendert(alt, {**alt, "tagestick": "13:00"}) is True
+    assert laufzeit.konfiguration_geaendert(alt, alt) is False
+    assert dict(laufzeit.kreise()) == vorher
+
+
+def test_eine_einkreisanlage_startet_bei_laufzeitrelevanter_aenderung_den_prozess_neu(env):
+    anlage = Anlage(env, nummern=(1,))
+    laufzeit = _laufzeit(anlage, env)
+    eins = laufzeit.kreise()[1]
+    alt = _dokument(1)
+
+    assert laufzeit.konfiguration_geaendert(alt, {**alt, "kreise": [{**alt["kreise"][0], "probe": 1}]}) is True
+    assert laufzeit.kreise()[1] is eins
+
+
+def test_eine_einkreisanlage_nimmt_ein_wieder_aktives_abo_ohne_prozessneustart_auf(env, monkeypatch):
+    anlage = Anlage(env, nummern=(1,))
+    anlage.ruhen_lassen(1, monkeypatch)
+    laufzeit = _laufzeit(anlage, env)
+    anlage.abo[1] = entitlement.ACTIVE
+
+    assert laufzeit.konfiguration_geaendert(_dokument(1, "inaktiv"), _dokument(1, "aktiv")) is False
+    assert isinstance(laufzeit.kreise()[1], Runtime)
+
+
+def test_der_rueckruf_gestartet_meldet_jeden_start_und_jede_wiederaufnahme_mit_dem_neuen_ergebnis(env, monkeypatch):
+    anlage = Anlage(env)
+    anlage.ruhen_lassen(1, monkeypatch)
+    gemeldet = []
+    laufzeit = kreise.start(anlage, env.clock, mqtt_factory=anlage.kanal, neustart=lambda: None,
+                            gestartet=lambda kreis, ergebnis: gemeldet.append((kreis, ergebnis)))
+    _lauf_im_thread(laufzeit)
+    assert [kreis for kreis, _ in gemeldet] == [1, 2]
+    assert all(ergebnis is laufzeit.kreise()[kreis] for kreis, ergebnis in gemeldet)
+
+    anlage.abo[1] = entitlement.ACTIVE
+    assert laufzeit.wiederaufnehmen(1) is True
+
+    assert [kreis for kreis, _ in gemeldet] == [1, 2, 1]
+    assert gemeldet[-1][1] is laufzeit.kreise()[1] and isinstance(gemeldet[-1][1], Runtime)
+    assert laufzeit.wiederaufnehmen(2) is False  # ein laufender Kreis meldet keinen neuen Start
+    assert [kreis for kreis, _ in gemeldet] == [1, 2, 1]
+
+
+def test_der_neustart_eines_laufenden_kreises_nimmt_ihn_in_jedem_zustand_in_einem_daemon_thread_wieder_auf(env, monkeypatch):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    eins, zwei = laufzeit.kreise()[1], laufzeit.kreise()[2]
+    gestartet = []
+    echt = threading.Thread
+
+    def thread(*args, **kwargs):
+        gestartet.append(kwargs)
+        return echt(*args, **kwargs)
+
+    monkeypatch.setattr(kreise.threading, "Thread", thread)
+    laufzeit._kreis_neustart(2)()  # zwei laeuft und wartet auf kein Abo: nur die erzwungene Wiederaufnahme ersetzt ihn
+
+    assert _ersetzt(laufzeit, 2, zwei)
+    assert laufzeit.kreise()[1] is eins
+    assert gestartet[0]["daemon"] is True and gestartet[0]["kwargs"] == {"erzwingen": True}
+
+
+def test_eine_einkreisanlage_nimmt_ein_wieder_aktives_abo_samt_laufzeitrelevanter_aenderung_ohne_prozessneustart_auf(env):
+    anlage = Anlage(env, nummern=(1,))
+    laufzeit = _laufzeit(anlage, env)
+    alt = _dokument(1, "inaktiv")
+    neu = {**_dokument(1, "aktiv"), "kreise": [{**_dokument(1, "aktiv")["kreise"][0], "probe": 1}]}
+
+    assert laufzeit.prozessneustart_noetig(alt, neu) is False  # die Wiederaufnahme startet den Kreis mit dem neuen Stand
+    assert laufzeit.prozessneustart_noetig(_dokument(1), {**_dokument(1), "kreise": [{**_dokument(1)["kreise"][0], "probe": 1}]}) is True

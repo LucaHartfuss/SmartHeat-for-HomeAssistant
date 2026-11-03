@@ -145,7 +145,7 @@ def test_gateway_scenario(world):
     assert not world.paths.runtime_dir.exists() and not world.paths.aufraeumen.exists()
     assert not (world.paths.driver_secrets_dir / "vicare.json").exists()
     world.connect()
-    assert world.status() is None and world.geraet.zustand.raum is None
+    assert world.status() is None and world.geraet.raum() is None
     assert _led(world) == "wartet_auf_einrichtung"
     assert world.device.identity.claim_code == code_vorher  # Identitaet bleibt (der Server gibt frei)
 

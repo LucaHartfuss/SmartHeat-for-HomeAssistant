@@ -59,10 +59,10 @@ def raum_soll_von(bedienung, kreis: int = KREIS):
     return None
 
 
-def bedienung_start(bedienung) -> float | None:
-    """Startwert aus der Bedienung (5c 1.3): raum_soll des Kreises, wenn im Bedienbereich, sonst None. Nur mit einem
-    solchen Wert gleicht ein Host beim Start an."""
-    value = raum_soll_von(bedienung)
+def bedienung_start(bedienung, kreis: int = KREIS) -> float | None:
+    """Startwert aus der Bedienung (5c 1.3): raum_soll des Kreises `kreis`, wenn im Bedienbereich, sonst None. Nur mit
+    einem solchen Wert gleicht ein Host beim Start an."""
+    value = raum_soll_von(bedienung, kreis)
     return float(value) if isinstance(value, int | float) and im_bedienbereich(value) else None
 
 

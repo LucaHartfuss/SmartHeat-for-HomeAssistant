@@ -15,7 +15,7 @@ from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
 from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
 from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_TARGET_INPUT, FROSTSCHUTZ_BIS, SollEingang
-from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_THERMOSTAT, TargetStore
+from smartheat_runtime.soll_speicher import KREIS, SOURCE_LOKAL, SOURCE_THERMOSTAT, TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,13 @@ def pruefe_soll_ref(soll_ref: str | None) -> None:
                           f"{soll_ref}::temperature erforderlich")
 
 
+def _wunsch_kreis(daten) -> int | None:
+    """Der Kreis, dem das Ereignis smartheat_wunsch gilt: `kreis` der Ereignisdaten, ohne Angabe Kreis 1; ein
+    ungueltiger Wert (kein ganzzahliger Kreis ab 1) ist None."""
+    wert = daten.get("kreis", KREIS) if isinstance(daten, dict) else KREIS
+    return wert if isinstance(wert, int) and not isinstance(wert, bool) and wert >= 1 else None
+
+
 def _wunschwert(value) -> float | None:
     """raum_soll aus dem Ereignis smartheat_wunsch: eine endliche Zahl oder ein Text, der eine ist (HA-YAML sendet
     oft Text, etwa \"22.5\"); alles andere None."""
@@ -125,8 +132,9 @@ class HaSollQuelle:
 
 def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_ref: str | None, *,
           tagestick: str | None, wache_s: float, wunsch, soll_quelle_aus,
-          quelle: HaSollQuelle | None = None) -> HaTriggerClient:
-    """soll_ref: die echte Soll-Entity aus der Konfiguration (nicht manifest.refs["room_target"], das ist SOLL_REF).
+          quelle: HaSollQuelle | None = None, kreis: int = KREIS) -> HaTriggerClient:
+    """kreis: der Heizkreis des Clients; ein Ereignis smartheat_wunsch gilt dem Kreis seiner Ereignisdaten (ohne Angabe
+    Kreis 1) und erreicht nur den Client dieses Kreises. soll_ref: die echte Soll-Entity aus der Konfiguration (nicht manifest.refs["room_target"], das ist SOLL_REF).
     tagestick: Uhrzeit des taeglichen Ticks (HH:MM) oder None; wache_s: Takt des lokalen Checks (RuntimeConfig).
     Der Bericht der Soll-Entity (EV_SOLL_BERICHT) geht als Eingabe der Soll-Quelle in den Soll-Eingang. Faellt er in
     das Echo-Fenster nach dem eigenen Schreiben, verwirft ihn der Soll-Speicher; HA meldet einen unveraenderten Wert
@@ -286,6 +294,12 @@ def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_r
         platform = trigger.get("platform")
         if platform == "event":
             event = trigger.get("event") or {}
+            ziel = _wunsch_kreis(event.get("data"))
+            if ziel is None:
+                logger.warning("Ereignis %s mit ungueltigem Kreis verworfen", EREIGNIS_WUNSCH)
+                return
+            if ziel != kreis:
+                return  # gilt dem Client eines anderen Kreises
             value = (event.get("data") or {}).get("raum_soll")
             number = _wunschwert(value)
             if number is None:

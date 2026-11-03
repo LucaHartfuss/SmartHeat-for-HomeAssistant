@@ -202,7 +202,8 @@ def test_start_without_document_waits_unconfigured_and_reports_through_the_devic
     supervisor = FakeSupervisor()
     device = FakeDevice()
     geraet, status = _verdrahtet(geraet_env, device, supervisor)
-    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    laufzeit, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    result = laufzeit.kreise()[1]
     result.worker.run_pending()
     assert isinstance(result, app.IdleBridge) and result.reason == app.IDLE_NOT_CONFIGURED
     assert geraet_env.ha.events == [] and geraet.runtime_status_event is None
@@ -218,7 +219,8 @@ def test_start_without_document_waits_unconfigured_and_reports_through_the_devic
 def test_an_operation_while_idle_is_not_posted_to_the_worker(geraet_env, caplog):
     device = FakeDevice()
     geraet, status = _verdrahtet(geraet_env, device)
-    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    laufzeit, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    result = laufzeit.kreise()[1]
     with caplog.at_level(logging.WARNING):
         geraet.bedienung_uebernommen(bedienung_inhalt(22.0))
         result.worker.run_pending()
@@ -228,7 +230,8 @@ def test_an_operation_while_idle_is_not_posted_to_the_worker(geraet_env, caplog)
 def test_start_with_document_regulates_and_wires_status_and_operations(geraet_env):
     device = FakeDevice(konfiguration_aus_optionen(OPTIONS), bedienung=bedienung_inhalt(21.0))
     geraet, status = _verdrahtet(geraet_env, device)
-    result, host = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    laufzeit, host = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    result = laufzeit.kreise()[1]
     result.worker.run_pending()
     assert isinstance(result, Runtime)
     # laufzeit_merken: das unveraenderte Laufzeit-Ereignis liegt fuer up/status und sign_off beim Geraete-Host
@@ -246,7 +249,8 @@ def test_restarts_of_the_runtime_take_the_clean_restart_path(geraet_env):
     nach dem Zuruecksetzen), beendet den Worker ueber Neustart statt os.execv, das den Link ohne DISCONNECT abrisse."""
     device = FakeDevice()
     geraet, status = _verdrahtet(geraet_env, device)
-    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    laufzeit, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    result = laufzeit.kreise()[1]
     with pytest.raises(prozess.Neustart):
         result.neustart()
 
@@ -745,7 +749,8 @@ def test_an_empty_configuration_resets_then_restarts_and_the_next_start_cleans_u
     markierung = main_module.aufraeumen(ha)
     assert config.backup_path(1).exists() and ha.deleted == []
     geraet, status = _verdrahtet(geraet_env, device, markierung=markierung)
-    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    laufzeit, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    result = laufzeit.kreise()[1]
     assert isinstance(result, app.IdleBridge) and result.reason == "abgemeldet"
     assert geraet_env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
     with pytest.raises(prozess.Neustart):
@@ -754,7 +759,8 @@ def test_an_empty_configuration_resets_then_restarts_and_the_next_start_cleans_u
     main_module.aufraeumen(ha)
     assert _anlage_geloescht() and not config.AUFRAEUMEN_PATH.exists() and len(ha.deleted) == 2
     geraet, status = _verdrahtet(geraet_env, device)
-    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    laufzeit, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    result = laufzeit.kreise()[1]
     assert isinstance(result, app.IdleBridge) and result.reason == app.IDLE_NOT_CONFIGURED
 
 
@@ -780,7 +786,8 @@ def test_a_marker_that_does_not_fit_the_lock_stays_on_reset_and_nothing_is_delet
     for _ in range(2):  # zweiter Durchgang: Neustart des Add-ons mit demselben Stand
         markierung = main_module.aufraeumen(ha)
         geraet, status = _verdrahtet(geraet_env, device, markierung=markierung)
-        result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+        laufzeit, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+        result = laufzeit.kreise()[1]
         assert isinstance(result, app.IdleBridge) and result.reason == "abgemeldet"
         geraet_env.clock.advance(3 * 300)
         result.worker.run_pending()  # ein Neustart wuerde hier prozess.Neustart werfen

@@ -93,6 +93,8 @@ class HaBindung:
     benachrichtigung: tuple[str, ...]
     hinweise_aus: tuple[str, ...]
     kreis: dict
+    #: (Raumnummer, Fuehler) aller Raeume des Kreises mit Fuehlern, Referenz- und Kontrollraeume
+    raeume: tuple[tuple[int, tuple[str, ...]], ...] = ()
 
 
 def _mapping(value) -> Mapping:
@@ -103,10 +105,11 @@ def _texte(value) -> tuple[str, ...]:
     return tuple(item for item in value if isinstance(item, str)) if isinstance(value, list) else ()
 
 
-def bindung(konfiguration) -> HaBindung:
-    """HA-Bindung aus dem Dokument; config_check hat die Form geprueft. Wirft ConfigError bei einem Hebelsatz, den der
-    HA-Host nicht kennt."""
-    konfiguration = kreisansicht.erste(konfiguration)  # die Laufzeit fuehrt genau einen Kreis
+def bindung(konfiguration, kreis: int | None = None) -> HaBindung:
+    """HA-Bindung des Kreises `kreis` (ohne Angabe des ersten) aus dem Dokument; config_check hat die Form geprueft.
+    Wirft ConfigError bei einem Hebelsatz, den der HA-Host nicht kennt."""
+    raeume = tuple((nummer, tuple(fuehler)) for nummer, fuehler in kreisansicht.raeume_fuehler(konfiguration, kreis))
+    konfiguration = kreisansicht.sicht(konfiguration, kreis)
     hebelsatz = konfiguration.get("hebelsatz")
     if not isinstance(hebelsatz, str) or hebelsatz not in LEVER_SETS or hebelsatz not in PFLICHT_ROLLEN:
         raise ConfigError(f"Hebelsatz {hebelsatz!r} ist für Home Assistant unbekannt – {RECONFIGURE_HINT}")
@@ -118,7 +121,7 @@ def bindung(konfiguration) -> HaBindung:
         hebelsatz=hebelsatz, rollen=rollen, soll_entity=soll if isinstance(soll, str) and soll else None,
         raumfuehler=_texte(konfiguration.get("raumfuehler")), batterien=_texte(raw.get("batterien")),
         benachrichtigung=_texte(raw.get("benachrichtigung")), hinweise_aus=_texte(raw.get("hinweise_aus")),
-        kreis=dict(_mapping(raw.get("kreis"))))
+        kreis=dict(_mapping(raw.get("kreis"))), raeume=raeume)
 
 
 def anlagen_kennung(b: HaBindung) -> str:
@@ -177,11 +180,11 @@ def _lokal(b: HaBindung) -> Befund | None:
     return None
 
 
-def lokal_pruefen(konfiguration) -> str | None:
-    """Der Teil ohne HA fuer das ganze Dokument: lokaler Text oder None (Konfigurationsfehler beim Start). Wirft
-    ConfigError bei unbekanntem Hebelsatz (HaHost.load macht daraus einen Konfigurationsfehler, damit der Start nie an
-    einem fehlenden Schluessel stirbt)."""
-    befund = _lokal(bindung(konfiguration))
+def lokal_pruefen(konfiguration, kreis: int | None = None) -> str | None:
+    """Der Teil ohne HA fuer den Kreis `kreis` (ohne Angabe den ersten): lokaler Text oder None (Konfigurationsfehler
+    beim Start). Wirft ConfigError bei unbekanntem Hebelsatz (HaHost.load macht daraus einen Konfigurationsfehler,
+    damit der Start nie an einem fehlenden Schluessel stirbt)."""
+    befund = _lokal(bindung(konfiguration, kreis))
     return befund.text if befund is not None else None
 
 
@@ -358,7 +361,8 @@ def _mit_ha(b: HaBindung, ha_api) -> tuple[str, str] | None:
 def _unveraendert(konfiguration, akzeptiert) -> bool:
     if not isinstance(akzeptiert, Mapping):
         return False
-    alt, neu = kreisansicht.erste(akzeptiert), kreisansicht.erste(konfiguration)
+    neu = kreisansicht.erste(konfiguration)  # config_check gibt dem Host ein Dokument mit dem einen geprueften Kreis
+    alt = kreisansicht.fuer(akzeptiert, neu["kreis"]) if isinstance(neu.get("kreis"), int) else {}
     return all(alt.get(key) is not None and alt[key] == neu.get(key) for key in _HA_FELDER)
 
 

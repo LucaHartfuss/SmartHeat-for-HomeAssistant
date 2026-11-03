@@ -6,6 +6,7 @@ import queue
 import threading
 import time
 
+import konfig_form
 import pytest
 from device_helpers import WALL, FakeHost, FakeLink, World, _anzeige, _konfiguration, _leer
 
@@ -1186,9 +1187,9 @@ class WerfenderHost(FakeHost):
         self._pruefen("ursprungswerte")
         return super().ursprungswerte()
 
-    def raum(self):
+    def raum(self, kreis=1):
         self._pruefen("raum")
-        return super().raum()
+        return super().raum(kreis)
 
     def anzeigen(self, anzeige):
         self.anzeigen_versuche += 1
@@ -1292,6 +1293,36 @@ def test_a_failing_room_callback_skips_the_status_of_that_tick(tmp_path, caplog)
     assert world.link.topics() == ["up/hello"] and len(world.host.anzeigen_liste) == 7
     _genau_eine_zeile(caplog, "raum")
     world.host.werfen.clear()
+    world.device.schritt()
+    assert world.link.of("up/status")[-1]["kreise"] == [{"kreis": 1, "raum": world.host.raum_wert}]
+
+
+def _zwei_kreise():
+    def kreis(nummer):
+        bindung = {"treiber": {"id": "simulation", "parameter": {"heizkreis": nummer}}, "thermostat": None}
+        return konfig_form.kreis({"bindung": bindung, "raumfuehler": [f"zigbee:0x{nummer:016x}:temperature"],
+                                  "hebelsatz": "viessmann_vicare", "verteilsystem": "Heizkoerper", "abo": "aktiv"},
+                                 nummer=nummer)
+
+    return _konfiguration(kreise=[kreis(1), kreis(2)])
+
+
+def test_the_status_lists_every_circuit_of_the_configuration_with_its_own_room(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    world.empfangen("down/config", _zwei_kreise())
+    zwei = {"ist": 18.0, "soll": 20.0, "soll_quelle": "portal", "ts": "t2"}
+    world.host.raum_werte = {2: zwei}
+    world.clock.now += device.STATUS_MIN_SECONDS
+    world.device.schritt()
+    assert world.link.of("up/status")[-1]["kreise"] == [{"kreis": 1, "raum": world.host.raum_wert},
+                                                         {"kreis": 2, "raum": zwei}]
+
+
+def test_the_status_without_a_configuration_lists_circuit_one(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    world.clock.now += device.STATUS_MIN_SECONDS
     world.device.schritt()
     assert world.link.of("up/status")[-1]["kreise"] == [{"kreis": 1, "raum": world.host.raum_wert}]
 

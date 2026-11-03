@@ -261,9 +261,9 @@ class Device:
     def bedienung(self) -> dict | None:
         return self.documents.inhalt(BEDIENUNG)
 
-    def abo_status(self) -> str:
-        """abo_source der Laufzeit (dokument_config.runtime_config)."""
-        return dokument_config.abo_status(self.konfiguration())
+    def abo_status(self, kreis: int | None = None) -> str:
+        """abo_source der Laufzeit (dokument_config.runtime_config): das Abo des Kreises, ohne Angabe des ersten."""
+        return dokument_config.abo_status(self.konfiguration(), kreis)
 
     def zustand(self) -> str:
         """Scheitert der Rueckruf runtime_status, gilt die Laufzeit als startend (_LAUFZEIT_UNBEKANNT)."""
@@ -707,6 +707,13 @@ class Device:
             if self._meldungen_neu.get(item["key"]) is item:
                 del self._meldungen_neu[item["key"]]
 
+    def _kreisnummern(self) -> list[int]:
+        """Die Kreise der gespeicherten Konfiguration; ohne eingerichtete Anlage nur Kreis 1 (der Ruhezustand meldet
+        seinen Raum unter 1)."""
+        nummern = [k for eintrag in kreisansicht.kreise(self.konfiguration() or {})
+                   if isinstance(k := eintrag.get("kreis"), int) and not isinstance(k, bool)]
+        return nummern or [KREIS]
+
     def _ursprungswerte_neu(self) -> dict:
         """Nur Namen, die in der Konfiguration (ursprungswerte, vom Server gespiegelt) fehlen, in
         den Grenzen von V1; was nicht passt, geht nicht hinaus (Log ohne Wert)."""
@@ -740,11 +747,16 @@ class Device:
         if not self._bereit:
             return
         runtime_status, gescheitert = self._host_wert("runtime_status", self.host.runtime_status)
-        raum, raum_gescheitert = self._host_wert("raum", self.host.raum)
-        if gescheitert or raum_gescheitert:
+        kreise = []
+        for kreis in self._kreisnummern():
+            raum, raum_gescheitert = self._host_wert("raum", self.host.raum, kreis)
+            if raum_gescheitert:
+                gescheitert = True
+            kreise.append({"kreis": kreis, "raum": raum})
+        if gescheitert:
             return  # kein Status mit erfundenem Laufzeitstatus oder Raum; der naechste Takt versucht es erneut
         felder = {"zustand": self._zustand(runtime_status), "runtime_status": runtime_status,
-                  "kreise": [{"kreis": KREIS, "raum": raum}],
+                  "kreise": kreise,
                   "ursprungswerte": self._ursprungswerte_neu() or None}
         try:
             body = nachrichten.status(**felder, ts=_iso(self._wall()))

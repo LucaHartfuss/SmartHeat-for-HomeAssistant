@@ -77,7 +77,7 @@ def test_configured_start_regulates_with_gateway_texts_and_batteries(world):
         BatteryRef(f"zigbee:{THERMOSTAT}:battery_low", BATTERY_LOW_FLAG),
     }
     assert result.manifest.refs["room_actual"] == "raum:mittel"
-    assert world.geraet.zustand.raum["soll"] == 20.0
+    assert world.geraet.raum()["soll"] == 20.0
 
 
 def test_invalid_room_sensor_is_a_config_error(world):
@@ -511,13 +511,13 @@ def test_a_sensor_value_that_is_not_plausible_never_becomes_the_room_temperature
     world.start_runtime()
     world.connect()
     world.advance(30)
-    assert world.geraet.zustand.raum["ist"] == 20.0  # vorher anders
+    assert world.geraet.raum()["ist"] == 20.0  # vorher anders
     world.z2m.report(SENSOR, temperature=wert)
     world.advance(30)
-    assert world.geraet.zustand.raum["ist"] is None
+    assert world.geraet.raum()["ist"] is None
     world.z2m.report(SENSOR, temperature=21.0)
     world.advance(30)
-    assert world.geraet.zustand.raum["ist"] == 21.0
+    assert world.geraet.raum()["ist"] == 21.0
 
 
 @pytest.mark.parametrize(("dirty", "schreibt"), [(False, [22.5]), (True, [])],
