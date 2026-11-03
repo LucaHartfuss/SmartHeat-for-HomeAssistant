@@ -5,6 +5,8 @@ als Lebenszeichen alle HEARTBEAT_SECONDS. Die Integration haelt daraus ihre Enti
 aus, meldet sie das selbst. Felder und Wertemengen sind Cross-Repo-Vertrag mit const.py der Integration
 (Contract-Check)."""
 import logging
+import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from smartheat_core.zahlen import ist_endliche_zahl
@@ -28,6 +30,12 @@ STATUS_ABGEMELDET = "abgemeldet"
 STATUS_VALUES = (
     STATUS_STARTET, STATUS_REGELT, STATUS_KONFIGURATIONSFEHLER, STATUS_ZUGANG_ABGELEHNT, STATUS_ABO_BEENDET,
     STATUS_ABO_INAKTIV, STATUS_NOTBETRIEB, STATUS_DATENFEHLER, STATUS_ABGEMELDET,
+)
+#: Schwere der Zustaende, schlechtester zuerst: die Reihenfolge von `overall_status`; `zugang_abgelehnt` (nur der Host
+#: kennt ihn) steht nach dem Konfigurationsfehler. Bei mehreren Kreisen folgen die Felder der Anlage dem schlechtesten.
+SCHWERE = (
+    STATUS_ABGEMELDET, STATUS_KONFIGURATIONSFEHLER, STATUS_ZUGANG_ABGELEHNT, STATUS_ABO_BEENDET, STATUS_ABO_INAKTIV,
+    STATUS_NOTBETRIEB, STATUS_DATENFEHLER, STATUS_STARTET, STATUS_REGELT,
 )
 _STATUS_WITH_REASON = frozenset({
     STATUS_ABGEMELDET, STATUS_KONFIGURATIONSFEHLER, STATUS_ZUGANG_ABGELEHNT, STATUS_ABO_BEENDET,
@@ -54,6 +62,8 @@ EVENT_FIELDS = (
     "schema", "tenant_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
     "boost", "letzte_serverantwort", "hebelsatz", "hebel", "gelernt", "abo", "abo_frist_ende", "hinweise",
 )
+# Felder der Anlage (folgen dem schlechtesten Kreis); alle anderen gehoeren zum Kreis (niedrigster Kreis).
+_ANLAGEN_FELDER = ("status", "grund", "datenfehler", "letzte_serverantwort", "hinweise")
 
 
 @dataclass(frozen=True)
@@ -246,3 +256,46 @@ class StatusReporter:
             logger.warning("Status (%s) konnte nicht gesendet werden", event["status"])
             return
         self._published = event
+
+
+def zusammenfassen(ereignisse: Mapping[int, dict]) -> dict:
+    """Ein Ereignis der Anlage aus den Ereignissen ihrer Kreise (Schluessel: Kreisnummer). Status, Grund, Datenfehler,
+    letzte Serverantwort und Hinweise folgen dem schlechtesten Kreis (bei Gleichstand dem niedrigeren), der Notbetrieb
+    steht, sobald ein Kreis ihn meldet; Boost, Hebelsatz, Hebel, Gelerntes und Abo kommen vom niedrigsten Kreis."""
+    if not ereignisse:
+        raise ValueError("Ohne Kreis kein Ereignis der Anlage")
+    kreise = sorted(ereignisse)
+    schlechtester = min(kreise, key=lambda kreis: (SCHWERE.index(ereignisse[kreis]["status"]), kreis))
+    erg = dict(ereignisse[kreise[0]])
+    for feld in _ANLAGEN_FELDER:
+        erg[feld] = ereignisse[schlechtester][feld]
+    erg["notbetrieb"] = any(ereignisse[kreis]["notbetrieb"] for kreis in kreise)
+    return erg
+
+
+class Statussammler:
+    """Fasst die Status der Kreise in ein Ereignis der Anlage fuer die eine Senke des Hosts. Jeder Kreis meldet ueber
+    `senke(kreis)`; nach jeder Meldung geht das Ereignis der Anlage hinaus. Ein Fehler der Senke erreicht den Kreis,
+    dessen StatusReporter dann beim naechsten Anlass erneut sendet."""
+
+    def __init__(self, sink: StatusSink) -> None:
+        self._sink = sink
+        self._lock = threading.Lock()
+        self._ereignisse: dict[int, dict] = {}
+
+    def senke(self, kreis: int) -> StatusSink:
+        return _KreisSenke(self, kreis)
+
+    def melden(self, kreis: int, event: dict) -> None:
+        with self._lock:
+            self._ereignisse[kreis] = event
+            self._sink.publish(zusammenfassen(self._ereignisse))
+
+
+class _KreisSenke:
+    def __init__(self, sammler: Statussammler, kreis: int) -> None:
+        self._sammler = sammler
+        self._kreis = kreis
+
+    def publish(self, event: dict) -> None:
+        self._sammler.melden(self._kreis, event)

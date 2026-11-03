@@ -150,12 +150,13 @@ class HaHost:
             b = dokument.bindung(self._konfiguration)
             description = dokument_config.beschreibung(self._konfiguration)
             safety = dokument_config.sicherheit(self._konfiguration)
+            plant_id = dokument.anlagen_kennung(b)
         except ConfigError as error:
             logger.error("Abmelden ohne Zuruecksetzen: %s", lesbar(str(error)))
             return None
         roles = [role for role in binding_roles(description) if b.rollen.get(role)]
         manifest = ChannelManifest(refs={role: entity_ref(role, b.rollen[role]) for role in roles})
-        return RestoreParts(binding_for(description, self._ha_api, manifest), safety)
+        return RestoreParts(binding_for(description, self._ha_api, manifest), safety, plant_id)
 
     def load(self) -> Loaded:
         try:

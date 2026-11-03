@@ -1,0 +1,320 @@
+"""Die Laufzeit einer Anlage hat eine Instanz je Kreis: eigener Worker-Thread, Zustandsspeicher und Statusmelder, ein
+Link, eine Meldesenke, ein Statusereignis der Anlage. Ein Kreis mit abgeschlossener Abo-Frist ruht, die anderen regeln
+weiter; ein wieder aktives Abo nimmt nur diesen Kreis wieder auf, ohne Neustart und ohne die Verbindung zu kappen."""
+import threading
+from datetime import datetime
+
+import pytest
+from geraet_helpers import FakeGeraet, Sent, konfiguration_aus_optionen
+from runtime_helpers import OPTIONS
+
+from heizungsbruecke import config
+from heizungsbruecke.host import HaHost
+from smartheat_device.laufzeit import RuntimeChannel
+from smartheat_runtime import app, entitlement, kreise
+from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.worker import Event, WorkerBeendet
+
+
+class Senke:
+    """Status- und Meldesenke in einem."""
+
+    def __init__(self):
+        self.ereignisse, self.schluessel = [], []
+
+    def publish(self, event):
+        self.ereignisse.append(event)
+
+    def push(self, key, message):
+        self.schluessel.append(key)
+
+    def show(self, key, message):
+        self.schluessel.append(key)
+
+    def withdraw(self, key):
+        self.schluessel.append(key)
+
+
+class Boom(BaseException):
+    pass
+
+
+def _dokument(nummer, abo="aktiv"):
+    dokument = konfiguration_aus_optionen({**OPTIONS, "abo": abo})
+    dokument["kreise"][0]["kreis"] = nummer
+    return dokument
+
+
+class Anlage:
+    """Test-Host mit einer Sicht je Kreis (HaHost auf einer Geraete-Attrappe), ein Link, eine Meldesenke."""
+
+    def __init__(self, env, nummern=(1, 2)):
+        self.env, self.nummern = env, list(nummern)
+        self.status_sink = self.senke = Senke()
+        self.abo = {n: entitlement.ACTIVE for n in nummern}
+        self.sent = Sent()
+        self.kanaele: list[tuple[int, RuntimeChannel]] = []
+        self.hosts = {}
+
+    def kreise(self):
+        return self.nummern
+
+    def kreis_host(self, kreis):
+        geraet = FakeGeraet(_dokument(kreis), abo=lambda: self.abo[kreis], bedienung={"raum_soll": 21.0})
+        host = HaHost(geraet, self.env.ha, clock=self.env.clock)
+        host.notify_sink = self.senke
+        self.hosts[kreis] = host
+        return host
+
+    def kanal(self, worker, kreis):
+        kanal = RuntimeChannel(self.sent.publish, lambda: self.sent.connected, lambda: self.sent.failures)
+        self.kanaele.append((kreis, kanal))
+        return kanal.binden(worker)
+
+    def ruhen_lassen(self, kreis, monkeypatch):
+        """Die Abo-Frist des Kreises ist abgelaufen (er startet als abo_beendet)."""
+        self.abo[kreis] = entitlement.INACTIVE
+        entitlement.mark_inactive(config.entitlement_path(kreis), datetime.now().astimezone())
+        monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
+
+
+def _laufzeit(anlage, env):
+    return kreise.start(anlage, env.clock, mqtt_factory=anlage.kanal, neustart=lambda: None)
+
+
+def _lauf_im_thread(laufzeit):
+    fehler = []
+
+    def lauf():
+        try:
+            laufzeit.run()
+        except BaseException as error:  # noqa: BLE001
+            fehler.append(error)
+
+    thread = threading.Thread(target=lauf, daemon=True)
+    thread.start()
+    return thread, fehler
+
+
+def _warten(bedingung, sekunden=5.0):
+    ende = threading.Event()
+    for _ in range(int(sekunden * 100)):
+        if bedingung():
+            return True
+        ende.wait(0.01)
+    return False
+
+
+def test_zwei_kreise_laufen_mit_eigenem_zustand_und_einem_link(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+
+    eins, zwei = laufzeit.kreise()[1], laufzeit.kreise()[2]
+    assert isinstance(eins, Runtime) and isinstance(zwei, Runtime)
+    assert eins.worker is not zwei.worker and eins.store is not zwei.store
+    assert eins.config.kreis == 1 and zwei.config.kreis == 2
+    assert sorted(kreis for kreis, _ in anlage.kanaele) == [1, 2]
+    assert config.backup_path(1).parent != config.backup_path(2).parent
+
+
+def test_die_anlage_meldet_ein_ereignis_des_schlechtesten_kreises(env, monkeypatch):
+    anlage = Anlage(env)
+    anlage.ruhen_lassen(1, monkeypatch)
+    laufzeit = _laufzeit(anlage, env)
+
+    assert isinstance(laufzeit.kreise()[1], app.IdleBridge) and laufzeit.kreise()[1].reason == "abo_beendet"
+    assert isinstance(laufzeit.kreise()[2], Runtime)
+    assert anlage.senke.ereignisse[-1]["status"] == "abo_beendet"
+
+
+def test_die_meldungen_mehrerer_kreise_tragen_den_kreis_im_schluessel(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    laufzeit.kreise()[2].notifier.notify("probe", "gestoert", "Text", critical=True)
+    laufzeit.kreise()[1].notifier.notify("probe", "gestoert", "Text", critical=True)
+
+    schluessel = {k for k in anlage.senke.schluessel}
+    assert {"kreis-1:probe", "kreis-2:probe"} <= schluessel
+    assert all(k.startswith("kreis-") for k in schluessel)
+
+
+def test_ein_einzelner_kreis_meldet_ohne_praefix(env):
+    anlage = Anlage(env, nummern=(1,))
+    laufzeit = _laufzeit(anlage, env)
+    laufzeit.kreise()[1].notifier.notify("probe", "gestoert", "Text", critical=True)
+    assert "probe" in anlage.senke.schluessel
+
+
+def test_kreis_1_beendet_kreis_2_regelt_weiter(env, monkeypatch):
+    anlage = Anlage(env)
+    anlage.ruhen_lassen(1, monkeypatch)
+    laufzeit = _laufzeit(anlage, env)
+    _, fehler = _lauf_im_thread(laufzeit)
+    zwei = laufzeit.kreise()[2]
+    gesehen = []
+    zwei.worker.register("probe", lambda event: gesehen.append(event.kind))
+
+    zwei.worker.post(Event("probe"))
+
+    assert _warten(lambda: gesehen == ["probe"])
+    assert not fehler
+    assert laufzeit.kreise()[1].reason == "abo_beendet"  # Kreis 1 ruht weiter
+
+
+def test_wiederaufnahme_nimmt_nur_den_betroffenen_kreis_neu_auf(env, monkeypatch):
+    anlage = Anlage(env)
+    anlage.ruhen_lassen(1, monkeypatch)
+    laufzeit = _laufzeit(anlage, env)
+    _, fehler = _lauf_im_thread(laufzeit)
+    zwei = laufzeit.kreise()[2]
+    anlage.abo[1] = entitlement.ACTIVE
+    kanaele_vorher = len(anlage.kanaele)
+
+    assert laufzeit.wiederaufnehmen(1) is True
+
+    neu = laufzeit.kreise()[1]
+    assert isinstance(neu, Runtime) and laufzeit.kreise()[2] is zwei
+    assert anlage.sent.connected is True
+    assert [kreis for kreis, _ in anlage.kanaele[kanaele_vorher:]] == [1]  # nur Kreis 1 bekommt einen neuen Kanal
+    gesehen = []
+    neu.worker.register("probe", lambda event: gesehen.append(event.kind))
+    neu.worker.post(Event("probe"))
+    assert _warten(lambda: gesehen == ["probe"])  # der neue Worker laeuft
+    assert not fehler
+
+
+def test_ein_laufender_kreis_wird_nicht_wiederaufgenommen(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    zwei = laufzeit.kreise()[2]
+
+    assert laufzeit.wiederaufnehmen(2) is False
+    assert laufzeit.kreise()[2] is zwei
+
+
+def test_handler_der_aufsicht_gelten_auch_fuer_den_wiederaufgenommenen_kreis(env, monkeypatch):
+    anlage = Anlage(env)
+    anlage.ruhen_lassen(1, monkeypatch)
+    laufzeit = _laufzeit(anlage, env)
+    gesehen = []
+    laufzeit.worker.register("reload", lambda event: gesehen.append(event.kind))
+    anlage.abo[1] = entitlement.ACTIVE
+    laufzeit.wiederaufnehmen(1)
+
+    laufzeit.worker.post(Event("reload"))
+    laufzeit.kreise()[1].worker.run_pending()
+
+    assert gesehen.count("reload") == 1
+
+
+def test_ein_neustart_im_worker_eines_kreises_erreicht_den_aufseher(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+
+    def neustart(event):
+        raise Boom()
+
+    laufzeit.kreise()[2].worker.register("neustart", neustart)
+    laufzeit.kreise()[2].worker.post(Event("neustart"))
+
+    with pytest.raises(Boom):
+        laufzeit.run()
+
+
+def test_beenden_laesst_den_worker_enden(env):
+    anlage = Anlage(env, nummern=(1,))
+    worker = _laufzeit(anlage, env).kreise()[1].worker
+    worker.beenden()
+    with pytest.raises(WorkerBeendet):
+        worker.run()
+
+
+def test_abo_wiederaufnahme_braucht_keinen_neustart_des_hosts(env, monkeypatch):
+    anlage = Anlage(env)
+    anlage.ruhen_lassen(1, monkeypatch)
+    laufzeit = _laufzeit(anlage, env)
+    alt, neu = _dokument(1, "inaktiv"), _dokument(1, "aktiv")
+    for dokument in (alt, neu):
+        dokument["kreise"].append({**_dokument(2)["kreise"][0]})
+    anlage.abo[1] = entitlement.ACTIVE
+
+    assert laufzeit.konfiguration_geaendert(alt, neu) is False
+    assert isinstance(laufzeit.kreise()[1], Runtime)
+
+
+def test_eine_laufzeitrelevante_aenderung_verlangt_den_neustart_des_hosts(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    alt = _dokument(1)
+    alt["kreise"].append(_dokument(2)["kreise"][0])
+    neu = {**alt, "tagestick": "13:00"}
+    assert laufzeit.konfiguration_geaendert(alt, neu) is True
+    assert laufzeit.konfiguration_geaendert(alt, alt) is False
+    assert laufzeit.konfiguration_geaendert(alt, {**alt, "kreise": alt["kreise"][:1]}) is True
+
+
+def test_die_meldesenke_eines_kreises_setzt_den_kreis_vor_jeden_schluessel():
+    senke = Senke()
+    meldesenke = kreise._KreisMeldesenke(senke, 3)
+    meldesenke.push("a", "Text")
+    meldesenke.show("b", "Text")
+    meldesenke.withdraw("c")
+    assert senke.schluessel == ["kreis-3:a", "kreis-3:b", "kreis-3:c"]
+
+
+def test_ein_kreis_ruht_im_ruhezustand_oder_waehrend_der_abo_frist(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    zwei = laufzeit.kreise()[2]
+    assert kreise.ruhend(zwei) is False
+
+    zwei.store.update(abo_inactive_since=datetime.now().astimezone())
+    assert kreise.ruhend(zwei) is True  # Frist laeuft
+
+    zwei.store.update(abo_inactive_since=None)
+    zwei.idle = True
+    assert kreise.ruhend(zwei) is True  # Frist abgeschlossen
+
+
+
+def test_die_wiederaufnahme_beendet_die_verbindungen_des_alten_kreises(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    alt = laufzeit.kreise()[2]
+    alter_kanal = next(kanal for kreis, kanal in anlage.kanaele if kreis == 2)
+    assert alter_kanal.is_connected() is True
+    alt.store.update(abo_inactive_since=datetime.now().astimezone())
+
+    assert laufzeit.wiederaufnehmen(2) is True
+
+    assert alter_kanal.is_connected() is False
+    assert laufzeit.kreise()[2] is not alt
+
+
+def test_vor_dem_lauf_startet_die_wiederaufnahme_keinen_thread(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    laufzeit.kreise()[2].store.update(abo_inactive_since=datetime.now().astimezone())
+    vorher = set(threading.enumerate())
+
+    assert laufzeit.wiederaufnehmen(2) is True
+
+    assert set(threading.enumerate()) == vorher
+
+
+def test_ein_worker_der_nicht_endet_haelt_den_kreis_an_und_meldet_den_ausfall(env, monkeypatch):
+    monkeypatch.setattr(kreise, "ABWICKLUNG_SECONDS", 0.05)
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    _, fehler = _lauf_im_thread(laufzeit)
+    zwei = laufzeit.kreise()[2]
+    zwei.store.update(abo_inactive_since=datetime.now().astimezone())
+    beenden = zwei.worker.beenden
+    monkeypatch.setattr(zwei.worker, "beenden", lambda: None)
+
+    assert laufzeit.wiederaufnehmen(2) is False
+
+    assert laufzeit.kreise()[2] is zwei
+    assert _warten(lambda: bool(fehler))
+    assert isinstance(fehler[0], RuntimeError)
+    beenden()

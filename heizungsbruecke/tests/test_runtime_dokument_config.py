@@ -489,6 +489,13 @@ def test_beschreibung_mit_unbekanntem_weg_ist_ein_konfigurationsfehler(weg):
         dc.beschreibung(konfiguration)
 
 
+def test_boot_info_zaehlt_die_kreise_des_dokuments(tmp_path):
+    zwei = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF, nummer=1), konfig_form.kreis(KONF, nummer=2)])
+    assert _boot(zwei, tmp_path).kreise_der_anlage == 2
+    assert _boot(KONF, tmp_path).kreise_der_anlage == 1
+    assert _boot({}, tmp_path).kreise_der_anlage == 1  # nicht eingerichtet: die BootInfo wirft nie
+
+
 def test_boot_info_und_runtime_config_tragen_die_kreisnummer(tmp_path):
     """Die Nummer des Kreises kommt aus dem Dokument; sie bestimmt Pfade, Kennung und `kreis` auf dem Draht."""
     zwei = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF, nummer=2)])

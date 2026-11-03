@@ -126,13 +126,15 @@ class GatewayHost:
             safety = resolve_local_safety(hebelsatz, sicht.get("verteilsystem"))
             beschreibung = bindungsparameter.beschreibung(
                 self.konfiguration.get("weg"), hebelsatz, self.konfiguration.get("bindungsparameter"))
-            driver = self._create_driver(gateway_config.bindung(self.konfiguration).driver_spec(), beschreibung)
+            spec = gateway_config.bindung(self.konfiguration).driver_spec()
+            driver = self._create_driver(spec, beschreibung)
+            plant_id = registry.plant_id(spec)
             check_lever_set(driver, hebelsatz)
         except (ConfigError, KeyError, TypeError, ValueError) as error:
             logger.error("Abmelden ohne Zuruecksetzen: %s (%s)", lesbar(str(error)), type(error).__name__)
             return None
         self._activate(driver)
-        return RestoreParts(driver, safety)
+        return RestoreParts(driver, safety, plant_id)
 
     def load(self) -> Loaded:
         try:

@@ -43,6 +43,9 @@ class BootInfo:
     # Datei der Zaehler der ganzen Anlage (Schreibbudget der Anlage, Lebensdauer) neben den Kreisordnern; None: die Zaehler
     # liegen im Zustand des Kreises (nur Tests).
     anlage_budget_path: Path | None = None
+    # Zahl der Heizkreise des Dokuments; sie teilen die Zaehler der Anlage (bei mehr als einem Kreis setzt eine andere
+    # Anlage eines Kreises diese Zaehler nicht zurueck).
+    kreise_der_anlage: int = 1
 
 
 @dataclass(frozen=True)

@@ -94,6 +94,10 @@ CONFIG_ERROR_BOOST_MESSAGE = (
     "SmartHeat: Konfigurationsfehler – {grund}. Die Heizungssteuerung ist gestoppt, die Anlage steht aber noch auf "
     "Boost-Werten. Bitte die zuletzt gelernten Werte von Hand einstellen ({werte})."
 )
+#: Code, wenn der Zustand des Kreises zu einer anderen Anlage gehoert als die, auf die das Dokument ihn jetzt zeigen
+#: laesst: nichts wird geschrieben (Wiederherstellungspunkt und Ursprungswerte gehoeren zur alten Anlage).
+GRUND_ANDERE_ANLAGE = "zustand_andere_anlage"
+ANDERE_ANLAGE_ZUSATZ = " Der Zustand gehört zu einer anderen Anlage, es wurde nichts zurückgeschrieben ({code})."
 SIGN_OFF_INVALID_CONFIG = "Konfiguration ungültig, die Anlage wurde nicht zurückgesetzt"
 SIGN_OFF_RESTORE_FAILED = "Zurücksetzen der Anlage scheitert, neuer Versuch in {seconds} s"
 SIGN_OFF_RESTORE_FAILED_MESSAGE = (
@@ -138,9 +142,11 @@ class Loaded:
 
 @dataclass(frozen=True)
 class RestoreParts:
-    """Was das Abmelden zum Zuruecksetzen braucht."""
+    """Was das Abmelden zum Zuruecksetzen braucht. `plant_id` ist die Kennung der Anlage, auf die das Dokument den
+    Kreis jetzt zeigen laesst; der Wiederherstellungspunkt im Zustand des Kreises gilt nur fuer dieselbe Anlage."""
     binding: PlantBinding
     safety: LocalSafety
+    plant_id: str
 
 
 class Host(Protocol):
@@ -227,15 +233,28 @@ def _fail_start(notifier, status, clock, grund: str, key: str | None = None, *, 
         description = None if parts is None else parts.binding.description
         message = CONFIG_ERROR_BOOST_MESSAGE.format(
             grund=grund, werte=_restore_values_text(store.state, description))
+        if parts is not None and not _gleiche_anlage(store, parts):
+            message += ANDERE_ANLAGE_ZUSATZ.format(code=GRUND_ANDERE_ANLAGE)
     if not notifier.notify("konfiguration", f"fehler:{grund if key is None else key}", message, critical=True):
         notifier.refresh_persistent("konfiguration", message)
     status.update(konfigurationsfehler=True, grund=grund)
     return _idle(clock, status, STATUS_KONFIGURATIONSFEHLER, neustart=neustart, recheck_after=CONFIG_RECHECK_SECONDS)
 
 
+def _gleiche_anlage(store, parts: RestoreParts) -> bool:
+    """Gehoert der Zustand des Kreises zur Anlage des Dokuments? Ein Zustand ohne Kennung (Bestand, nie gebunden)
+    gilt als gebunden, wie in bind_to_tenant."""
+    gebunden = store.state.plant_id
+    return gebunden is None or gebunden == parts.plant_id
+
+
 def _end_boosts(store, parts: RestoreParts | None, clock) -> bool:
-    """Laufende Boosts auf den Wiederherstellungspunkt zuruecknehmen; True, wenn danach keiner mehr laeuft."""
+    """Laufende Boosts auf den Wiederherstellungspunkt zuruecknehmen; True, wenn danach keiner mehr laeuft. Gehoert der
+    Zustand zu einer anderen Anlage als der des Dokuments, wird nichts geschrieben (False)."""
     if parts is None:
+        return False
+    if not _gleiche_anlage(store, parts):
+        logger.error("Boost nicht zurueckgenommen: %s", GRUND_ANDERE_ANLAGE)
         return False
     try:
         LeverPipeline(store, parts.binding, parts.safety, clock=clock).set_boosts(comfort=False, emergency=False)
@@ -276,7 +295,10 @@ def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_
     Ruhezustand `abgemeldet`. Scheitert es, wird es im Takt retry_seconds erneut versucht; der Status bleibt
     `abgemeldet` mit Grund. Gelingt es und steht eine Aufraeum-Markierung dieser Anlage offen, folgt ein Neustart
     (_nach_zuruecksetzen); scheitert es, bleibt sie offen und ein Neustart dazwischen versucht es erneut."""
-    restorer = None if parts is None else LeverPipeline(
+    andere_anlage = parts is not None and not _gleiche_anlage(store, parts)
+    if andere_anlage:
+        logger.error("Abmelden ohne Zuruecksetzen: %s", GRUND_ANDERE_ANLAGE)
+    restorer = None if parts is None or andere_anlage else LeverPipeline(
         store, parts.binding, parts.safety, clock=clock, server_originals=server_originals)
     boosting = store.state.boost_active or store.state.emergency_boost_active
     restored = restorer is not None and restorer.restore_and_clear(always_restore=False)
@@ -284,9 +306,12 @@ def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_
     # die Anlage noch auf Boost-Werten steht.
     notifier.clear_all(keep=(abo.RESTORE_KEY,))
     if restorer is None:
-        grund = SIGN_OFF_INVALID_CONFIG
+        grund = GRUND_ANDERE_ANLAGE if andere_anlage else SIGN_OFF_INVALID_CONFIG
         if boosting:
-            _report_sign_off_restore(notifier, SIGN_OFF_NOT_RESTORED_MESSAGE, store.state, None, None)
+            vorlage = SIGN_OFF_NOT_RESTORED_MESSAGE
+            if andere_anlage:
+                vorlage += ANDERE_ANLAGE_ZUSATZ.format(code=GRUND_ANDERE_ANLAGE)
+            _report_sign_off_restore(notifier, vorlage, store.state, None, None)
     elif restored:
         grund = None
         abo.report_restore(notifier, ok=True)
@@ -667,7 +692,12 @@ def _may_prepare_zone(rt: Runtime) -> bool:
 def _prepare_zone(rt: Runtime) -> None:
     """Zone vorbereiten (LeverPipeline.prepare_start); scheitert es, versucht es ein spaeterer lokaler
     Check erneut (Kontingent: _may_prepare_zone), statt dass erst die Durchsetzung nach
-    settle_seconds des Bindings umstellt."""
+    settle_seconds des Bindings umstellt. Pruefen und Zaehlen des Kontingents sind eine Einheit (`transaktion`)."""
+    with rt.store.transaktion():
+        _prepare_zone_gesperrt(rt)
+
+
+def _prepare_zone_gesperrt(rt: Runtime) -> None:
     if not _may_prepare_zone(rt):
         return
     rule = write_budget.RETRY_QUOTA
@@ -705,12 +735,14 @@ def _zustand_nicht_migriert(boot: BootInfo) -> bool:
 
 def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
           mqtt_factory: Callable[[RegulationWorker, int], MqttChannel],
-          neustart: Callable[[], None]) -> Runtime | IdleBridge:
+          neustart: Callable[[], None], status_sink: StatusSink | None = None,
+          notify_sink: NotifySink | None = None) -> Runtime | IdleBridge:
     """Gibt den gestarteten Laufzeit-Kontext zurueck oder den Ruhezustand, wenn gar nicht erst geregelt wird: nicht
     eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen. mqtt_factory (Pflicht): die
     Laufzeit nutzt die Verbindung des Geraets; einen eigenen MQTT-Client gibt es nicht. neustart (Pflicht):
     der Neustart des Hosts; die Laufzeit ruft ihn nur im Worker-Thread (Abo am Fristende wieder aktiv,
-    Neupruefung im Konfigurationsfehler, Neustart nach dem Zuruecksetzen)."""
+    Neupruefung im Konfigurationsfehler, Neustart nach dem Zuruecksetzen). status_sink und notify_sink ersetzen
+    die Senken des Hosts (kreise.start: ein Sammler fuer das Ereignis der Anlage, Meldungen mit Kreis-Praefix)."""
     boot = host.boot_info()
     if not boot.signed_off and not boot.configured:
         return _idle(clock, None, IDLE_NOT_CONFIGURED, neustart=neustart)
@@ -718,14 +750,15 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     host.wait_until_ready()
     assert boot.tenant_id is not None  # configured bzw. signed_off setzen ihn voraus
     store = _zustandsspeicher(boot)
-    status = StatusReporter(host.status_sink, boot.tenant_id, store, boot.lever_set, boot.client_version)
+    status = StatusReporter(status_sink or host.status_sink, boot.tenant_id, store, boot.lever_set,
+                            boot.client_version)
     if _zustand_nicht_migriert(boot):
         # Vor jedem Schreiben: Meldung und Fehlerroute wuerden einen frischen Zustand im Kreisordner anlegen.
         logger.error("FEHLER: %s", GRUND_ZUSTAND_NICHT_MIGRIERT)
         status.update(konfigurationsfehler=True, grund=GRUND_ZUSTAND_NICHT_MIGRIERT)
         return _idle(clock, status, STATUS_KONFIGURATIONSFEHLER, neustart=neustart,
                      recheck_after=CONFIG_RECHECK_SECONDS)
-    notifier = Notifier(store, host.notify_sink, boot.notify_hints_off)
+    notifier = Notifier(store, notify_sink or host.notify_sink, boot.notify_hints_off)
     ticks.seed_notices(notifier, store.state.delivery)
     status.publish()
     if boot.signed_off:
@@ -748,7 +781,8 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     # Rueckbau: offene-punkte.md A6-36-Uebernahme); beim Gateway ist sie nie gleich (seine Kennung hat den Schluessel "id", kein Hebel
     # heisst so).
     try:
-        bind_to_tenant(store, boot.tenant_id, loaded.plant_id, frueher=roles.lever_refs_identity(loaded.manifest))
+        bind_to_tenant(store, boot.tenant_id, loaded.plant_id, frueher=roles.lever_refs_identity(loaded.manifest),
+                       zaehler_der_anlage_behalten=boot.kreise_der_anlage > 1)
     except StorageError:
         logger.warning(
             "Bindung an Einrichtung und Anlage nicht gespeichert, gilt bis zum naechsten Schreiben", exc_info=True)

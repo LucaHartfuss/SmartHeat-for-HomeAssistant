@@ -61,6 +61,16 @@ def erste(konfiguration) -> dict:
     return ansicht(konfiguration, eintraege[0] if eintraege else {})
 
 
+def fuer(konfiguration, nummer: int) -> dict:
+    """Die Sicht des Kreises mit dieser Nummer; ohne ihn nur die anlagenweiten Felder (wie `erste` ohne Kreis)."""
+    if not isinstance(konfiguration, Mapping):
+        konfiguration = {}
+    for eintrag in kreise(konfiguration):
+        if eintrag.get("kreis") == nummer and not isinstance(eintrag.get("kreis"), bool):
+            return ansicht(konfiguration, eintrag)
+    return ansicht(konfiguration, {})
+
+
 def dokument_aus_sicht(sicht: Mapping) -> dict:
     """Die Umkehrung von `ansicht` fuer genau einen Kreis: ein Dokument mit einem Kreis, dessen einziger Raum ein
     Referenzraum mit den `raumfuehler` der Sicht ist (fuer die Pruefung gegen den Host)."""

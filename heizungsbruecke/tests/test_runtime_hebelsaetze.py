@@ -1,8 +1,10 @@
 """Betrieb mit den Bindings ueber _start_bridge (Harness aus runtime_helpers.py, Geraete-Pfad): der
 Hebelsatz des Konfigurationsdokuments waehlt Binding und lokale Sicherheit; fehlende Pflicht-Rollen sind ein
 Konfigurationsfehler; Vaillant bleibt unveraendert (alle Tests in test_runtime.py)."""
+import dataclasses
 import logging
 
+import pytest
 from fakes import VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND, schreibziel_eintrag
 from runtime_helpers import (
     WEISHAUPT,
@@ -18,6 +20,7 @@ from runtime_helpers import (
     _trigger,
 )
 
+from heizungsbruecke import host as host_modul
 from smartheat_core import write_budget
 from smartheat_core.pipeline import BUDGET_KEY, BUDGET_MESSAGE
 from smartheat_runtime.backup_store import save_backup
@@ -251,3 +254,19 @@ def test_bestand_von_1_1_0_behaelt_ursprungswerte_und_energiesummen(env, caplog)
     with caplog.at_level(logging.INFO, logger="smartheat_runtime.state"):
         _start(env, entity_energy_primary_heating="sensor.gas")
     assert _uebernahmen(caplog) == [] and _backup(env)["originals"] == bestand["originals"]
+
+
+@pytest.mark.parametrize("kreise,bleibt", [(1, False), (2, True)])
+def test_andere_anlage_setzt_die_zaehler_der_anlage_nur_bei_einem_einzigen_kreis_zurueck(env, monkeypatch, kreise, bleibt):
+    """Teilen mehrere Kreise die Zaehler der Anlage, setzt die andere Anlage eines Kreises nur dessen Zustand zurueck."""
+    save_backup(env.paths["BACKUP_PATH"], {"tenant_id": "test_tenant", "plant_id": "andere:anlage", "boost_since": None})
+    save_backup(env.paths["RUNTIME_DIR"] / "anlage_budget.json", {"lifetime_writes": 42})
+    echt = host_modul.dokument_config.boot_info
+    monkeypatch.setattr(
+        host_modul.dokument_config, "boot_info",
+        lambda *args, **kwargs: dataclasses.replace(echt(*args, **kwargs), kreise_der_anlage=kreise))
+
+    _start(env)
+
+    assert _backup(env)["plant_id"] == KREIS_KENNUNG
+    assert (_anlage_budget(env).get("lifetime_writes") == 42) is bleibt

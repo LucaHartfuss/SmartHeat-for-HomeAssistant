@@ -15,21 +15,18 @@ Prozess teilen sich eine `AnlagenBudget` (ein Lock je Aufruf); wer eine Eintrags
 aus dem Worker-Thread seines Kreises."""
 import logging
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
-from smartheat_core import write_budget
 from smartheat_core.logtext import lesbar
 from smartheat_runtime import backup_store
 from smartheat_runtime.delivery import DeliveryState
-from smartheat_runtime.state import BridgeState, StateStore, StorageError, parse_budget
+from smartheat_runtime.state import ANLAGE_SCHLUESSEL, BridgeState, StateStore, StorageError, parse_budget
 
 logger = logging.getLogger(__name__)
 
-#: Die Schluessel der ganzen Anlage; jeder andere Schluessel gehoert dem Kreis.
-ANLAGE_SCHLUESSEL = frozenset({
-    write_budget.TOTAL, write_budget.ZONE_PREPARE, write_budget.BOOST_START, write_budget.EMERGENCY_START,
-})
 _FELDER = ("write_budget", "lifetime_writes")
 
 
@@ -50,7 +47,7 @@ class AnlagenBudget:
 
     def __init__(self, path: Path) -> None:
         self._path = path
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.vorhanden = path.exists()
         try:
             raw = backup_store.load_backup(path)
@@ -60,6 +57,12 @@ class AnlagenBudget:
         self._write_budget, self._lifetime_writes = _zaehler(raw)
         self._gespeichert = self._inhalt()
         self._schmutzig = False
+
+    @contextmanager
+    def transaktion(self) -> Iterator[None]:
+        """Haelt den Lock ueber eine ganze Folge aus Lesen, Aendern und Schreiben (derselbe Thread darf wiederholt)."""
+        with self._lock:
+            yield
 
     @property
     def write_budget(self) -> dict:
@@ -136,6 +139,11 @@ class BudgetStore:
             self._kreis.update(write_budget=_ohne_anlage(state.write_budget), lifetime_writes=0)
         except StorageError:
             logger.warning("Zaehler der Anlage im Kreis nicht entfernt, sie gelten dort nicht (Anlagendatei geht vor)")
+
+    def transaktion(self):
+        """Lock der Anlage ueber eine Folge aus Lesen und Schreiben der Zaehler der Anlage (Tageslimit pruefen, schreiben,
+        zaehlen; Eintrag lesen, aendern, zurueckschreiben). Der Zustand des Kreises hat nur einen Schreiber."""
+        return self._anlage.transaktion()
 
     @property
     def state(self) -> BridgeState:

@@ -265,6 +265,24 @@ def test_eine_andere_anlage_setzt_auch_die_zaehler_der_anlage_zurueck(runtime_di
     assert "write_budget" not in _kreis_datei(runtime_dir, 1)
 
 
+def test_eine_andere_anlage_behaelt_die_zaehler_der_anlage_wenn_weitere_kreise_sie_teilen(runtime_dir):
+    """Mehrere Kreise teilen die Zaehler der Anlage: ein Kreis auf einer anderen Anlage setzt nur seinen eigenen
+    Zustand zurueck; die Zaehler der Anlage (Tageslimit, Lebensdauer) bleiben, ein Zuruecksetzen wuerde den
+    Verschleissschutz der anderen Kreise aufheben."""
+    store = BudgetStore(_kreis_store(runtime_dir, 1), _budget(runtime_dir))
+    bind_to_tenant(store, "t", "anlage-a")
+    write_budget.put(store, write_budget.TOTAL, _eintrag(6))
+    write_budget.put(store, write_budget.RESTORE, _eintrag(1))
+    store.update(lifetime_writes=40, boost_active=True)
+    assert bind_to_tenant(store, "t", "anlage-b", zaehler_der_anlage_behalten=True) == "andere_anlage"
+    assert not store.state.boost_active  # der Zustand des Kreises ist zurueckgesetzt
+    assert store.state.plant_id == "anlage-b"
+    assert write_budget.get(store, write_budget.TOTAL) == _eintrag(6)
+    assert store.state.lifetime_writes == 40
+    assert _anlage_datei(runtime_dir)["lifetime_writes"] == 40
+    assert write_budget.get(store, write_budget.RESTORE) is None  # nur die Zaehler der Anlage bleiben, der des Kreises geht
+
+
 def test_dieselbe_anlage_behaelt_die_zaehler_der_anlage(runtime_dir):
     store = BudgetStore(_kreis_store(runtime_dir, 1), _budget(runtime_dir))
     bind_to_tenant(store, "t", "anlage-a")

@@ -82,10 +82,13 @@ def ursprungswerte(konfiguration) -> dict:
     return dict(werte) if isinstance(werte, Mapping) else {}
 
 
-def abo_status(konfiguration) -> str:
+def abo_status(konfiguration, kreis: int | None = None) -> str:
+    """Abo-Status des Kreises `kreis` (`kreise[n].abo`); ohne Nummer der des ersten Kreises. Ohne Einrichtung oder
+    ohne diesen Kreis unbekannt."""
     if not eingerichtet(konfiguration):
         return entitlement.UNKNOWN
-    abo = kreisansicht.erste(konfiguration).get("abo")
+    sicht = kreisansicht.erste(konfiguration) if kreis is None else kreisansicht.fuer(konfiguration, kreis)
+    abo = sicht.get("abo")
     return ABO.get(abo, entitlement.UNKNOWN) if isinstance(abo, str) else entitlement.UNKNOWN
 
 
@@ -129,6 +132,7 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
         local_check_interval=intervalle.get("pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
         backup_path=backup_path, failsafe_path=failsafe_path, kreis=kreisnummer(konfiguration),
         aufraeumen_path=aufraeumen_path, alter_zustand=alter_zustand, anlage_budget_path=anlage_budget_path,
+        kreise_der_anlage=max(1, len(kreisansicht.kreise(konfiguration))),
     )
 
 
@@ -172,6 +176,33 @@ def laufzeit_relevant(alt, neu) -> bool:
     alt = alt if isinstance(alt, Mapping) else {}
     neu = neu if isinstance(neu, Mapping) else {}
     return any(_laufzeit_wert(alt, key) != _laufzeit_wert(neu, key) for key in LAUFZEIT_FELDER)
+
+
+def laufzeit_relevant_kreis(alt, neu, kreis: int) -> bool:
+    """Wie `laufzeit_relevant`, aber nur fuer die Laufzeit des Kreises `kreis`: die anlagenweiten Felder und der Eintrag
+    dieses Kreises zaehlen, die Eintraege der anderen nicht. Ein Abo, das wieder `aktiv` ist, zaehlt nicht: der Kreis
+    nimmt es selbst auf (`abo_wiederaufnahme`), ohne dass der Host neu startet."""
+    alt = alt if isinstance(alt, Mapping) else {}
+    neu = neu if isinstance(neu, Mapping) else {}
+    if any(alt.get(feld) != neu.get(feld) for feld in LAUFZEIT_FELDER if feld != "kreise"):
+        return True
+    ohne_abo = abo_status(neu, kreis) == entitlement.ACTIVE
+    return _kreis_wert(alt, kreis, ohne_abo=ohne_abo) != _kreis_wert(neu, kreis, ohne_abo=ohne_abo)
+
+
+def _kreis_wert(konfiguration: Mapping, kreis: int, *, ohne_abo: bool):
+    """Eintrag des Kreises ohne Ursprungswerte (und ohne Abo, wenn gewuenscht); None, wenn es ihn nicht gibt."""
+    weg = ("ursprungswerte", "abo") if ohne_abo else ("ursprungswerte",)
+    for eintrag in kreisansicht.kreise(konfiguration):
+        if eintrag.get("kreis") == kreis:
+            return {k: v for k, v in eintrag.items() if k not in weg}
+    return None
+
+
+def abo_wiederaufnahme(alt, neu, kreis: int) -> bool:
+    """Das Abo des Kreises war nicht aktiv und ist es jetzt: der Kreis verlaesst seinen Ruhezustand."""
+    return (eingerichtet(neu) and abo_status(neu, kreis) == entitlement.ACTIVE
+            and abo_status(alt, kreis) != entitlement.ACTIVE)
 
 
 def _laufzeit_wert(konfiguration: Mapping, feld: str):
