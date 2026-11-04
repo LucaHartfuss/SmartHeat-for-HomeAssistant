@@ -3,8 +3,11 @@
     python -m smartheat_device.rastung_migration --device-dir <Ordner> --host ha|gateway --release <Release>
 
 Sie deckt genau zwei Faelle ab. Die Konfiguration darf dabei noch in der flachen Form des Stands vor den Kreisen liegen
-(Heizungsbruecke 1.1.0, so liegt sie auf den Geraeten): sie wird nur im Speicher zu einem Dokument mit einem Kreis und
-einem Referenzraum umgeformt und wie ein neues Dokument geprueft; die Datei bleibt, wie sie ist. (1) Die Datei fehlt, die Konfiguration ist aber eingerichtet (Stand vor der Rastung):
+(Heizungsbruecke 1.1.0, so liegt sie auf den Geraeten): sie wird im Speicher zu einem Dokument mit einem Kreis und
+einem Referenzraum umgeformt und wie ein neues Dokument geprueft. Nach einem Erfolg stellt der Lauf die flache Datei
+als `konfiguration.json.pre-<Release>` beiseite (Rueckweg: zurueckspielen): der neue Stand liest die flache Form nie, das
+Geraet gilt danach als nicht eingerichtet und wartet still auf das Dokument mit Kreisen, das der Server schickt. Ein
+Dokument mit Kreisen bleibt liegen. (1) Die Datei fehlt, die Konfiguration ist aber eingerichtet (Stand vor der Rastung):
 die erste Rastung kommt aus der bestaetigten, lokal geprueften Konfiguration. (2) Die Datei hat das alte Format (ein Paar
 aus Hebelsatz und Verteilsystem): sie wird zur Liste mit einem Kreis, aber nur, wenn die Konfiguration genau einen Kreis
 hat und dessen Paar dem alten gleicht; vorher entsteht die Sicherung `sicherheitssatz.json.pre-<Release>` (Rueckweg:
@@ -15,6 +18,7 @@ sie ist; eine gueltige Datei bleibt unberuehrt. Ausgegeben wird je Lauf ein Code
 Erfolgscode, sonst 1)."""
 import argparse
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -103,10 +107,17 @@ def _aus_flacher_form(flach: dict, host: str) -> dict | None:
     return neu
 
 
-def bestaetigte_konfiguration(ordner: Path, host: str):
+def _sicherung(ordner: Path, release: str) -> Path:
+    return ordner / f"{_KONFIGURATION}.pre-{release}"
+
+
+def bestaetigte_konfiguration(ordner: Path, host: str, *, release: str | None = None):
     """(Inhalt, None) oder (None, Code): eingerichtet, in der Form mit Kreisen und von der lokalen Pruefung ohne
-    Rastung angenommen; eine flache Konfiguration des Stands vor den Kreisen kommt umgeformt zurueck."""
+    Rastung angenommen; eine flache Konfiguration des Stands vor den Kreisen kommt umgeformt zurueck. Mit `release`
+    gilt bei fehlender Datei die Sicherung dieses Release (die Rastungsmigration hat die flache Datei beiseite gestellt)."""
     roh = dateien.lesen_json(ordner / _KONFIGURATION)
+    if roh is None and release is not None:
+        roh = dateien.lesen_json(_sicherung(ordner, release))
     if roh is None:
         return None, KONFIGURATION_NICHT_EINGERICHTET
     version = roh.get("version") if isinstance(roh, dict) else None
@@ -130,6 +141,40 @@ def _schreiben(pfad: Path, neu: rastung.Rastung, erfolg: str) -> str:
     except (OSError, ValueError):
         return SCHREIBEN_FEHLGESCHLAGEN
     return erfolg
+
+
+def _ist_flach(ordner: Path) -> bool:
+    roh = dateien.lesen_json(ordner / _KONFIGURATION)
+    inhalt = roh.get("inhalt") if isinstance(roh, dict) else None
+    return isinstance(inhalt, dict) and "kreise" not in inhalt
+
+
+def _sicherung_belegt(ordner: Path, release: str) -> bool:
+    sicherung = _sicherung(ordner, release)
+    return sicherung.is_symlink() or sicherung.exists()
+
+
+def _beiseite(ordner: Path, release: str) -> str | None:
+    """Sichert die flache Konfiguration als `konfiguration.json.pre-<Release>` und entfernt sie dann; erst danach gilt
+    der neue Stand. None bei Erfolg, sonst der Fehlercode (ein zweiter Lauf holt das Entfernen nach)."""
+    pfad = ordner / _KONFIGURATION
+    try:
+        if _sicherung_belegt(ordner, release):
+            return SICHERUNG_VORHANDEN
+        dateien.schreiben(_sicherung(ordner, release), pfad.read_bytes(), modus=dateien.PRIVAT)
+        os.unlink(pfad)
+    except OSError:
+        return SCHREIBEN_FEHLGESCHLAGEN
+    return None
+
+
+def _nachholen(ordner: Path, host: str, release: str) -> str:
+    """Die Rastung ist schon aktuell: eine gueltige flache Konfiguration, die noch da liegt (ein frueherer Lauf scheiterte
+    beim Beiseitestellen), wird jetzt beiseite gestellt."""
+    inhalt, _ = bestaetigte_konfiguration(ordner, host)
+    if inhalt is None or not _ist_flach(ordner):
+        return BEREITS_AKTUELL
+    return _beiseite(ordner, release) or BEREITS_AKTUELL
 
 
 def _altes_format(pfad: Path, release: str, neu: rastung.Rastung) -> str:
@@ -161,7 +206,7 @@ def migrieren(ordner: Path, *, host: str, release: str) -> str:
     pfad = ordner / rastung.DATEI
     gelesen = rastung.lesen(pfad)
     if gelesen is not None and not gelesen.sperre:
-        return BEREITS_AKTUELL
+        return _nachholen(ordner, host, release)
     if gelesen is not None and gelesen.sperre != "altes_format":
         return RASTUNG_GESPERRT
     inhalt, code = bestaetigte_konfiguration(ordner, host)
@@ -170,9 +215,13 @@ def migrieren(ordner: Path, *, host: str, release: str) -> str:
     neu = rastung.aus_konfiguration(inhalt)
     if neu is None:
         return KONFIGURATION_UNGUELTIG
-    if gelesen is None:
-        return _schreiben(pfad, neu, AUS_KONFIGURATION)
-    return _altes_format(pfad, release, neu)
+    flach = _ist_flach(ordner)
+    if flach and _sicherung_belegt(ordner, release):
+        return SICHERUNG_VORHANDEN  # vor jeder Aenderung
+    code = _schreiben(pfad, neu, AUS_KONFIGURATION) if gelesen is None else _altes_format(pfad, release, neu)
+    if flach and code in ERFOLG:
+        return _beiseite(ordner, release) or code
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:

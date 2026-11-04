@@ -10,11 +10,13 @@ from pathlib import Path
 import konfig_form
 import pytest
 from bindung_beispiele import parameter
+from device_helpers import FakeHost, World
 
 from smartheat_core import config_check, dateien, kennung, rastung, zustandspfade
+from smartheat_device import bootstrap, zustand_migration
 from smartheat_device import rastung_migration as migration
-from smartheat_device import zustand_migration
 from smartheat_device.documents import DocumentStore
+from smartheat_runtime import dokument_config
 
 DATEN = Path(__file__).parent / "daten"
 HA_DATEI = DATEN / "konfiguration_1_1_0_ha.json"
@@ -48,6 +50,7 @@ def _neue_form(host):
     """Das Dokument, das der Server nach der Umstellung fuer dieselbe Anlage schickt (mit seinen neuen Parametern)."""
     flach = {feld: wert for feld, wert in _flach(FALL[host][0]).items() if feld != "profil"}
     flach["bindungsparameter"] = parameter(flach["hebelsatz"])
+    flach["mindest_software"] = "0.6.0"    # die Version der Testwelt; die Fixture verlangt die damalige Add-on-Version
     return konfig_form.nach_form({"schema": 2, "version": 9, **flach})
 
 
@@ -55,7 +58,6 @@ def _neue_form(host):
 
 def test_a_missing_rastung_is_derived_from_the_flat_configuration_as_a_list_with_one_circle(tmp_path, host):
     _ablegen(tmp_path, FALL[host][0])
-    vorher = (tmp_path / "konfiguration.json").read_bytes()
     assert migration.migrieren(tmp_path, host=host, release=RELEASE) == migration.AUS_KONFIGURATION
     gelesen = rastung.lesen(tmp_path / rastung.DATEI)
     assert gelesen is not None and len(gelesen.kreise) == 1 and gelesen.kreise[0].kreis == 1
@@ -65,8 +67,7 @@ def test_a_missing_rastung_is_derived_from_the_flat_configuration_as_a_list_with
     assert gelesen.kreise[0].soll_entity == rastung.soll_entity(flach["bindung"])
     assert (host != "ha") or gelesen.kreise[0].soll_entity == "climate.wohnzimmer_thermostat::temperature"
     assert stat.S_IMODE((tmp_path / rastung.DATEI).stat().st_mode) == 0o600
-    assert (tmp_path / "konfiguration.json").read_bytes() == vorher    # die flache Datei bleibt, wie sie ist
-    assert not list(tmp_path.glob("*.pre-*"))
+    assert not (tmp_path / "konfiguration.json").exists()    # die flache Datei ist beiseite gestellt
 
 
 def test_the_old_one_pair_file_of_the_live_state_becomes_the_list_and_is_backed_up(tmp_path, host):
@@ -241,3 +242,160 @@ def test_the_state_migration_finds_the_circle_in_the_flat_file_of_the_live_state
     assert zustand_migration.migrieren(device, host="ha", release=RELEASE) == zustand_migration.MIGRIERT
     neu = json.loads((zustandspfade.kreis_dir(tmp_path / "runtime", 1) / "backup.json").read_text())
     assert neu["plant_id"] == kennung.aus_ha_kreis("mypyllant", "Zuhause", "0")
+
+
+# --- Nach der Migration wartet das Geraet still auf das Dokument mit Kreisen -------------------------------------------
+
+class _HaHost(FakeHost):
+    host = "ha"
+
+
+def _geraet_nach_migration(tmp_path, host):
+    """Wartungsfenster wie im Ablaufbuch: Datei des Stands 1.1.0 und altes Ein-Paar-Format, Migration, dann startet das
+    Geraet neu (neue Welt auf denselben Dateien; der Zugang bleibt gespeichert, das Geraet ist uebernommen)."""
+    datei, alt = FALL[host]
+    ordner = tmp_path / "device"
+    ordner.mkdir()
+    _ablegen(ordner, datei)
+    (ordner / rastung.DATEI).write_text(json.dumps(alt))
+    assert migration.migrieren(ordner, host=host, release=RELEASE) == migration.ALTES_FORMAT
+    return ordner, World(tmp_path, _HaHost() if host == "ha" else FakeHost())
+
+
+def test_the_flat_file_is_put_aside_as_a_backup_after_a_successful_migration(tmp_path, host):
+    datei = FALL[host][0]
+    ordner, _ = _geraet_nach_migration(tmp_path, host)
+    assert not (ordner / "konfiguration.json").exists()
+    sicherung = ordner / f"konfiguration.json.pre-{RELEASE}"
+    assert sicherung.read_bytes() == datei.read_bytes() and stat.S_IMODE(sicherung.stat().st_mode) == 0o600
+
+
+def test_the_device_after_the_migration_waits_quietly_for_the_document_with_circles(tmp_path, host):
+    ordner, world = _geraet_nach_migration(tmp_path, host)
+    assert not world.device.documents.eingerichtet() and world.device.documents.inhalt("konfiguration") is None
+    assert dokument_config.eingerichtet(world.device.documents.inhalt("konfiguration") or {}) is False
+    world.verbinden()
+    anzeige = world.device.anzeige()
+    assert (anzeige.zustand, anzeige.eingerichtet, anzeige.device_state) == (
+        "wartet_auf_einrichtung", False, "uebernommen")
+    assert anzeige.hinweise == () and anzeige.konfiguration_abgelehnt is None and not anzeige.code_zeigen
+    assert world.device.documents.ablehnung("konfiguration") is None
+    (hello,) = world.link.of("up/hello")
+    assert hello["konfiguration_version"] == 0    # der Server schickt sein Dokument
+
+
+def test_the_document_with_circles_then_sets_the_device_up_without_a_new_registration(tmp_path, host):
+    ordner, world = _geraet_nach_migration(tmp_path, host)
+    world.verbinden()
+    kennung_vorher = world.device.identity.device_id
+    neu = _neue_form(host)
+    world.empfangen("down/config", neu)
+    assert world.device.documents.eingerichtet() and world.device.documents.version("konfiguration") == 9
+    assert world.device.documents.ablehnung("konfiguration") is None
+    assert [alt for alt, _ in world.host.konfigurationen] == [None]    # Einrichtung, nichts abgeloest
+    assert world.device.identity.device_id == kennung_vorher and bootstrap.device_state(ordner) == "uebernommen"
+    assert world.client.calls == []                                     # keine neue Registrierung
+    assert len(rastung.lesen(ordner / rastung.DATEI).kreise) == 1
+
+
+def test_a_document_that_the_migrated_rastung_does_not_cover_is_still_refused(tmp_path, host):
+    ordner, world = _geraet_nach_migration(tmp_path, host)
+    world.verbinden()
+    fremd = _neue_form(host)
+    fremd["kreise"][0]["verteilsystem"] = "Fussbodenheizung"
+    world.empfangen("down/config", fremd)
+    assert not world.device.documents.eingerichtet()
+    assert world.device.documents.ablehnung("konfiguration")[1] == config_check.HEBELSATZ_EINGERASTET
+
+
+@pytest.mark.parametrize("code, aendern", [
+    (migration.ALTES_FORMAT_PASST_NICHT, lambda alt: {**alt, "verteilsystem": "Fussbodenheizung"}),
+    (migration.RASTUNG_GESPERRT, lambda alt: "kaputt"),
+])
+def test_without_success_the_flat_file_stays_where_it_is(tmp_path, host, code, aendern):
+    datei, alt = FALL[host]
+    _ablegen(tmp_path, datei)
+    neu = aendern(alt)
+    (tmp_path / rastung.DATEI).write_text(neu if isinstance(neu, str) else json.dumps(neu))
+    assert migration.migrieren(tmp_path, host=host, release=RELEASE) == code
+    assert (tmp_path / "konfiguration.json").read_bytes() == datei.read_bytes()
+    assert not list(tmp_path.glob("konfiguration.json.pre-*"))
+
+
+def test_an_existing_backup_of_the_flat_file_stops_the_run_before_any_change(tmp_path, host):
+    _ablegen(tmp_path, FALL[host][0])
+    (tmp_path / f"konfiguration.json.pre-{RELEASE}").write_text("alt")
+    assert migration.migrieren(tmp_path, host=host, release=RELEASE) == migration.SICHERUNG_VORHANDEN
+    assert (tmp_path / "konfiguration.json").read_bytes() == FALL[host][0].read_bytes()
+    assert not (tmp_path / rastung.DATEI).exists()
+    assert (tmp_path / f"konfiguration.json.pre-{RELEASE}").read_text() == "alt"
+
+
+def test_a_rerun_after_a_failed_removal_puts_the_flat_file_aside(tmp_path, host):
+    """Die Rastung steht schon, die Datei noch: der zweite Lauf holt das Beiseitestellen nach (Exit 0)."""
+    _ablegen(tmp_path, FALL[host][0])
+    inhalt, _ = migration.bestaetigte_konfiguration(tmp_path, host)
+    rastung.schreiben(tmp_path / rastung.DATEI, rastung.aus_konfiguration(inhalt), "2026-11-01T00:00:00+01:00")
+    assert migration.migrieren(tmp_path, host=host, release=RELEASE) == migration.BEREITS_AKTUELL
+    assert not (tmp_path / "konfiguration.json").exists()
+    assert (tmp_path / f"konfiguration.json.pre-{RELEASE}").read_bytes() == FALL[host][0].read_bytes()
+    assert migration.migrieren(tmp_path, host=host, release=RELEASE) == migration.BEREITS_AKTUELL
+
+
+def test_a_stored_document_with_circles_is_never_put_aside(tmp_path, host):
+    speicher = DocumentStore(tmp_path, host=host, software_version="1.4.0")
+    assert speicher.empfangen("konfiguration", _neue_form(host)).ok
+    vorher = (tmp_path / "konfiguration.json").read_bytes()
+    assert migration.migrieren(tmp_path, host=host, release=RELEASE) == migration.BEREITS_AKTUELL
+    assert (tmp_path / "konfiguration.json").read_bytes() == vorher and not list(tmp_path.glob("*.pre-*"))
+
+
+def test_the_state_migration_after_the_rastung_migration_reads_the_backup_of_the_flat_file(tmp_path):
+    """Reihenfolge des Ablaufbuchs: erst Rastung (stellt die Datei beiseite), dann Zustand (braucht die Kennung)."""
+    device = tmp_path / "device"
+    device.mkdir()
+    _ablegen(device, HA_DATEI)
+    alt = json.dumps({"anlage": "Zuhause", "nummer": "0", "plattform": "mypyllant"}, sort_keys=True)
+    dateien.schreiben_json(tmp_path / "backup.json", {"tenant_id": "zuhause", "plant_id": alt, "lifetime_writes": 5},
+                           modus=dateien.PRIVAT)
+    assert migration.migrieren(device, host="ha", release=RELEASE) == migration.AUS_KONFIGURATION
+    assert not (device / "konfiguration.json").exists()
+    assert zustand_migration.migrieren(device, host="ha", release=RELEASE) == zustand_migration.MIGRIERT
+    neu = json.loads((zustandspfade.kreis_dir(tmp_path / "runtime", 1) / "backup.json").read_text())
+    assert neu["plant_id"] == kennung.aus_ha_kreis("mypyllant", "Zuhause", "0")
+
+
+def test_the_state_migration_without_any_configuration_still_stops(tmp_path):
+    device = tmp_path / "device"
+    device.mkdir()
+    dateien.schreiben_json(tmp_path / "backup.json", {"tenant_id": "zuhause", "plant_id": "x", "lifetime_writes": 5},
+                           modus=dateien.PRIVAT)
+    assert zustand_migration.migrieren(device, host="ha", release=RELEASE) == zustand_migration.KONFIGURATION_NICHT_EINGERICHTET
+    assert (tmp_path / "backup.json").exists()
+
+
+def _rastung_ohne_beiseitestellen(ordner, host):
+    inhalt, _ = migration.bestaetigte_konfiguration(ordner, host)
+    rastung.schreiben(ordner / rastung.DATEI, rastung.aus_konfiguration(inhalt), "2026-11-01T00:00:00+01:00")
+
+
+def test_a_rerun_with_an_existing_backup_does_not_report_success_and_keeps_both_files(tmp_path, host):
+    _ablegen(tmp_path, FALL[host][0])
+    _rastung_ohne_beiseitestellen(tmp_path, host)
+    (tmp_path / f"konfiguration.json.pre-{RELEASE}").write_text("alt")
+    assert migration.migrieren(tmp_path, host=host, release=RELEASE) == migration.SICHERUNG_VORHANDEN
+    assert (tmp_path / "konfiguration.json").read_bytes() == FALL[host][0].read_bytes()
+    assert (tmp_path / f"konfiguration.json.pre-{RELEASE}").read_text() == "alt"
+
+
+def test_a_failing_write_of_the_backup_leaves_the_flat_file_and_reports_the_failure(tmp_path, host, monkeypatch):
+    _ablegen(tmp_path, FALL[host][0])
+    _rastung_ohne_beiseitestellen(tmp_path, host)
+
+    def verweigert(*args, **kwargs):
+        raise OSError("Datentraeger")
+
+    monkeypatch.setattr(migration.dateien, "schreiben", verweigert)
+    assert migration.migrieren(tmp_path, host=host, release=RELEASE) == migration.SCHREIBEN_FEHLGESCHLAGEN
+    assert (tmp_path / "konfiguration.json").read_bytes() == FALL[host][0].read_bytes()
+    assert not (tmp_path / f"konfiguration.json.pre-{RELEASE}").exists()

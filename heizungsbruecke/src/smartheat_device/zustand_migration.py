@@ -10,6 +10,8 @@ Laufzeit nicht starten (Grund `zustand_nicht_migriert`).
 
 Der Lauf sichert jede vorhandene alte Datei als `<Datei>.pre-<Release>` (Rueckweg: zurueckspielen, Kreisordner
 loeschen; der alte Stand liest die alten Orte), schreibt die Dateien in den Kreisordner und entfernt erst dann die alten.
+Die bestaetigte Konfiguration dafuer kommt aus `konfiguration.json` oder, wenn die Rastungsmigration eine flache Datei
+schon beiseite gestellt hat, aus `konfiguration.json.pre-<Release>`.
 Die Kennung der Anlage in der Sicherung (`plant_id`) wird von der alten Form (Plattform, Anlage, Nummer bzw. Treiber und
 seine Parameter) in die neue umgeschrieben (`smartheat_core.kennung`), aber nur, wenn sie der alten Form dieser
 Konfiguration gleicht; jede andere Kennung bleibt, wie sie ist, die Bindung an das Konto entscheidet beim Start. Eine
@@ -92,7 +94,7 @@ def _kennungen(inhalt: dict, host: str) -> tuple[str, str]:
     return json.dumps({"id": treiber_id, **{name: parameter.get(name) for name in namen}}, sort_keys=True), neu
 
 
-def _neue_sicherung(roh: bytes, ordner: Path, host: str) -> bytes | str:
+def _neue_sicherung(roh: bytes, ordner: Path, host: str, release: str) -> bytes | str:
     """Der Inhalt der neuen `backup.json` oder der Fehlercode."""
     try:
         werte = json.loads(roh)
@@ -105,7 +107,7 @@ def _neue_sicherung(roh: bytes, ordner: Path, host: str) -> bytes | str:
         return roh
     if not isinstance(alt, str) or not alt:
         return DATEI_UNGUELTIG
-    inhalt, code = rastung_migration.bestaetigte_konfiguration(ordner, host)
+    inhalt, code = rastung_migration.bestaetigte_konfiguration(ordner, host, release=release)
     if inhalt is None:
         return code or KONFIGURATION_UNGUELTIG
     try:
@@ -154,7 +156,7 @@ def migrieren(ordner: Path, *, host: str, release: str) -> str:
         return DATEI_UNGUELTIG
     neu: dict[str, bytes] = dict(inhalte)
     if zustandspfade.BACKUP in alt:
-        sicherung = _neue_sicherung(inhalte[zustandspfade.BACKUP], ordner, host)
+        sicherung = _neue_sicherung(inhalte[zustandspfade.BACKUP], ordner, host, release)
         if isinstance(sicherung, str):
             return sicherung
         neu[zustandspfade.BACKUP] = sicherung
