@@ -27,7 +27,7 @@ from smartheat_core import kreisansicht
 from smartheat_core.bindungsparameter import Fehler as BindungsparameterFehler
 from smartheat_core.bindungsparameter import beschreibung
 from smartheat_core.levers import LEVER_SETS
-from smartheat_core.rastung import Rastung, hebel_passt, passt
+from smartheat_core.rastung import SCHREIBROLLEN_HA, Rastung, hebel_passt, passt
 from smartheat_core.safety import resolve_local_safety
 from smartheat_core.verfahren import WegUnbekannt, verfahren_fuer
 from smartheat_core.zahlen import ist_endliche_zahl
@@ -366,12 +366,13 @@ def _ref(wert: str) -> str:
 
 
 def _ziele(sicht: Mapping, host: str) -> set:
-    """Die Schreibziele eines Kreises: bei HA die Entities der Rollen und der Herstellerkreis, beim Gateway der Treiber
+    """Die Schreibziele eines Kreises: bei HA die Entities der Schreibrollen und der Herstellerkreis, beim Gateway der Treiber
     mit seinen Parametern und das Thermostat."""
     bindung = sicht["bindung"]
     if host == HOST_HA:
         kreis = bindung["kreis"]
-        return {*(("entity", _ref(ref)) for ref in bindung["rollen"].values()),
+        schreibend = {*SCHREIBROLLEN_HA, "room_target"}  # lesende Rollen (Aussentemperatur, Zaehler) teilen sich die Kreise
+        return {*(("entity", _ref(ref)) for rolle, ref in bindung["rollen"].items() if rolle in schreibend),
                 ("kreis", *(kreis.get(key) for key in (*KREIS_FELDER, *KREIS_OPTIONAL)))}
     ziele: set[tuple] = {("treiber", bindung["treiber"]["id"],
                           json.dumps(bindung["treiber"]["parameter"], sort_keys=True))}

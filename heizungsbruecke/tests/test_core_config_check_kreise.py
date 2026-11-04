@@ -140,6 +140,13 @@ def test_zwei_ha_kreise_mit_getrennten_entities_sind_zulaessig_und_der_host_sieh
     assert sichten[0]["raumfuehler"] == ["sensor.wohnzimmer_thermostat_temperatur", "sensor.bad_temperatur"]
 
 
+def test_zwei_ha_kreise_duerfen_dieselbe_lesende_rollen_entity_haben():
+    # Die Aussentemperatur der Anlage hat der Hersteller nur einmal; geschrieben wird dort nicht
+    erster, kreis2 = ha_konfiguration()["kreise"][0], _ha_kreis(2)
+    erster["bindung"]["rollen"]["outdoor_temp"] = kreis2["bindung"]["rollen"]["outdoor_temp"] = "sensor.aussentemperatur"
+    assert _geprueft(ha_konfiguration(kreise=[erster, kreis2]), host=cc.HOST_HA) is None
+
+
 def test_derselbe_ha_fuehler_in_zwei_kreisen_wird_abgelehnt():
     kreis2 = _ha_kreis(2)
     kreis2["raeume"][0]["fuehler"] = [ha_konfiguration()["kreise"][0]["raeume"][0]["fuehler"][0]]
