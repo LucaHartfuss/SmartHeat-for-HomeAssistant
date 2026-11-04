@@ -122,6 +122,23 @@ def test_zwei_kreise_die_gleichzeitig_zaehlen_verlieren_keinen_schritt(tmp_path)
     assert eintrag["last"] == 5.0
 
 
+def test_die_limitmeldung_des_anderen_kreises_geht_beim_zaehlen_nicht_verloren(tmp_path):
+    """Der zweite Kreis hat das Tageslimit schon gemeldet, der erste zaehlt mit einem Stand ohne Meldung weiter: die
+    Meldung bleibt, sonst kaeme sie am selben Tag ein zweites Mal."""
+    eins, zwei, _ = _stores(tmp_path)
+    write_budget.put(eins, write_budget.TOTAL, {"day": DAY, "count": 3, "last": 1.0})
+
+    _verschraenkt(
+        eins, zwei,
+        lambda: write_budget.put(eins, write_budget.TOTAL, {"day": DAY, "count": 4, "last": 5.0}),
+        lambda: write_budget.put(zwei, write_budget.TOTAL, {"day": DAY, "count": 4, "last": 2.0, "limit_notified": DAY}),
+    )
+
+    eintrag = _anlagen_eintrag(tmp_path, write_budget.TOTAL)
+    assert eintrag["count"] == 5
+    assert eintrag["limit_notified"] == DAY
+
+
 def test_ein_neuer_tag_in_beiden_kreisen_zaehlt_beide_schritte(tmp_path):
     eins, zwei, _ = _stores(tmp_path)
     write_budget.put(eins, write_budget.TOTAL, {"day": "2026-10-02", "count": 8, "last": 1.0})
@@ -223,3 +240,16 @@ def test_an_entry_without_an_integer_count_is_taken_as_it_is(zaehler):
 def test_the_lifetime_takes_over_the_increase_but_a_reset_is_absolute(aktuell, neu, gelesen, erwartet):
     from smartheat_runtime.budget_store import _lebensdauer
     assert _lebensdauer(aktuell, neu, gelesen) == erwartet
+
+
+def test_the_limit_notice_of_the_current_entry_survives_unless_the_thread_removed_it():
+    from smartheat_runtime.budget_store import _eintrag_eingefuegt
+    gemeldet = {**_eintrag(4), "limit_notified": DAY}
+    # Der Thread hat die Meldung nie gesehen: die aktuelle bleibt.
+    assert _eintrag_eingefuegt(gemeldet, _eintrag(2), _eintrag(1))["limit_notified"] == DAY
+    # Der Thread hat sie selbst gesetzt: sie gilt.
+    assert _eintrag_eingefuegt(_eintrag(4), {**_eintrag(2), "limit_notified": DAY}, _eintrag(1))["limit_notified"] == DAY
+    # Der Thread hat sie bewusst entfernt: sie bleibt weg.
+    assert "limit_notified" not in _eintrag_eingefuegt(gemeldet, _eintrag(2), {**_eintrag(1), "limit_notified": DAY})
+    # Ein anderer Tag: der Eintrag des Threads gilt unveraendert.
+    assert _eintrag_eingefuegt({**gemeldet, "day": "2026-10-02"}, _eintrag(2), None) == _eintrag(2)

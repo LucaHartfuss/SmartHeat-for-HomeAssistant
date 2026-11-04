@@ -50,6 +50,10 @@ class FakeBus:
     def on_connected(self, hook) -> None:
         self.hooks.append(hook)
 
+    def off_connected(self, hook) -> None:
+        if hook in self.hooks:
+            self.hooks.remove(hook)
+
     def wait_connected(self, timeout=None) -> bool:
         return self._connected
 

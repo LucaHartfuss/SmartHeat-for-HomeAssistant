@@ -12,6 +12,8 @@ die erste Rastung kommt aus der bestaetigten, lokal geprueften Konfiguration. (2
 aus Hebelsatz und Verteilsystem): sie wird zur Liste mit einem Kreis, aber nur, wenn die Konfiguration genau einen Kreis
 hat und dessen Paar dem alten gleicht; vorher entsteht die Sicherung `sicherheitssatz.json.pre-<Release>` (Rueckweg:
 zurueckspielen, der alte Stand liest das alte Format). Eine vorhandene Sicherung wird nie ueberschrieben.
+Laeuft in der Anlage ein Boost (Komfort oder Notfall), verweigert der Lauf, bevor er etwas aendert: danach wartet das
+Geraet still auf das Dokument des Servers, und die Anlage bliebe ohne lokale Sicherheit auf dem Boost stehen.
 
 Die Migration lockert nie: eine kaputte, unlesbare, ueber einen Symlink erreichte oder sonst gesperrte Datei bleibt, wie
 sie ist; eine gueltige Datei bleibt unberuehrt. Ausgegeben wird je Lauf ein Code ohne Namen (Exit 0 bei einem
@@ -23,7 +25,7 @@ import re
 import sys
 from pathlib import Path
 
-from smartheat_core import config_check, dateien, rastung, wallclock
+from smartheat_core import config_check, dateien, rastung, wallclock, zustandspfade
 from smartheat_core.verfahren import WegUnbekannt, verfahren_fuer
 
 logger = logging.getLogger(__name__)
@@ -44,9 +46,11 @@ RASTUNG_GESPERRT = "rastung_gesperrt"
 ALTES_FORMAT_MEHRERE_KREISE = "altes_format_mehrere_kreise"
 ALTES_FORMAT_PASST_NICHT = "altes_format_passt_nicht"
 SICHERUNG_VORHANDEN = "sicherung_vorhanden"
+BOOST_AKTIV = "boost_aktiv"
 SCHREIBEN_FEHLGESCHLAGEN = "schreiben_fehlgeschlagen"
 
 _RELEASE = re.compile(r"[0-9A-Za-z._-]{1,32}")
+_BOOST_FELDER = ("boost_active", "emergency_boost_active")
 _KONFIGURATION = "konfiguration.json"
 #: Die flache Form des Stands vor den Kreisen: Pflichtfelder, dazu die, die fehlen duerfen. Jedes andere Feld macht die
 #: Konfiguration ungueltig (nichts wird geraten); `profil` war die abgeleitete Bezeichnung und entfaellt.
@@ -105,6 +109,20 @@ def _aus_flacher_form(flach: dict, host: str) -> dict | None:
     neu.update({feld: flach.get(feld) for feld in _FLACH_ANLAGENWEIT})
     neu["bindungsparameter"] = _parameter_zum_pruefen(neu["bindungsparameter"], weg, flach["hebelsatz"])
     return neu
+
+
+def boost_aktiv(daten: Path, host: str) -> bool:
+    """True, wenn der Zustand der Anlage einen laufenden Boost (Komfort oder Notfall) fuehrt: `backup.json` am alten Ort
+    des Hosts (HA: im Datenordner, Gateway: in runtime/) oder in einem Kreisordner. Eine fehlende oder unlesbare Datei
+    fuehrt keinen Boost; jeder Wert ausser False zaehlt als aktiv."""
+    runtime = daten / "runtime"
+    kandidaten = [(daten if host == config_check.HOST_HA else runtime) / zustandspfade.BACKUP]
+    kandidaten += [ordner / zustandspfade.BACKUP for ordner in zustandspfade.kreisordner(runtime)]
+    for pfad in kandidaten:
+        roh = dateien.lesen_json(pfad)
+        if isinstance(roh, dict) and any(roh.get(feld) not in (None, False) for feld in _BOOST_FELDER):
+            return True
+    return False
 
 
 def _sicherung(ordner: Path, release: str) -> Path:
@@ -174,6 +192,8 @@ def _nachholen(ordner: Path, host: str, release: str) -> str:
     inhalt, _ = bestaetigte_konfiguration(ordner, host)
     if inhalt is None or not _ist_flach(ordner):
         return BEREITS_AKTUELL
+    if boost_aktiv(ordner.parent, host):
+        return BOOST_AKTIV
     return _beiseite(ordner, release) or BEREITS_AKTUELL
 
 
@@ -215,6 +235,8 @@ def migrieren(ordner: Path, *, host: str, release: str) -> str:
     neu = rastung.aus_konfiguration(inhalt)
     if neu is None:
         return KONFIGURATION_UNGUELTIG
+    if boost_aktiv(ordner.parent, host):
+        return BOOST_AKTIV
     flach = _ist_flach(ordner)
     if flach and _sicherung_belegt(ordner, release):
         return SICHERUNG_VORHANDEN  # vor jeder Aenderung

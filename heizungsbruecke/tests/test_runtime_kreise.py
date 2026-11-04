@@ -593,3 +593,167 @@ def test_eine_einkreisanlage_nimmt_ein_wieder_aktives_abo_samt_laufzeitrelevante
 
     assert laufzeit.prozessneustart_noetig(alt, neu) is False  # die Wiederaufnahme startet den Kreis mit dem neuen Stand
     assert laufzeit.prozessneustart_noetig(_dokument(1), {**_dokument(1), "kreise": [{**_dokument(1)["kreise"][0], "probe": 1}]}) is True
+
+
+def _treiber_zaehlen(ergebnis):
+    """Haengt an die Bindung des Kreises einen Stop-Zaehler (wie ihn ein Abfrage-Treiber hat)."""
+    stops = []
+    ergebnis.override.binding.stop = lambda: stops.append("stop")
+    return stops
+
+
+def test_die_wiederaufnahme_stoppt_den_treiber_des_alten_kreises(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    stops_eins = _treiber_zaehlen(laufzeit.kreise()[1])
+    stops_zwei = _treiber_zaehlen(laufzeit.kreise()[2])
+    laufzeit.kreise()[2].store.update(abo_inactive_since=datetime.now().astimezone())
+
+    assert laufzeit.wiederaufnehmen(2) is True
+
+    assert stops_zwei == ["stop"]  # der alte Treiber fragt nicht weiter ab
+    assert stops_eins == []  # der andere Kreis laeuft durch
+
+
+def test_jede_wiederaufnahme_stoppt_den_treiber_der_vorigen_aufnahme(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    for _ in range(3):
+        stops = _treiber_zaehlen(laufzeit.kreise()[1])
+        assert laufzeit.wiederaufnehmen(1, erzwingen=True) is True
+        assert stops == ["stop"]
+
+
+def test_ein_treiber_der_beim_stoppen_scheitert_haelt_die_wiederaufnahme_nicht_auf(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    alt = laufzeit.kreise()[1]
+
+    def kaputt():
+        raise OSError("weg")
+
+    alt.override.binding.stop = kaputt
+
+    assert laufzeit.wiederaufnehmen(1, erzwingen=True) is True
+    assert laufzeit.kreise()[1] is not alt
+
+
+def _zwei_kreise_dokument(abo_2="aktiv", **zusatz_2):
+    dokument = _dokument(1)
+    zwei = {**_dokument(2, abo_2)["kreise"][0], **zusatz_2}
+    dokument["kreise"].append(zwei)
+    return dokument
+
+
+def test_ein_wieder_aktives_abo_samt_geaenderter_konfiguration_startet_auch_einen_nicht_ruhenden_kreis_neu(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    eins, zwei = laufzeit.kreise()[1], laufzeit.kreise()[2]
+    assert not kreise.ruhend(zwei)  # laeuft regulaer: die Wiederaufnahme nach dem Abo greift nicht
+    alt = _zwei_kreise_dokument("inaktiv")
+    neu = _zwei_kreise_dokument("aktiv", probe=1)
+
+    assert laufzeit.konfiguration_geaendert(alt, neu) is False
+
+    assert laufzeit.kreise()[2] is not zwei and laufzeit.kreise()[1] is eins  # die geaenderte Konfiguration gilt
+
+
+def test_ein_wieder_aktives_abo_ohne_weitere_aenderung_laesst_einen_nicht_ruhenden_kreis_laufen(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    vorher = dict(laufzeit.kreise())
+
+    assert laufzeit.konfiguration_geaendert(_zwei_kreise_dokument("inaktiv"), _zwei_kreise_dokument("aktiv")) is False
+
+    assert dict(laufzeit.kreise()) == vorher
+
+
+def _aufnahme_haengt(laufzeit, kreis, monkeypatch):
+    """Eine Aufnahme von `kreis` laeuft und haengt in `app.start`; liefert (`drin`, `frei`, `starts`): `starts` zaehlt
+    die Starts je Kreisnummer, `frei` laesst die haengende Aufnahme weiterlaufen."""
+    echt = laufzeit._starte_kreis
+    drin, frei, starts = threading.Event(), threading.Event(), []
+
+    def starte(nummer):
+        starts.append(nummer)
+        if len(starts) == 1:
+            drin.set()
+            assert frei.wait(10)
+        return echt(nummer)
+
+    monkeypatch.setattr(laufzeit, "_starte_kreis", starte)
+    aufnahme = threading.Thread(target=lambda: laufzeit.wiederaufnehmen(kreis, erzwingen=True), daemon=True)
+    aufnahme.start()
+    assert drin.wait(5)
+    return aufnahme, frei, starts
+
+
+def test_ein_dokument_waehrend_der_aufnahme_wird_danach_nachgezogen(env, monkeypatch):
+    laufzeit = _laufzeit(Anlage(env), env)
+    aufnahme, frei, starts = _aufnahme_haengt(laufzeit, 1, monkeypatch)
+    alt = _zwei_kreise_dokument()
+    neu = {**alt, "kreise": [{**alt["kreise"][0], "probe": 1}, alt["kreise"][1]]}
+
+    assert laufzeit.konfiguration_geaendert(alt, neu) is False  # Kreis 1 wird schon aufgenommen: jetzt startet nichts
+    assert starts == [1]
+    frei.set()
+    aufnahme.join(10)
+
+    assert not aufnahme.is_alive() and starts == [1, 1]  # das neuere Dokument wurde nach der Aufnahme nachgezogen
+    assert 1 not in laufzeit._in_aufnahme and 1 not in laufzeit._nachholen
+
+
+def test_ohne_laufzeitrelevante_aenderung_waehrend_der_aufnahme_wird_nichts_nachgezogen(env, monkeypatch):
+    laufzeit = _laufzeit(Anlage(env), env)
+    aufnahme, frei, starts = _aufnahme_haengt(laufzeit, 1, monkeypatch)
+    alt = _zwei_kreise_dokument()
+
+    assert laufzeit.konfiguration_geaendert(alt, alt) is False
+    frei.set()
+    aufnahme.join(10)
+
+    assert starts == [1]
+
+
+def test_eine_zweite_aufnahme_ohne_merken_wird_nicht_nachgeholt(env, monkeypatch):
+    laufzeit = _laufzeit(Anlage(env), env)
+    aufnahme, frei, starts = _aufnahme_haengt(laufzeit, 1, monkeypatch)
+
+    assert laufzeit.wiederaufnehmen(1, erzwingen=True) is False
+    frei.set()
+    aufnahme.join(10)
+
+    assert starts == [1]
+
+
+def test_scheitert_das_nachziehen_geht_der_ausfall_an_den_aufseher_und_der_kreis_ist_frei(env, monkeypatch):
+    laufzeit = _laufzeit(Anlage(env), env)
+    aufnahme, frei, starts = _aufnahme_haengt(laufzeit, 1, monkeypatch)
+    alt = _zwei_kreise_dokument()
+    laufzeit.konfiguration_geaendert(alt, {**alt, "kreise": [{**alt["kreise"][0], "probe": 1}, alt["kreise"][1]]})
+    monkeypatch.setattr(laufzeit, "_starte_kreis", lambda nummer: (starts.append(nummer), 1 / 0)[1])
+    frei.set()
+    aufnahme.join(10)
+
+    assert starts == [1, 1] and isinstance(laufzeit._ausfall.get_nowait(), ZeroDivisionError)
+    assert 1 not in laufzeit._in_aufnahme and 1 not in laufzeit._nachholen
+
+
+def test_ein_wieder_aktives_abo_waehrend_der_aufnahme_wird_danach_nachgezogen(env, monkeypatch):
+    laufzeit = _laufzeit(Anlage(env), env)
+    aufnahme, frei, starts = _aufnahme_haengt(laufzeit, 2, monkeypatch)
+
+    # Die haengende Aufnahme hat das Abo womoeglich noch als inaktiv gelesen: ohne weitere Aenderung wiederholt sie sich.
+    assert laufzeit.konfiguration_geaendert(_zwei_kreise_dokument("inaktiv"), _zwei_kreise_dokument("aktiv")) is False
+    frei.set()
+    aufnahme.join(10)
+
+    assert not aufnahme.is_alive() and starts == [2, 2]
+
+
+def test_ein_unbekannter_kreis_wird_nicht_wiederaufgenommen(env):
+    laufzeit = _laufzeit(Anlage(env), env)
+
+    assert laufzeit.wiederaufnehmen(99) is False
+    assert laufzeit.wiederaufnehmen(99, erzwingen=True, merken=True) is False
+    assert 99 not in laufzeit._in_aufnahme and 99 not in laufzeit._nachholen

@@ -17,7 +17,8 @@ seine Parameter) in die neue umgeschrieben (`smartheat_core.kennung`), aber nur,
 Konfiguration gleicht; jede andere Kennung bleibt, wie sie ist, die Bindung an das Konto entscheidet beim Start. Eine
 vorhandene Sicherung oder Zieldatei wird nie ueberschrieben, eine Datei ueber einen Symlink oder mit unbrauchbarem
 Inhalt bricht den Lauf vor jeder Aenderung ab; scheitert das Schreiben, werden die neuen Dateien und Sicherungen dieses
-Laufs wieder entfernt. Ausgegeben wird je Lauf ein Code ohne Namen (Exit 0 bei einem Erfolgscode, sonst 1)."""
+Laufs wieder entfernt. Laeuft in der Anlage ein Boost, verweigert der Lauf vor jeder Aenderung (wie die Rastungsmigration).
+Ausgegeben wird je Lauf ein Code ohne Namen (Exit 0 bei einem Erfolgscode, sonst 1)."""
 import argparse
 import contextlib
 import json
@@ -49,6 +50,7 @@ KENNUNG_UNGUELTIG = "kennung_ungueltig"
 DATEI_UNGUELTIG = "datei_ungueltig"
 ZIEL_VORHANDEN = "ziel_vorhanden"
 SICHERUNG_VORHANDEN = "sicherung_vorhanden"
+BOOST_AKTIV = rastung_migration.BOOST_AKTIV
 SCHREIBEN_FEHLGESCHLAGEN = "schreiben_fehlgeschlagen"
 
 _RELEASE = re.compile(r"[0-9A-Za-z._-]{1,32}")
@@ -145,6 +147,8 @@ def migrieren(ordner: Path, *, host: str, release: str) -> str:
         return BEREITS_AKTUELL
     if any(pfad.is_symlink() or not pfad.is_file() for pfad in alt.values()):
         return DATEI_UNGUELTIG
+    if rastung_migration.boost_aktiv(daten, host):
+        return BOOST_AKTIV
     if any(_vorhanden(ziel / name) for name in alt):
         return ZIEL_VORHANDEN
     sicherungen = {name: pfad.with_name(f"{pfad.name}.pre-{release}") for name, pfad in alt.items()}

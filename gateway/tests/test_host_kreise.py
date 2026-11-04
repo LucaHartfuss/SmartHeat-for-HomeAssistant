@@ -14,6 +14,7 @@ from smartheat_core import rastung
 from smartheat_device.geraet_host_basis import abmeldung_abwarten
 from smartheat_gateway.drivers.simulation import SimulationDriver
 from smartheat_gateway.drivers.vicare_cloud.driver import QUOTA, ViCareCloudDriver
+from smartheat_gateway.host import GatewayHost
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
 from smartheat_runtime import aufraeumen, entitlement
@@ -277,3 +278,46 @@ def test_die_raumdaten_gehoeren_je_zum_eigenen_kreis(world):
     world.geraet.raum_merken(1, {"name": "Wohnen"})
     world.geraet.raum_merken(2, {"name": "Schlafen"})
     assert world.geraet.raum(1) == {"name": "Wohnen"} and world.geraet.raum(2) == {"name": "Schlafen"}
+
+
+def _abfrager_mitzaehlen(monkeypatch) -> set:
+    """Die Treiber starten ihren Abfrage-Thread (gezaehlt, ohne echten Thread); das Ergebnis haelt die laufenden."""
+    laufend: set = set()
+    echt = GatewayHost._activate
+
+    def aktivieren(self, driver):
+        self._driver_threads = True
+        driver.start = lambda: laufend.add(id(driver))
+        driver.stop = lambda: laufend.discard(id(driver))
+        echt(self, driver)
+
+    monkeypatch.setattr(GatewayHost, "_activate", aktivieren)
+    return laufend
+
+
+def test_nach_jeder_wiederaufnahme_fragt_hoechstens_ein_treiber_je_kreis_ab(world, monkeypatch):
+    laufend = _abfrager_mitzaehlen(monkeypatch)
+    _starten(world)
+    assert len(laufend) == 2  # ein Abfrager je Kreis
+    for _ in range(3):
+        assert world.laufzeit.wiederaufnehmen(2, erzwingen=True) is True
+        assert len(laufend) == 2
+    assert id(world.anlage.hosts[2].driver) in laufend and id(world.anlage.hosts[1].driver) in laufend
+
+
+def test_die_aufnahme_aus_dem_ruhezustand_ersetzt_den_abfrager_des_kreises(world, monkeypatch):
+    laufend = _abfrager_mitzaehlen(monkeypatch)
+    _abo_beendet(world, monkeypatch, 1)
+    _starten(world, zwei_kreise(abo_1="inaktiv"))
+    assert isinstance(world.kreis(1), IdleBridge)
+    alter_treiber = world.anlage.hosts[1].driver
+
+    world.konfiguration_senden(zwei_kreise(abo_1="aktiv"), 2)
+    for _ in range(500):
+        world.run()
+        if isinstance(world.kreis(1), Runtime):
+            break
+        time.sleep(0.01)
+
+    assert isinstance(world.kreis(1), Runtime) and len(laufend) == 2
+    assert id(alter_treiber) not in laufend and id(world.anlage.hosts[1].driver) in laufend

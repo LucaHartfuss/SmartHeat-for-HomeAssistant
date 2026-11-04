@@ -72,7 +72,9 @@ def ruhend(ergebnis: Runtime | IdleBridge) -> bool:
 
 
 def _anhalten(ergebnis: Runtime | IdleBridge) -> None:
-    """Trigger und Kanal eines Runtime beenden (der Link des Geraets bleibt verbunden)."""
+    """Trigger, Kanal und Abfrage-Treiber eines Runtime beenden (der Link des Geraets bleibt verbunden). Der Treiber
+    (eine Bindung mit `stop`, z. B. des Gateways) fragt sonst nach der Wiederaufnahme weiter ab, neben dem des neuen
+    Kreises."""
     if not isinstance(ergebnis, Runtime):
         return
     for client in (ergebnis.mqtt_client, ergebnis.trigger_client):
@@ -82,6 +84,12 @@ def _anhalten(ergebnis: Runtime | IdleBridge) -> None:
             client.stop()
         except Exception:
             logger.exception("Verbindung eines Kreises konnte nicht sauber beendet werden")
+    stoppen = getattr(ergebnis.override.binding, "stop", None)
+    if callable(stoppen):
+        try:
+            stoppen()
+        except Exception:
+            logger.exception("Treiber eines Kreises konnte nicht sauber beendet werden")
 
 
 class _Aufsicht:
@@ -125,6 +133,7 @@ class Laufzeit:
         self._ergebnisse: dict[int, Runtime | IdleBridge] = {}
         self._threads: dict[int, threading.Thread] = {}
         self._in_aufnahme: set[int] = set()
+        self._nachholen: set[int] = set()  # Kreise, fuer die waehrend ihrer Aufnahme ein neueres Dokument eintraf
         self._ausfall: queue.Queue[BaseException] = queue.Queue()
         self._sperre = threading.RLock()
         self._laeuft = False
@@ -188,44 +197,69 @@ class Laufzeit:
                 self._thread_starten(kreis)
         raise self._ausfall.get()
 
-    def wiederaufnehmen(self, kreis: int, *, erzwingen: bool = False) -> bool:
+    def wiederaufnehmen(self, kreis: int, *, erzwingen: bool = False, merken: bool = False) -> bool:
         """Nimmt den Kreis wieder auf, wenn er auf sein Abo wartet (`erzwingen`: in jedem Zustand, so startet der
         Kreis nach einer Neupruefung oder geaenderten Konfiguration): sein Worker endet, `app.start` laeuft fuer diesen
         Kreis neu (liest Abo und Konfiguration frisch). False, wenn der Kreis nichts abwartet, schon aufgenommen wird
         oder der Neustart scheitert. Scheitert er, nachdem der alte Worker beendet ist, hat der Kreis keine Regelung mehr:
         der Ausfall geht an den Aufseher (Neustart des Prozesses). Warten auf den Worker und `app.start` laufen
-        ausserhalb der Sperre, damit die anderen Kreise (`register`, `post`, `kreise`) erreichbar bleiben."""
+        ausserhalb der Sperre, damit die anderen Kreise (`register`, `post`, `kreise`) erreichbar bleiben.
+
+        `merken` (neues Konfigurationsdokument): wird der Kreis gerade aufgenommen, hat diese Aufnahme das Dokument
+        womoeglich nicht mehr gelesen; sie wiederholt sich dann nach ihrem Ende genau einmal (erzwungen)."""
         with self._sperre:
             alt = self._ergebnisse.get(kreis)
-            if alt is None or kreis in self._in_aufnahme or not (erzwingen or ruhend(alt)):
+            if alt is None:
+                return False
+            if kreis in self._in_aufnahme:
+                if merken:
+                    self._nachholen.add(kreis)
+                return False
+            if not (erzwingen or ruhend(alt)):
                 return False
             self._in_aufnahme.add(kreis)
             thread = self._threads.get(kreis)
+        fertig = False
         try:
-            alt.worker.beenden()
-            if thread is not None:
-                thread.join(ABWICKLUNG_SECONDS)
-                if thread.is_alive():
-                    self._ausfall.put(RuntimeError("Worker eines Kreises endet nicht"))
-                    return False
-            try:
-                _anhalten(alt)
-                neu = self._starte_kreis(kreis)
-            except BaseException as fehler:  # noqa: BLE001 - ohne Worker regelt der Kreis nicht: Prozess neu starten
-                logger.exception("Kreis %s konnte die Arbeit nicht wieder aufnehmen", kreis)
-                self._ausfall.put(fehler)
-                return False
-            with self._sperre:  # Handler und Eintrag zusammen: ein gleichzeitiges `register` erreicht den neuen Kreis
-                self.worker.anwenden(neu.worker)
-                self._ergebnisse[kreis] = neu
-                self._melden_gestartet(kreis, neu)
-                if self._laeuft:
-                    self._thread_starten(kreis)
-            logger.info("Kreis %s nimmt die Arbeit wieder auf", kreis)
-            return True
+            ok = self._aufnehmen(kreis, alt, thread)
+            while ok:
+                with self._sperre:
+                    if kreis not in self._nachholen:
+                        self._in_aufnahme.discard(kreis)  # zusammen mit der Pruefung: kein Merker geht dazwischen verloren
+                        fertig = True
+                        break
+                    self._nachholen.discard(kreis)
+                    alt, thread = self._ergebnisse[kreis], self._threads.get(kreis)
+                ok = self._aufnehmen(kreis, alt, thread)
+            return ok
         finally:
-            with self._sperre:
-                self._in_aufnahme.discard(kreis)
+            if not fertig:
+                with self._sperre:
+                    self._in_aufnahme.discard(kreis)
+                    self._nachholen.discard(kreis)
+
+    def _aufnehmen(self, kreis: int, alt: Runtime | IdleBridge, thread: threading.Thread | None) -> bool:
+        alt.worker.beenden()
+        if thread is not None:
+            thread.join(ABWICKLUNG_SECONDS)
+            if thread.is_alive():
+                self._ausfall.put(RuntimeError("Worker eines Kreises endet nicht"))
+                return False
+        try:
+            _anhalten(alt)
+            neu = self._starte_kreis(kreis)
+        except BaseException as fehler:  # noqa: BLE001 - ohne Worker regelt der Kreis nicht: Prozess neu starten
+            logger.exception("Kreis %s konnte die Arbeit nicht wieder aufnehmen", kreis)
+            self._ausfall.put(fehler)
+            return False
+        with self._sperre:  # Handler und Eintrag zusammen: ein gleichzeitiges `register` erreicht den neuen Kreis
+            self.worker.anwenden(neu.worker)
+            self._ergebnisse[kreis] = neu
+            self._melden_gestartet(kreis, neu)
+            if self._laeuft:
+                self._thread_starten(kreis)
+        logger.info("Kreis %s nimmt die Arbeit wieder auf", kreis)
+        return True
 
     def prozessneustart_noetig(self, alt, neu) -> bool:
         """True, wenn eine neue Konfiguration den Prozessneustart verlangt: anderer Kreissatz, geaendertes
@@ -241,14 +275,18 @@ class Laufzeit:
     def konfiguration_geaendert(self, alt, neu) -> bool:
         """Ein neues Konfigurationsdokument. True, wenn der Host trotzdem den Prozess neu starten muss
         (`prozessneustart_noetig`). Sonst nimmt jeder Kreis mit wieder aktivem Abo die Arbeit auf, und ein Kreis mit
-        laufzeitrelevant geaendertem eigenem Eintrag startet allein neu; die anderen Kreise regeln durch."""
+        laufzeitrelevant geaendertem eigenem Eintrag startet allein neu; die anderen Kreise regeln durch. Ein Kreis, der
+        gerade aufgenommen wird, holt das Dokument nach seiner Aufnahme nach."""
         if self.prozessneustart_noetig(alt, neu):
             return True
         for kreis in sorted(self.kreise()):
+            relevant = dokument_config.laufzeit_relevant_kreis(alt, neu, kreis)
             if dokument_config.abo_wiederaufnahme(alt, neu, kreis):
-                self.wiederaufnehmen(kreis)
-            elif dokument_config.laufzeit_relevant_kreis(alt, neu, kreis):
-                self.wiederaufnehmen(kreis, erzwingen=True)
+                # Ein Kreis, der nichts abwartet (Abo lief), nimmt trotzdem eine gleichzeitige Aenderung auf.
+                if not self.wiederaufnehmen(kreis, merken=True) and relevant:
+                    self.wiederaufnehmen(kreis, erzwingen=True, merken=True)
+            elif relevant:
+                self.wiederaufnehmen(kreis, erzwingen=True, merken=True)
         return False
 
 

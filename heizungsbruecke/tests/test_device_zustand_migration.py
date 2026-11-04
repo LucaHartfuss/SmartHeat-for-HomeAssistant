@@ -350,3 +350,20 @@ def test_die_hilfe_nennt_den_zweck(capsys):
         migration.main(["--help"])
     assert ende.value.code == 0
     assert "Einmalige Migration des Zustands" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("boost", [{"boost_active": True}, {"emergency_boost_active": True}],
+                         ids=["komfort-boost", "notfall-boost"])
+def test_ein_aktiver_boost_verweigert_den_umzug_vor_jeder_aenderung(anlage, boost):
+    """Wie bei der Rastung: lief ein Boost, bliebe die Anlage nach dem Umzug auf ihm stehen."""
+    anlage.alt[zustandspfade.BACKUP].write_text(json.dumps(_backup(anlage.host, **boost)))
+    vorher = _stand(anlage.daten)
+
+    assert _lauf(anlage) == migration.BOOST_AKTIV
+    assert _stand(anlage.daten) == vorher and not anlage.neu.exists()
+
+
+def test_ohne_aktiven_boost_laeuft_der_umzug_durch(anlage):
+    anlage.alt[zustandspfade.BACKUP].write_text(
+        json.dumps(_backup(anlage.host, boost_active=False, emergency_boost_active=False)))
+    assert _lauf(anlage) == migration.MIGRIERT

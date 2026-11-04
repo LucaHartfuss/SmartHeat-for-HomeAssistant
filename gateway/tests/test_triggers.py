@@ -1046,3 +1046,34 @@ def test_the_write_check_blocks_only_off_and_frost(tmp_path, clock, zustand):
     # unbrauchbares Soll nicht
     welt = _neustart(tmp_path, clock, zustand={**zustand, "local_temperature": 20.0})
     assert _sollwerte(welt) == [22.0] and welt.aus == []
+
+
+def test_nach_stop_loest_ein_neuer_bus_verbund_keine_pruefung_mehr_aus(tmp_path, clock):
+    bus, trigger, worker, checks = _quelle_am_bus(tmp_path, clock, verbunden=True)
+    trigger.start()
+    worker.run_pending()
+    trigger.stop()
+    checks.clear()
+
+    bus.disconnect()
+    bus.connect()
+    worker.run_pending()
+
+    assert checks == [] and bus.hooks == []  # der Hook haengt nicht mehr am gemeinsamen Bus
+
+
+def test_ein_zweiter_trigger_am_selben_bus_bleibt_nach_dem_stop_des_ersten_verbunden(tmp_path, clock):
+    bus, erster, worker, checks = _quelle_am_bus(tmp_path, clock, verbunden=True)
+    erster.start()
+    zweiter = BusTriggerSource(bus, worker, ZigbeeMirror(bus, clock), TargetStore(
+        tmp_path / "zwei.json", 20.0, clock, lambda: "ts"), thermostat=None, sensor_ieees=(), daily_trigger_time=None)
+    zweiter.start()
+    worker.run_pending()
+    erster.stop()
+    checks.clear()
+
+    bus.disconnect()
+    bus.connect()
+    worker.run_pending()
+
+    assert ("connected", None) in checks and len(bus.hooks) == 1  # nur der Hook des gestoppten ist weg

@@ -224,6 +224,15 @@ class GatewayHost:
             description=description,
         )
 
+    def treiber_stoppen(self) -> None:
+        """Beendet den Abfrage-Thread des Treibers dieses Hosts (die Wiederaufnahme des Kreises baut einen neuen)."""
+        if self.driver is None:
+            return
+        try:
+            self.driver.stop()
+        except Exception:
+            logger.exception("Treiber eines Kreises konnte nicht sauber beendet werden")
+
     def _activate(self, driver) -> None:
         """Erste Abfrage und Abfrage-Thread erst, wenn die Konfiguration vollstaendig geprueft ist."""
         try:
@@ -286,6 +295,9 @@ class GatewayAnlagenHost:
         return nummern or [1]
 
     def kreis_host(self, kreis: int) -> GatewayHost:
+        alt = self.hosts.get(kreis)
+        if alt is not None:
+            alt.treiber_stoppen()  # auch ein ruhender Kreis hat seinen Abfrage-Thread: je Kreis hoechstens einer
         host = GatewayHost(*self._args, **self._optionen, kreis=kreis)
         self.hosts[kreis] = host
         return host

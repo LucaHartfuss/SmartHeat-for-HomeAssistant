@@ -1,4 +1,5 @@
 """Leer heisst abmelden."""
+import contextlib
 import errno
 import json
 import os
@@ -290,4 +291,34 @@ def test_nur_zuruecksetzen_gibt_die_markierung_weiter(tmp_path):
     aufraeumen.markieren(pfad, ALT)
     assert aufraeumen.entscheiden(pfad, ALT) == (aufraeumen.VERWERFEN, None)
     aufraeumen.zurueckgesetzt(pfad, "kunde1")
+    assert aufraeumen.entscheiden(pfad, LEER) == (aufraeumen.LOESCHEN, None)
+
+
+def test_two_circuits_resetting_at_once_do_not_lose_each_other(tmp_path, monkeypatch):
+    """Die Kreise setzen auf eigenen Faeden zurueck: Lesen, Ergaenzen und Schreiben von `kreise_fertig` ist ein Zug,
+    sonst ueberschreibt der eine das Ergebnis des anderen und die Markierung wird nie erledigt."""
+    import threading
+
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    treffpunkt = threading.Barrier(2)
+    echt = aufraeumen._fertige
+
+    def _fertige_mit_treffpunkt(p):
+        gelesen = echt(p)
+        # Ohne Sperre lesen beide den alten Stand, bevor einer schreibt; mit Sperre kommt der zweite Faden nie hierher.
+        with contextlib.suppress(threading.BrokenBarrierError):
+            treffpunkt.wait(timeout=0.5)
+        return gelesen
+
+    monkeypatch.setattr(aufraeumen, "_fertige", _fertige_mit_treffpunkt)
+    ergebnisse: dict[int, bool] = {}
+    faeden = [threading.Thread(target=lambda k=k: ergebnisse.__setitem__(
+        k, aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=k, kreise_der_anlage=2))) for k in (1, 2)]
+    for faden in faeden:
+        faden.start()
+    for faden in faeden:
+        faden.join()
+    assert sorted(ergebnisse.values()) == [False, True]
+    assert sorted(json.loads(pfad.read_text())["kreise_fertig"]) == [1, 2]
     assert aufraeumen.entscheiden(pfad, LEER) == (aufraeumen.LOESCHEN, None)

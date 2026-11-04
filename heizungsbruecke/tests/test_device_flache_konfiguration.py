@@ -399,3 +399,19 @@ def test_a_failing_write_of_the_backup_leaves_the_flat_file_and_reports_the_fail
     assert migration.migrieren(tmp_path, host=host, release=RELEASE) == migration.SCHREIBEN_FEHLGESCHLAGEN
     assert (tmp_path / "konfiguration.json").read_bytes() == FALL[host][0].read_bytes()
     assert not (tmp_path / f"konfiguration.json.pre-{RELEASE}").exists()
+
+
+def test_a_rerun_with_an_active_boost_leaves_the_flat_file_where_it_is(tmp_path, host):
+    """Die Rastung ist schon aktuell, die flache Datei liegt noch da: auch das Beiseitestellen wartet, solange ein Boost
+    laeuft (danach regelt die Anlage ohne lokale Sicherheit)."""
+    device = tmp_path / "device"
+    device.mkdir()
+    _ablegen(device, FALL[host][0])
+    _rastung_ohne_beiseitestellen(device, host)
+    backup = tmp_path / "backup.json" if host == "ha" else tmp_path / "runtime" / "backup.json"
+    backup.parent.mkdir(exist_ok=True)
+    backup.write_text(json.dumps({"tenant_id": "zuhause", "boost_active": True}))
+
+    assert migration.migrieren(device, host=host, release=RELEASE) == migration.BOOST_AKTIV
+    assert (device / "konfiguration.json").read_bytes() == FALL[host][0].read_bytes()
+    assert not (device / f"konfiguration.json.pre-{RELEASE}").exists()

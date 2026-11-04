@@ -1,6 +1,7 @@
 """Lokaler Bus: kleine paho-Huelle fuer die Laufzeit (nur Zigbee2MQTT), getrennt von
 der MQTT-Verbindung zum Server (Geraetekern). Callbacks laufen im paho-Thread und duerfen nur Daten ablegen bzw.
 Ereignisse in den Worker stellen. Abos werden bei jedem (Wieder-)Verbinden erneuert."""
+import contextlib
 import json
 import logging
 import os
@@ -43,6 +44,7 @@ class Bus(Protocol):
     def subscribe(self, topic_filter: str, callback: Callback) -> None: ...
     def publish(self, topic: str, payload, *, retain: bool = False) -> None: ...
     def on_connected(self, hook: Callable[[], None]) -> None: ...
+    def off_connected(self, hook: Callable[[], None]) -> None: ...
     def wait_connected(self, timeout: float | None = None) -> bool: ...
     def start(self) -> None: ...
     def stop(self) -> None: ...
@@ -96,6 +98,11 @@ class LocalBus:
     def on_connected(self, hook: Callable[[], None]) -> None:
         self._hooks.append(hook)
 
+    def off_connected(self, hook: Callable[[], None]) -> None:
+        """Nimmt den Hook zurueck (ein Kreis, der neu startet, haengt sonst bei jedem Verbund einen Hook mehr an)."""
+        with contextlib.suppress(ValueError):
+            self._hooks.remove(hook)
+
     def wait_connected(self, timeout: float | None = None) -> bool:
         return self._connected.wait(timeout)
 
@@ -117,7 +124,7 @@ class LocalBus:
             self._connected.set()
         for topic_filter in filters:
             client.subscribe(topic_filter, qos=1)
-        for hook in self._hooks:
+        for hook in list(self._hooks):
             try:
                 hook()
             except Exception:

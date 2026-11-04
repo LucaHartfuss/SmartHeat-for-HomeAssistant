@@ -253,7 +253,8 @@ def _eingefuegt(aktuell: dict, neu: dict, gelesen: dict) -> dict:
 
 def _eintrag_eingefuegt(aktuell: dict | None, neu: dict, gelesen: dict | None) -> dict:
     """Ein Zaehlereintrag des gleichen Tages uebernimmt den Zuwachs des Threads auf den aktuellen Stand (zwei Kreise
-    zaehlen am selben Eintrag); sonst gilt der Eintrag des Threads."""
+    zaehlen am selben Eintrag); sonst gilt der Eintrag des Threads. Die Limitmeldung des aktuellen Eintrags bleibt, wenn
+    der Thread sie weder kannte noch gesetzt hat: sonst kaeme die Meldung des anderen Kreises am selben Tag doppelt."""
     tag = neu.get("day")
     if aktuell is None or aktuell.get("day") != tag or not _zaehler_eintrag(neu) or not _zaehler_eintrag(aktuell):
         return neu
@@ -262,6 +263,9 @@ def _eintrag_eingefuegt(aktuell: dict | None, neu: dict, gelesen: dict | None) -
     eintrag = {**neu, "count": max(0, aktuell["count"] + neu["count"] - basis)}
     if letzte:
         eintrag["last"] = max(letzte)
+    meldung = aktuell.get("limit_notified")
+    if "limit_notified" not in neu and isinstance(meldung, str) and (gelesen is None or "limit_notified" not in gelesen):
+        eintrag["limit_notified"] = meldung
     return eintrag
 
 
