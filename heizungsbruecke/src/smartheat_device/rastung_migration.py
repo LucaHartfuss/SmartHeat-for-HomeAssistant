@@ -2,7 +2,9 @@
 
     python -m smartheat_device.rastung_migration --device-dir <Ordner> --host ha|gateway --release <Release>
 
-Sie deckt genau zwei Faelle ab. (1) Die Datei fehlt, die Konfiguration ist aber eingerichtet (Stand vor der Rastung):
+Sie deckt genau zwei Faelle ab. Die Konfiguration darf dabei noch in der flachen Form des Stands vor den Kreisen liegen
+(Heizungsbruecke 1.1.0, so liegt sie auf den Geraeten): sie wird nur im Speicher zu einem Dokument mit einem Kreis und
+einem Referenzraum umgeformt und wie ein neues Dokument geprueft; die Datei bleibt, wie sie ist. (1) Die Datei fehlt, die Konfiguration ist aber eingerichtet (Stand vor der Rastung):
 die erste Rastung kommt aus der bestaetigten, lokal geprueften Konfiguration. (2) Die Datei hat das alte Format (ein Paar
 aus Hebelsatz und Verteilsystem): sie wird zur Liste mit einem Kreis, aber nur, wenn die Konfiguration genau einen Kreis
 hat und dessen Paar dem alten gleicht; vorher entsteht die Sicherung `sicherheitssatz.json.pre-<Release>` (Rueckweg:
@@ -18,6 +20,7 @@ import sys
 from pathlib import Path
 
 from smartheat_core import config_check, dateien, rastung, wallclock
+from smartheat_core.verfahren import WegUnbekannt, verfahren_fuer
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +44,68 @@ SCHREIBEN_FEHLGESCHLAGEN = "schreiben_fehlgeschlagen"
 
 _RELEASE = re.compile(r"[0-9A-Za-z._-]{1,32}")
 _KONFIGURATION = "konfiguration.json"
+#: Die flache Form des Stands vor den Kreisen: Pflichtfelder, dazu die, die fehlen duerfen. Jedes andere Feld macht die
+#: Konfiguration ungueltig (nichts wird geraten); `profil` war die abgeleitete Bezeichnung und entfaellt.
+_FLACH_PFLICHT = ("anlage", "abo", "bindung", "hebelsatz", "verteilsystem", "raumfuehler", "tagestick")
+_FLACH_OPTIONAL = ("profil", "mindest_software", "mindest_integration", "software", "bindungsparameter",
+                   "ursprungswerte")
+_FLACH_ANLAGENWEIT = ("anlage", "tagestick", "mindest_software", "mindest_integration", "software",
+                      "bindungsparameter")
+
+
+def _weg(bindung, host: str) -> str | None:
+    """Der Anbindungsweg einer flachen Bindung nach den Tabellen der Pruefung; None: keine bekannte Bindung."""
+    if host == config_check.HOST_HA and isinstance(bindung.get("kreis"), dict):
+        return config_check.WEG_DER_PLATTFORM.get(bindung["kreis"].get("plattform"))
+    if host == config_check.HOST_GATEWAY and isinstance(bindung.get("treiber"), dict):
+        return config_check.WEG_DES_TREIBERS.get(bindung["treiber"].get("id"))
+    return None
+
+
+def _parameter_zum_pruefen(parameter, weg: str, hebelsatz) -> object:
+    """Die Bindungsparameter des alten Stands, so weit angepasst, dass die Pruefung sie liest: der alte Server kannte die
+    lokale Mindestliste der zurueckzustellenden Hebel noch nicht (Vaillant: nur der Hebel heat_limit). Die Liste wird
+    um diese Mindestliste ergaenzt; jede andere Abweichung bleibt ein Fehler. Die Rastung haengt nicht von den
+    Parametern ab, und das Dokument mit Kreisen, das der Server danach schickt, traegt seine eigenen und wird voll geprueft."""
+    if not isinstance(parameter, dict) or not isinstance(parameter.get("zurueck"), list):
+        return parameter
+    try:
+        verfahren = verfahren_fuer(weg, hebelsatz)
+    except WegUnbekannt:
+        return parameter
+    if verfahren is None:
+        return parameter
+    fehlend = [hebel for hebel in verfahren.rueckstellung_pflicht if hebel not in parameter["zurueck"]]
+    return {**parameter, "zurueck": [*parameter["zurueck"], *fehlend]}
+
+
+def _aus_flacher_form(flach: dict, host: str) -> dict | None:
+    """Die flache Konfiguration als Dokument mit genau einem Kreis und einem Referenzraum; None, wenn sie nicht genau
+    die Felder des Stands vor den Kreisen hat. Fuehler, Bindung, Hebelsatz, Verteilsystem, Abo und Ursprungswerte
+    uebernimmt sie unveraendert, also beschreibt die Rastung daraus nie mehr als die Konfiguration selbst."""
+    if set(_FLACH_PFLICHT) - set(flach) or set(flach) - set(_FLACH_PFLICHT) - set(_FLACH_OPTIONAL):
+        return None
+    bindung, fuehler = flach["bindung"], flach["raumfuehler"]
+    if not isinstance(bindung, dict) or not isinstance(fuehler, list) or not isinstance(flach["anlage"], str):
+        return None
+    weg = _weg(bindung, host)
+    if weg is None:
+        return None
+    kreis = {"kreis": 1, "name": "Kreis 1", "bindung": bindung, "hebelsatz": flach["hebelsatz"],
+             "verteilsystem": flach["verteilsystem"], "abo": flach["abo"],
+             "raeume": [{"raum": 1, "name": "Raum 1", "rolle": "referenz", "fuehler": fuehler, "soll_quelle": False,
+                         "versatz_k": 0.0, "ziel_fest": None}]}
+    if "ursprungswerte" in flach:
+        kreis["ursprungswerte"] = flach["ursprungswerte"]
+    neu = {"anlage_name": flach["anlage"], "weg": weg, "kreise": [kreis]}
+    neu.update({feld: flach.get(feld) for feld in _FLACH_ANLAGENWEIT})
+    neu["bindungsparameter"] = _parameter_zum_pruefen(neu["bindungsparameter"], weg, flach["hebelsatz"])
+    return neu
 
 
 def bestaetigte_konfiguration(ordner: Path, host: str):
-    """(Inhalt, None) oder (None, Code): eingerichtet, in der Form des Speichers und von der lokalen Pruefung ohne
-    Rastung angenommen."""
+    """(Inhalt, None) oder (None, Code): eingerichtet, in der Form mit Kreisen und von der lokalen Pruefung ohne
+    Rastung angenommen; eine flache Konfiguration des Stands vor den Kreisen kommt umgeformt zurueck."""
     roh = dateien.lesen_json(ordner / _KONFIGURATION)
     if roh is None:
         return None, KONFIGURATION_NICHT_EINGERICHTET
@@ -55,6 +115,10 @@ def bestaetigte_konfiguration(ordner: Path, host: str):
         return None, KONFIGURATION_UNGUELTIG
     if config_check.ist_leer(inhalt):
         return None, KONFIGURATION_NICHT_EINGERICHTET
+    if "kreise" not in inhalt:
+        inhalt = _aus_flacher_form(inhalt, host)
+        if inhalt is None:
+            return None, KONFIGURATION_UNGUELTIG
     if config_check.pruefen(inhalt, None, host=host) is not None:
         return None, KONFIGURATION_UNGUELTIG
     return inhalt, None
