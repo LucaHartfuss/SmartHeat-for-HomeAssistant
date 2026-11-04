@@ -26,6 +26,20 @@ _VERTRAG_GEPINNT_SCHREIBSCHUTZ_FIELDS = (wire.SCHREIBSCHUTZ_FIELDS, bindungspara
 _VERTRAG_GEPINNT_ZAEHLER = (wire.ZAEHLER, bindungsparameter.ZAEHLER)
 _VERTRAG_GEPINNT_ENERGIE_EINHEITEN = (wire.ENERGIE_EINHEITEN, tuple(bindungsparameter.EINHEITEN))
 
+_VERTRAG_GEPINNT_KONFIGURATION_KREIS_FIELDS = (wire.KONFIGURATION_KREIS_FIELDS, config_check.KONFIG_KREIS_FELDER)
+_VERTRAG_GEPINNT_KONFIGURATION_KREIS_OPTIONAL = (wire.KONFIGURATION_KREIS_OPTIONAL, config_check.KONFIG_KREIS_OPTIONAL)
+_VERTRAG_GEPINNT_KONFIGURATION_RAUM_FIELDS = (wire.KONFIGURATION_RAUM_FIELDS, config_check.RAUM_FELDER)
+_VERTRAG_GEPINNT_RAUM_ROLLEN = (wire.RAUM_ROLLEN, config_check.RAUM_ROLLEN)
+_VERTRAG_GEPINNT_KREISE_MAX = (wire.KREISE_MAX, config_check.KREISE_MAX)
+_VERTRAG_GEPINNT_RAEUME_MAX = (wire.RAEUME_MAX, config_check.RAEUME_MAX)
+_VERTRAG_GEPINNT_RAUM_FUEHLER_MAX = (wire.RAUM_FUEHLER_MAX, config_check.RAUM_FUEHLER_MAX)
+_VERTRAG_GEPINNT_RAUM_SOLL_MIN = (wire.RAUM_SOLL_MIN, config_check.RAUM_ZIEL_MIN)
+_VERTRAG_GEPINNT_RAUM_SOLL_MAX = (wire.RAUM_SOLL_MAX, config_check.RAUM_ZIEL_MAX)
+_VERTRAG_GEPINNT_RAUM_VERSATZ_MAX = (wire.RAUM_VERSATZ_MAX, config_check.RAUM_VERSATZ_MAX)
+_VERTRAG_GEPINNT_KREIS_MAX = (wire.KREIS_MAX, config_check.KREIS_NUMMER_MAX)
+_VERTRAG_GEPINNT_WEGE = (wire.WEGE, config_check.WEGE)
+_VERTRAG_GEPINNT_WEG_DER_PLATTFORM = (wire.WEG_DER_PLATTFORM, config_check.WEG_DER_PLATTFORM)
+_VERTRAG_GEPINNT_WEG_DES_TREIBERS = (wire.WEG_DES_TREIBERS, config_check.WEG_DES_TREIBERS)
 _VERTRAG_GEPINNT_ABO_LAUFZEIT = (wire.ABO, tuple(dokument_config.ABO))  # Schluessel der Abbildung auf entitlement
 
 PINS = {name: wert for name, wert in sorted(globals().items()) if name.startswith("_VERTRAG_GEPINNT_")}
@@ -35,7 +49,8 @@ PINS = {name: wert for name, wert in sorted(globals().items()) if name.startswit
 def test_die_kopie_im_kern_gleicht_dem_vertrag(name):
     vertrag, kopie = PINS[name]
     assert kopie == vertrag, name
-    assert kopie is not vertrag, name  # eine Kopie, kein Verweis auf den Vertrag
+    if not isinstance(vertrag, int):  # kleine Zahlen sind in Python ohnehin dasselbe Objekt
+        assert kopie is not vertrag, name  # eine Kopie, kein Verweis auf den Vertrag
 
 
 def test_es_gibt_pins():

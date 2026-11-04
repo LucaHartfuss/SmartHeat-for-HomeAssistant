@@ -1,6 +1,7 @@
 """Simulations-Treiber: fuer E2E, Labor und Gleichheitstests; nie im Kundenkatalog.
-Anlagenzustand in /data/sim/plant.json (schreibt nur die Laufzeit, writer=True), Fehlerinjektion in
-/data/sim/control.json (bei jeder Abfrage gelesen). Hausmodell bewusst einfach, nicht physikalisch."""
+Anlagenzustand in /data/sim/plant.json (schreibt nur die Laufzeit, writer=True; der Heizkreis n > 0 hat plant-<n>.json),
+Fehlerinjektion in /data/sim/control.json (bei jeder Abfrage gelesen; `heizkreise: 2` macht auch den zweiten Kreis der
+Erkennung schreibbar). Hausmodell bewusst einfach, nicht physikalisch."""
 import logging
 import math
 import random
@@ -51,6 +52,15 @@ MIN_POLL_SECONDS = 1.0
 MAX_POLL_SECONDS = 86400.0
 
 
+MAX_HEIZKREIS = 999  # wie der Kandidat der Erkennung (simulation.heizkreis.<n>, hoechstens drei Stellen)
+
+
+def _pruefe_heizkreis(parameter: Mapping) -> None:
+    kreis = parameter.get("heizkreis", 0)
+    if isinstance(kreis, bool) or not isinstance(kreis, int) or not 0 <= kreis <= MAX_HEIZKREIS:
+        raise ValueError(f"heizkreis muss eine ganze Zahl von 0 bis {MAX_HEIZKREIS} sein")
+
+
 def _pruefe_zahlen(parameter: Mapping) -> None:
     poll = parameter["poll_seconds"]
     if not ist_endliche_zahl(poll) or not MIN_POLL_SECONDS <= poll <= MAX_POLL_SECONDS:
@@ -81,6 +91,8 @@ class SimulationDriver:
         if self._p["lever_set"] not in self.LEVER_SETS:
             raise ValueError("Hebelsatz der Simulation unbekannt")
         _pruefe_zahlen(self._p)
+        _pruefe_heizkreis(self._p)
+        self._heizkreis: int = self._p.get("heizkreis", 0)
         self._paths = paths
         self._clock = clock
         self._wall = wall
@@ -109,8 +121,12 @@ class SimulationDriver:
 
     # --- Anlage ---
 
+    def _plant_datei(self):
+        """Anlagenzustand dieses Heizkreises: plant.json fuer den ersten, plant-<n>.json fuer jeden weiteren."""
+        return self._paths.sim_dir / ("plant.json" if self._heizkreis == 0 else f"plant-{self._heizkreis}.json")
+
     def _plant(self) -> dict:
-        plant = dateien.lesen_json(self._paths.sim_dir / "plant.json")
+        plant = dateien.lesen_json(self._plant_datei())
         if isinstance(plant, dict):
             return plant
         levers = {lever: START_LEVERS[lever] for lever in self._levers()}
@@ -118,22 +134,22 @@ class SimulationDriver:
             "hebel": levers, "vorher": {}, "geschrieben_um": {}, "hilfswerte": dict(START_AUX), "vorbereitet": False,
         }
         if self._writer:
-            dateien.schreiben_json(self._paths.sim_dir / "plant.json", plant, modus=dateien.LESBAR)
+            dateien.schreiben_json(self._plant_datei(), plant, modus=dateien.LESBAR)
         return plant
 
     def _save(self, plant: dict) -> None:
-        assert self._writer, "nur die Laufzeit schreibt plant.json"
-        dateien.schreiben_json(self._paths.sim_dir / "plant.json", plant, modus=dateien.LESBAR)
+        assert self._writer, "nur die Laufzeit schreibt den Anlagenzustand"
+        dateien.schreiben_json(self._plant_datei(), plant, modus=dateien.LESBAR)
 
     def _control(self) -> dict:
         control = dateien.lesen_json(self._paths.sim_dir / "control.json")
         return control if isinstance(control, dict) else {}
 
     def _levers(self) -> tuple[str, ...]:
-        """Alle Hebel der Anlage: gesendete, client-abgeleitete (Vaillant: min_flow) und nur gelesene."""
+        """Alle Hebel der Anlage: gesendete und nur gelesene."""
         lever_set = LEVER_SETS[self._p["lever_set"]]
         readonly = self._description.readonly_levers if self._description else ()
-        return lever_set.levers + lever_set.client_derived + readonly
+        return lever_set.levers + readonly
 
     def _visible(self, plant: dict, lever: str) -> float:
         written = plant["geschrieben_um"].get(lever)
@@ -284,7 +300,7 @@ class SimulationDriver:
     # --- Treiber ---
 
     def signals(self) -> Mapping[str, str]:
-        roles = [LEVER_ROLES[lever] for lever in self._levers()] + list(VERFAHREN[self._p["lever_set"]].aux_originals)
+        roles = [LEVER_ROLES[lever] for lever in self._levers()] + list(VERFAHREN[("simulation", self._p["lever_set"])].aux_originals)
         roles += ["outdoor_temp", "flow_setpoint", "flow_temperature", "room_temperature", "generator_hours"]
         return {role: f"treiber:{role}" for role in roles}
 
@@ -298,9 +314,13 @@ class SimulationDriver:
         raise DriverError("login_nicht_noetig")
 
     def erkennung(self) -> dict:
-        """Inventur stunden 0: zwei Heizkreise als Features, einer mit schreibbarer Heizkurve."""
-        if self._control().get("token_expired"):
+        """Inventur stunden 0: zwei Heizkreise als Features, der erste (mit `heizkreise: 2` in der Steuerdatei auch der
+        zweite) mit schreibbarer Heizkurve."""
+        steuer = self._control()
+        if steuer.get("token_expired"):
             raise DriverError("nicht_angemeldet")
+        kreise = steuer.get("heizkreise")
+        zweiter_schreibbar = type(kreise) is int and kreise == 2
         plant = self._plant()
         lever_set = self._p["lever_set"]
         hebel = {lever: {"wert": self._visible(plant, lever), "min": PLANT_RANGES[lever][0],
@@ -316,7 +336,7 @@ class SimulationDriver:
         kennung = {key: self._p[key] for key in ("lever_set", "settle_delay", "poll_seconds")}
         warnungen = safety_warnings.compute({"lever_set": lever_set, "hebel": hebel})
         return erkennung_daten(self.driver_id, [{"kennung": kennung, "sicherheitswarnungen": {"0": warnungen}}],
-                               [feature(0, True), feature(1, False)])
+                               [feature(0, True), feature(1, zweiter_schreibbar)])
 
     def inventory_sample(self) -> dict:
         return {"hebel": dict(self._plant()["hebel"])}

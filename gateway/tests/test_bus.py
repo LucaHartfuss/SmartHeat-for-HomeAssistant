@@ -187,3 +187,18 @@ def test_local_bus_passes_credentials_to_paho(monkeypatch):
     LocalBus("localhost", 1883, "test-bus", credentials=("runtime", "test-pw"))
     LocalBus("localhost", 1883, "test-bus")
     assert calls == [("runtime", "test-pw")]
+
+
+def test_ein_zurueckgenommener_verbindungs_hook_wird_nicht_mehr_gerufen():
+    bus, stub = _local_bus()
+    calls = []
+
+    def hook():
+        calls.append("hook")
+
+    bus.on_connected(hook)
+    bus.on_connected(lambda: calls.append("anderer"))
+    bus.off_connected(hook)
+    bus.off_connected(hook)  # ein zweites Mal ist harmlos
+    bus._on_connect(stub, None, None, _ConnectReason(), None)
+    assert calls == ["anderer"]

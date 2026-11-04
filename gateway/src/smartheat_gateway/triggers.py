@@ -170,6 +170,7 @@ class BusTriggerSource:
             self._worker.schedule(seconds_until(self._daily, self._now()), Event(EV_DAILY))
 
     def stop(self) -> None:
+        self._bus.off_connected(self._on_connected)
         self._mirror.off_device_message(self._on_device_message)
         if self._thermostat is not None:  # der Bus gehoert dem Host
             self._mirror.pflege.loesen(self._thermostat)

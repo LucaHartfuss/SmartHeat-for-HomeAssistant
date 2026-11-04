@@ -1,6 +1,7 @@
 import math
 
 import bindung_beispiele
+import konfig_form
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
 
@@ -201,7 +202,8 @@ def test_binding_for_picks_the_class_and_description_of_the_lever_set(lever_set,
 
     hebelsatz = lever_set or "vaillant_vrc720"
     description = dokument_config.beschreibung(
-        {"hebelsatz": hebelsatz, "bindungsparameter": bindung_beispiele.parameter(hebelsatz)})
+        konfig_form.nach_form({"hebelsatz": hebelsatz, "weg": bindung_beispiele.WEG[hebelsatz],
+                               "bindungsparameter": bindung_beispiele.parameter(hebelsatz)}))
     binding = binding_for(description, FakeHa(), MANIFEST)
     assert type(binding).__name__ == cls
     assert binding.description is description
@@ -212,7 +214,7 @@ def test_binding_roles_for_sign_off():
 
     from heizungsbruecke.ha_binding import binding_roles
 
-    assert binding_roles(VAILLANT_MYPYLLANT) == ("curve_current", "shift_current", "heat_limit")
+    assert binding_roles(VAILLANT_MYPYLLANT) == ("curve_current", "shift_current", "heat_limit", "min_flow", "mode_select")
     assert binding_roles(WEISHAUPT_MODBUS) == (
         "curve_current", "shift_current", "heat_limit", "mode_select", "setpoint_comfort", "setpoint_setback",
     )
@@ -255,7 +257,3 @@ def test_limits_lets_connection_errors_through_so_the_pipeline_keeps_the_last_ra
     with pytest.raises(ConnectionError):
         HaPlantBinding(Broken(), MANIFEST, VAILLANT_MYPYLLANT).limits("curve")
 
-
-def test_vaillant_has_no_aux_values_so_no_server_text_is_acceptable():
-    binding = HaPlantBinding(FakeHa(), MANIFEST, VAILLANT_MYPYLLANT)
-    assert binding.aux_zulaessig("mode_select", "eco") is False

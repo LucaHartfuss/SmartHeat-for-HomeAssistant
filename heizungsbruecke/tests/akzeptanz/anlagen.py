@@ -7,7 +7,8 @@ VERTEILSYSTEME = ("Heizkoerper", "Fussbodenheizung")
 SAETZE = ("vaillant_vrc720", "weishaupt_wwp", "weishaupt_wwp_basis", "viessmann_vicare")
 ALLE = [(satz, verteilsystem) for verteilsystem in VERTEILSYSTEME for satz in SAETZE]
 
-#: Hebel, die der Server fuer den Hebelsatz setzt (min_flow leitet der Client selbst ab)
+#: Hebel des Hebelsatzes, die ein Szenario gezielt setzt; den Mindestvorlauf (Vaillant) sendet der Server zusaetzlich,
+#: siehe `serverhebel_von`
 _HEBEL = {
     "vaillant_vrc720": ("curve", "room_setpoint", "heat_limit"),
     "weishaupt_wwp": ("curve", "room_setpoint", "heat_limit"),
@@ -63,7 +64,8 @@ _PARAMETER = {
     "vaillant_vrc720": {
         "schritte": {"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.1, "min_flow": 0.1},
         "toleranzen": {"curve": 0.025, "room_setpoint": 0.25, "heat_limit": 0.05, "min_flow": 0.05},
-        "wartezeit_s": 2100, "schreibgruppen": [], "zurueck": ["heat_limit"], "zurueck_optional": ["heat_limit"],
+        "wartezeit_s": 2100, "schreibgruppen": [], "zurueck": ["curve", "room_setpoint", "heat_limit", "min_flow"],
+        "zurueck_optional": ["heat_limit"],
         "nur_lesen": [], "zaehler": "daily", "schreibschutz": _SCHUTZ_FREI, "schemata": {},
     },
     "weishaupt_wwp": {
@@ -90,6 +92,11 @@ _PARAMETER = {
 
 def hebel_von(satz: str) -> tuple[str, ...]:
     return _HEBEL[satz]
+
+
+def serverhebel_von(satz: str) -> tuple[str, ...]:
+    """Alle Hebel, die der Server in einer Antwort sendet: die des Satzes, bei Vaillant dazu der Mindestvorlauf."""
+    return (*_HEBEL[satz], *(("min_flow",) if satz == "vaillant_vrc720" else ()))
 
 
 def schreibziel(satz: str, hebel: str) -> str:
@@ -119,24 +126,31 @@ def schreibziele(satz: str) -> list[dict]:
          "device_id": "d-thermostat"}]
 
 
-def konfiguration(satz: str, verteilsystem: str) -> dict:
-    """Konfigurationsdokument (ohne schema/version) wie der Server es sendet."""
+#: Anbindungsweg je Plattform der Bindung
+_WEG = {"mypyllant": "vaillant_myvaillant", "vicare": "viessmann_vicare", "weishaupt_modbus": "weishaupt_modbus"}
+
+
+def konfiguration(satz: str, verteilsystem: str, abo: str = "aktiv") -> dict:
+    """Konfigurationsdokument (ohne schema/version) wie der Server es sendet; `abo` ist das des einen Kreises."""
     plattform = PLATTFORM[satz]
     parameter = copy.deepcopy(_PARAMETER[satz])
     parameter["energie"] = {kanal: "kWh" for kanal in _KANAELE}
+    bindung = {"kreis": {"plattform": plattform, "config_entry": KONFIG_EINTRAG[plattform], "anlage": "S",
+                         "nummer": "0"},
+               "rollen": {**_ROLLEN[satz], **_SENSOREN}, "batterien": [], "benachrichtigung": [],
+               "hinweise_aus": []}
+    raum = {"raum": 1, "name": "Wohnzimmer", "rolle": "referenz", "fuehler": [RAUMFUEHLER], "soll_quelle": False,
+            "versatz_k": 0.0, "ziel_fest": None}
     return {
-        "anlage": "akzeptanz", "profil": "vaillant_gastherme_heizkoerper", "hebelsatz": satz,
-        "verteilsystem": verteilsystem,
-        "bindung": {"kreis": {"plattform": plattform, "config_entry": KONFIG_EINTRAG[plattform], "anlage": "S",
-                              "nummer": "0"},
-                    "rollen": {**_ROLLEN[satz], **_SENSOREN}, "batterien": [], "benachrichtigung": [],
-                    "hinweise_aus": []},
-        "raumfuehler": [RAUMFUEHLER], "tagestick": "12:00", "abo": "aktiv", "mindest_software": "1.0.0",
+        "anlage": "akzeptanz", "anlage_name": "Akzeptanzanlage", "weg": _WEG[plattform],
+        "kreise": [{"kreis": 1, "name": "Kreis 1", "bindung": bindung, "raeume": [raum], "hebelsatz": satz,
+                    "verteilsystem": verteilsystem, "abo": abo}],
+        "tagestick": "12:00", "mindest_software": "1.0.0", "mindest_integration": None,
         "software": None, "bindungsparameter": parameter,
     }
 
 
 #: Konfiguration ohne Anlage: das Abmelden vom Dienst (Felder wie die Konfiguration, ohne Inhalt)
-LEERE_KONFIGURATION = {
-    "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None, "bindung": None, "raumfuehler": [],
-    "tagestick": None, "abo": None, "mindest_software": "1.0.0", "software": None, "bindungsparameter": None}
+LEERE_KONFIGURATION = {"anlage": None, "anlage_name": None, "weg": None, "kreise": [], "tagestick": None,
+                       "mindest_software": "1.0.0", "mindest_integration": None, "software": None,
+                       "bindungsparameter": None}

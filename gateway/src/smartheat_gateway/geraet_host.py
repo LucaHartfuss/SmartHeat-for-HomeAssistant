@@ -36,7 +36,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from smartheat_core import dateien
+from smartheat_core import dateien, zustandspfade
 from smartheat_core.logtext import lesbar
 from smartheat_device import fehler, nachrichten, wire
 from smartheat_device.commands import CommandRegister
@@ -50,9 +50,12 @@ from smartheat_gateway.paths import Paths
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import dokument_config
-from smartheat_runtime.status import STATUS_ABGEMELDET
+from smartheat_runtime.status import STATUS_ABGEMELDET, ohne_kreise
 
 logger = logging.getLogger(__name__)
+
+#: Weg-ID des Server-Katalogs je Treiber-ID des Gateways; ein neuer Treiber ohne Eintrag faellt im Test auf.
+WEG_JE_TREIBER = {"simulation": "simulation", "vicare_cloud": "viessmann_vicare"}
 
 UHR_MAX_ALTER_SECONDS = 300
 SOFTWARE_SECONDS = 10
@@ -75,11 +78,12 @@ def thermostat_unzulaessig(mirror: ZigbeeMirror, ieee) -> bool:
 
 
 class GeraetZustand:
-    """Status (Status-Modell Schema 2) und Raum (ist, soll, soll_quelle, ts) der Laufzeit; None = keiner."""
+    """Status (Status-Modell Schema 2, die Zusammenfassung der Anlage) und je Kreis der Raum (ist, soll, soll_quelle, ts)
+    der Laufzeit; None = keiner."""
 
     def __init__(self) -> None:
         self.status: dict | None = None
-        self.raum: dict | None = None
+        self.raeume: dict[int, dict | None] = {}
 
 
 class StatusSink:
@@ -87,7 +91,7 @@ class StatusSink:
         self._zustand = zustand
 
     def publish(self, event: dict) -> None:
-        self._zustand.status = dict(event)
+        self._zustand.status = ohne_kreise(event)
 
 
 class ZustandsDatei:
@@ -118,7 +122,7 @@ def vergessen(paths: Paths) -> bool:
     """Leere Konfiguration nach einer Einrichtung: Laufzeit-Ordner (Ursprungswerte, Notbetrieb, Abo-Frist,
     Soll-Speicher, Abmelde-Markierung), Inventur-Proben und die Anmeldedaten aller Cloud-Treiber weg; Geraetekern
     (device/, auch die Rastung) und Simulation bleiben. Beim Start eines frischen Prozesses, bevor die Laufzeit liest.
-    Wirft nie; True nur, wenn alles weg ist. runtime/backup.json (Bindung an Einrichtung und Anlage) zuletzt und nur,
+    Wirft nie; True nur, wenn alles weg ist. runtime/kreis-<n>/backup.json (Bindung an Einrichtung und Anlage) zuletzt und nur,
     wenn alles andere weg ist: bleibt etwas liegen, verwirft bind_to_tenant es bei der Einrichtung einer anderen Anlage.
     Scheitert ein Loeschen (EACCES, EIO), bleibt die Aufraeum-Markierung fuer den naechsten Start (wie im Add-on);
     exists() steht mit im try (wirft bei EIO/EACCES im stat)."""
@@ -145,8 +149,7 @@ def vergessen(paths: Paths) -> bool:
 
     eintraege: list[Path] = []
     try:
-        if paths.runtime_dir.exists():
-            eintraege = sorted(path for path in paths.runtime_dir.iterdir() if path != paths.backup)
+        eintraege = zustandspfade.ohne_wiederherstellungspunkt(paths.runtime_dir)
     except OSError as error:
         gescheitert = True
         logger.warning("%s nicht geloescht (%s), neuer Versuch beim naechsten Start", paths.runtime_dir.name,
@@ -163,11 +166,17 @@ def vergessen(paths: Paths) -> bool:
         except Exception as error:
             gescheitert = True
             logger.error("Anmeldedaten von %s nicht geloescht (%s)", lesbar(str(driver_id)), type(error).__name__)
-    # Erst backup.json, dann der (bis auf Neues) leere Ordner; jeder Schritt nur nach vollem Erfolg der vorigen.
-    for path, wie in ((paths.backup, datei_weg), (paths.runtime_dir, shutil.rmtree)):
+    # Erst die backup.json der Kreise, dann der (bis auf Neues) leere Ordner; jeder Schritt nur nach vollem Erfolg der
+    # vorigen.
+    if gescheitert:
+        return False
+    for path in zustandspfade.wiederherstellungspunkte(paths.runtime_dir):
         if gescheitert:
             return False
-        entfernen(path, wie)
+        entfernen(path, datei_weg)
+    if gescheitert:
+        return False
+    entfernen(paths.runtime_dir, shutil.rmtree)
     if gescheitert:
         return False
     logger.info("Anlagengebundener Zustand geloescht (Gateway nicht mehr eingerichtet)")
@@ -234,6 +243,10 @@ class GatewayDeviceHost(GeraetHostBasis):
         return nachrichten.pruefen("faehigkeiten", {"drivers": list(registry.driver_ids()), "zigbee": True,
                                                     "updater": True}, wire.CAPABILITY_FIELDS, wire.CAPABILITY_OPTIONAL)
 
+    def wege(self) -> list[str]:
+        """Wege des Katalogs, die dieses Gateway ueber seine Treiber bedient (Treiber-ID -> Weg-ID)."""
+        return sorted({WEG_JE_TREIBER[treiber] for treiber in registry.driver_ids()})
+
     def uhr_synchron(self) -> bool | None:
         """Zeitdienst des Hosts (host/status.json, Dienst hoststatus); aelter als 5 min oder unlesbar = unbekannt."""
         status = dateien.lesen_json(self._host_dir / "status.json")
@@ -282,8 +295,12 @@ class GatewayDeviceHost(GeraetHostBasis):
     def runtime_status(self) -> dict | None:
         return self.zustand.status
 
-    def raum(self) -> dict | None:
-        return self.zustand.raum
+    def raum_merken(self, kreis: int, raum: dict | None) -> None:
+        """Worker-Thread des Kreises (raum.RaumPublisher): {ist, soll, soll_quelle, ts} fuer up/status."""
+        self.zustand.raeume[kreis] = raum
+
+    def raum(self, kreis: int = 1) -> dict | None:
+        return self.zustand.raeume.get(kreis)
 
     def anzeigen(self, anzeige: Anzeige) -> None:
         self.letzte_anzeige = anzeige

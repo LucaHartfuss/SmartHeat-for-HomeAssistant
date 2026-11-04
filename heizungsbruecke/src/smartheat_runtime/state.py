@@ -4,13 +4,19 @@ Der Zustand wird nur im Worker-Thread gelesen und geaendert, deshalb ohne Lock. 
 Dateien werden beim Start genau einmal gelesen und danach nur geschrieben, wenn sich ihr
 Inhalt aendert: jeder Schreibvorgang geht auf den Datentraeger des Pi."""
 import logging
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from smartheat_core import write_budget
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime import backup_store
 from smartheat_runtime.delivery import DeliveryState, from_persisted, to_persisted
+
+if TYPE_CHECKING:
+    from smartheat_runtime.budget_store import ZustandsSpeicher
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +82,6 @@ class BridgeState:
     manual_override_pending: dict | None = None
     # Nur Laufzeit (die Abo-Frist selbst liegt in entitlement_state.json).
     stable_target: float | None = None
-    # Mindestvorlauf, wie er zuletzt auf der Anlage stand (derived.py, fuer den Status). Nur
-    # Laufzeit: wird nicht persistiert (Praezisierung 12), beim Start neu ermittelt.
-    min_flow_current: float | None = None
     # Aufeinanderfolgende EV_HEALTH-Runden ohne gueltigen Wert je Raumfuehler (room_sensors.py).
     room_sensor_misses: dict = field(default_factory=dict)
     # Aufeinanderfolgende EV_HEALTH-Runden ohne gueltige Aussentemperatur (aussentemperatur.py).
@@ -270,6 +273,11 @@ class StateStore:
     def state(self) -> BridgeState:
         return self._state
 
+    def transaktion(self):
+        """Der Zustand eines Kreises hat einen Schreiber (seinen Worker): nichts zu sperren. Gegenstueck zum Lock der
+        Anlage im `BudgetStore`."""
+        return nullcontext()
+
     def update(self, **changes) -> None:
         """Aendert Felder und schreibt backup.json, wenn sich deren Inhalt aendert oder ein
         frueherer Schreibversuch gescheitert ist. Reine Laufzeitfelder schreiben nie. Ein
@@ -395,16 +403,24 @@ _PLANT_BOUND = (
     "lifetime_writes", "last_room_target",
 )
 _SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")
+#: Die Schluessel des Schreibbudgets, die der ganzen Anlage gehoeren (alle Kreise teilen sie); jeder andere gehoert dem Kreis.
+ANLAGE_SCHLUESSEL = frozenset({
+    write_budget.TOTAL, write_budget.ZONE_PREPARE, write_budget.BOOST_START, write_budget.EMERGENCY_START,
+})
 
 
 #: INFO der einmaligen Uebernahme, woertlich im Ablaufbuch FB-Kennung-Live.
 UEBERNAHME_TEXT = "Anlagen-Kennung aus dem Heizkreis übernommen"
 
 
-def bind_to_tenant(store: "StateStore", tenant_id: str | None, plant_id: str, *, frueher: str | None = None) -> str:
+def bind_to_tenant(store: "ZustandsSpeicher", tenant_id: str | None, plant_id: str, *, frueher: str | None = None,
+                   zaehler_der_anlage_behalten: bool = False) -> str:
     """Bindet den Zustand an Einrichtung und Anlage. Ein Bestand ohne Bindung gilt als gebunden
     (nichts verwerfen). Andere Anlage: anlagenbezogene Felder auf den Standardwert. Neue Einrichtung
     derselben Anlage: Ursprungswerte bleiben, nur Tick-Buchung und Zustellung beginnen neu.
+    zaehler_der_anlage_behalten (mehrere Kreise teilen die Zaehler der Anlage): bei einer anderen Anlage bleiben das
+    Tageslimit und die Lebensdauer der Anlage stehen, nur der Zustand dieses Kreises wird zurueckgesetzt; ein
+    Zuruecksetzen wuerde den Verschleissschutz der anderen Kreise aufheben.
     frueher (einmalige Uebernahme, Rueckbau: offene-punkte.md A6-36-Uebernahme): die Kennung, die ein frueherer Stand fuer dieselbe
     Anlage schrieb (HA bis 1.1.0: roles.lever_refs_identity). Steht genau sie in backup.json, ist es dieselbe Anlage:
     die Kennung wird umgeschrieben, nichts verworfen, danach der Vergleich der Einrichtung ("uebernommen"
@@ -418,8 +434,12 @@ def bind_to_tenant(store: "StateStore", tenant_id: str | None, plant_id: str, *,
         logger.warning("Andere Anlage als in backup.json: anlagenbezogener Zustand wird verworfen")
         # Zustellung zuerst: set_delivery wirft nicht, update bei einem Schreibfehler (StorageError) schon
         store.set_delivery(DeliveryState())
-        store.update(**{key: getattr(defaults, key) for key in _PLANT_BOUND + _SETUP_BOUND},
-                     tenant_id=tenant_id, plant_id=plant_id)
+        zurueck = {key: getattr(defaults, key) for key in _PLANT_BOUND + _SETUP_BOUND}
+        if zaehler_der_anlage_behalten:
+            zurueck["write_budget"] = {key: entry for key, entry in state.write_budget.items()
+                                       if key in ANLAGE_SCHLUESSEL}
+            del zurueck["lifetime_writes"]
+        store.update(**zurueck, tenant_id=tenant_id, plant_id=plant_id)
         return "andere_anlage"
     uebernommen = state.plant_id != plant_id  # die Zeile erst nach dem gelungenen Schreiben: sie steht genau einmal
     if state.tenant_id != tenant_id:

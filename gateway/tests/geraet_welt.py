@@ -35,18 +35,18 @@ class FakeDevice:
     def bedienung(self):
         return self.bed
 
-    def abo_status(self):
+    def abo_status(self, kreis=None):
         return dokument_config.abo_status(self.konf)
 
-    def wunsch(self, wert, *, herkunft, durch=None):
+    def wunsch(self, wert, *, herkunft, durch=None, kreis=1):
         self.wuensche.append((wert, herkunft, durch))
         return max(15.0, min(25.0, wert))
 
     def soll_quelle_aus(self, aus, wirksam=None):
         self.aus.append((aus, wirksam))
 
-    def meldung(self, key, text, *, offen, kritisch=True):
-        self.meldungen.append((key, text, offen, kritisch))
+    def meldung(self, key, text, *, offen, stufe):
+        self.meldungen.append((key, text, offen, stufe))
 
     def neuer_uebernahme_code(self):
         self.code_aufrufe += 1

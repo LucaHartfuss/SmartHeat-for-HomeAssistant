@@ -9,7 +9,7 @@ from typing import TypeGuard
 
 from smartheat_core.binding import ENERGY_DAILY, ENERGY_TOTAL, BindingDescription
 from smartheat_core.levers import LEVERS
-from smartheat_core.verfahren import VERFAHREN, Schreibschutz, Verfahren
+from smartheat_core.verfahren import Schreibschutz, Verfahren, WegUnbekannt, verfahren_fuer
 from smartheat_core.zahlen import ist_endliche_zahl
 
 FELDER = ("schritte", "toleranzen", "wartezeit_s", "schreibgruppen", "zurueck", "zurueck_optional", "nur_lesen",
@@ -101,10 +101,15 @@ def _energie(value) -> dict[str, str]:
     return dict(value)
 
 
-def beschreibung(hebelsatz: str, parameter) -> BindingDescription:
-    """Wirksame Beschreibung fuer den Hebelsatz aus den Parametern der Konfiguration; Fehler (ValueError) bei jedem
-    Verstoss."""
-    verfahren = VERFAHREN.get(hebelsatz)
+def beschreibung(weg: object, hebelsatz: str, parameter) -> BindingDescription:
+    """Wirksame Beschreibung fuer den Hebelsatz auf dem Weg aus den Parametern der Konfiguration; Fehler (ValueError)
+    bei jedem Verstoss. Ein unbekannter Weg wird vor dem Hebelsatz gemeldet; ein Hebelsatz, den der Weg nicht traegt,
+    hat kein lokales Schreibverfahren."""
+    try:
+        verfahren = verfahren_fuer(weg, hebelsatz)
+    except WegUnbekannt:
+        raise Fehler("Der Weg der Anlage ist unbekannt; die Bindungsparameter lassen sich nicht prüfen.", "weg",
+                     "unbekannt") from None
     if verfahren is None:
         raise Fehler(f"Für den Hebelsatz {hebelsatz} gibt es kein lokales Schreibverfahren; die Bindungsparameter "
                      "lassen sich nicht prüfen.", "hebelsatz", "unbekannt")
@@ -114,7 +119,7 @@ def beschreibung(hebelsatz: str, parameter) -> BindingDescription:
         raise Fehler("Die Bindungsparameter sind unvollständig oder enthalten fremde Felder.", "bindungsparameter",
                      "ungueltig")
     lever_set = verfahren.lever_set
-    hebel = lever_set.levers + lever_set.client_derived
+    hebel = lever_set.levers
     schritte = _zahlen_je_hebel(parameter["schritte"], hebel, "schritte")
     toleranzen = _zahlen_je_hebel(parameter["toleranzen"], hebel, "toleranzen")
     for lever in hebel:

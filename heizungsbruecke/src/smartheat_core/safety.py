@@ -11,7 +11,8 @@ from smartheat_core.levers import LEVER_SETS
 
 @dataclass(frozen=True)
 class LocalSafety:
-    """ranges: Bereich je Hebel des Hebelsatzes einschliesslich der client-abgeleiteten (Mindestvorlauf).
+    """ranges: Bereich je Hebel des Hebelsatzes (bei Vaillant auch der Mindestvorlauf: ihn liefert der Server, lokal
+    wird er nur begrenzt).
     comfort_boost: Comfort-Boost-Werte je Hebel; leer = kein Comfort-Boost (Fussbodenheizung).
     emergency_boost_levers: der Notfall-Boost setzt diese Hebel auf ihr lokales Maximum.
     arrival_threshold_k: Ankunftsschwelle des Comfort-Boosts und Austrittsschwelle des Notfall-Boosts -- nicht die
@@ -91,7 +92,7 @@ def check_invariants(safety: LocalSafety, lever_set_id: str, verteilsystem: str)
     lever_set = LEVER_SETS.get(lever_set_id)
     if lever_set is None:
         raise ValueError(f"{label}: unbekannter Hebelsatz")
-    needed = set(lever_set.levers + lever_set.client_derived)
+    needed = set(lever_set.levers)
     if set(safety.ranges) != needed:
         raise ValueError(f"{label}: Bereiche fuer {sorted(safety.ranges)} statt {sorted(needed)}")
     for lever, (low, high) in safety.ranges.items():

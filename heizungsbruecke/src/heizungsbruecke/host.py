@@ -21,7 +21,7 @@ from heizungsbruecke.ha_binding import binding_for, binding_roles
 from heizungsbruecke.ha_signals import SOLL_REF, GeraetSignale, HaSignalSource
 from heizungsbruecke.manifest import build_manifest, entity_ref
 from heizungsbruecke.version import ADDON_VERSION
-from smartheat_core import config_check, wallclock
+from smartheat_core import config_check, kreisansicht, wallclock
 from smartheat_core.logtext import lesbar
 from smartheat_runtime import dokument_config
 from smartheat_runtime.app import Loaded, Notice, RestoreParts, StartFailure
@@ -84,11 +84,14 @@ class HaHost:
     Geraetekerns (geraet), Signale ueber die HA-API mit dem Soll-Speicher als Raum-Soll, Hersteller-Bindings und
     Hilfssensoren (Bindung aus dokument.bindung), Trigger ueber den HA-WebSocket."""
 
-    def __init__(self, geraet, ha_api, *, clock=time.monotonic) -> None:
+    def __init__(self, geraet, ha_api, *, clock=time.monotonic, kreis: int | None = None) -> None:
         self._geraet, self._ha_api, self._clock = geraet, ha_api, clock
         # Steht nach einer leeren Konfiguration das Zuruecksetzen aus, laeuft die Laufzeit
         # mit der alten Konfiguration aus der Aufraeum-Markierung im Modus abgemeldet.
         self._konfiguration, self._leer_abmelden = geraet.laufzeit_konfiguration()
+        #: der Heizkreis dieses Hosts (ohne Angabe der erste des Dokuments): Bindung, Pfade, Soll-Speicher, Raum und
+        #: Wuensche gehoeren ihm; Geraet, HA-API und Supervisor sind allen Kreisen gemeinsam
+        self.kreis = kreis if kreis is not None else dokument_config.kreisnummer(self._konfiguration)
         self._bindung: dokument.HaBindung | None = None
         self._runtime: RuntimeConfig | None = None
         self.store: TargetStore | None = None
@@ -115,15 +118,17 @@ class HaHost:
         if not self._konfiguration:
             return None
         try:
-            return dokument.bindung(self._konfiguration)
+            return dokument.bindung(self._konfiguration, self.kreis)
         except ConfigError:
             return None
 
     def boot_info(self) -> BootInfo:
         abgemeldet = self._leer_abmelden or dokument_config.abgemeldet(config.ABGEMELDET_PATH, self._konfiguration)
         boot = dokument_config.boot_info(
-            self._konfiguration, abgemeldet=abgemeldet, client_version=ADDON_VERSION, backup_path=config.BACKUP_PATH,
-            failsafe_path=config.FAILSAFE_PATH, aufraeumen_path=config.AUFRAEUMEN_PATH)
+            self._konfiguration, abgemeldet=abgemeldet, client_version=ADDON_VERSION,
+            backup_path=config.backup_path(self.kreis), failsafe_path=config.failsafe_path(self.kreis),
+            aufraeumen_path=config.AUFRAEUMEN_PATH, alter_zustand=config.ALTER_BACKUP_PATH,
+            anlage_budget_path=config.anlage_budget_path(), kreis=self.kreis)
         vorab = self._bindung_oder_none()
         boot = dataclasses.replace(boot, notify_hints_off=vorab.hinweise_aus if vorab else ())
         if not boot.configured and not boot.signed_off:
@@ -135,24 +140,25 @@ class HaHost:
         config.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
     def ursprungswerte_melden(self, werte: dict) -> None:
-        self._geraet.ursprungswerte_merken(werte)
+        self._geraet.ursprungswerte_merken(werte, self.kreis)
 
     def ursprungswerte_server(self) -> dict:
-        return self._geraet.ursprungswerte_server(self._konfiguration, self._leer_abmelden)
+        return self._geraet.ursprungswerte_server(self._konfiguration, self._leer_abmelden, self.kreis)
 
     def sign_off_parts(self) -> RestoreParts | None:
         """Es wird kein Hilfssensor angelegt: fuer das Zuruecksetzen reichen die Hebel und die Clamps."""
         try:
             dokument_config.rastung_pruefen(self._konfiguration, config.RASTUNG_PATH)
-            b = dokument.bindung(self._konfiguration)
-            description = dokument_config.beschreibung(self._konfiguration)
-            safety = dokument_config.sicherheit(self._konfiguration)
+            b = dokument.bindung(self._konfiguration, self.kreis)
+            description = dokument_config.beschreibung(self._konfiguration, self.kreis)
+            safety = dokument_config.sicherheit(self._konfiguration, self.kreis)
+            plant_id = dokument.anlagen_kennung(b)
         except ConfigError as error:
             logger.error("Abmelden ohne Zuruecksetzen: %s", lesbar(str(error)))
             return None
         roles = [role for role in binding_roles(description) if b.rollen.get(role)]
         manifest = ChannelManifest(refs={role: entity_ref(role, b.rollen[role]) for role in roles})
-        return RestoreParts(binding_for(description, self._ha_api, manifest), safety)
+        return RestoreParts(binding_for(description, self._ha_api, manifest), safety, plant_id)
 
     def load(self) -> Loaded:
         try:
@@ -161,28 +167,31 @@ class HaHost:
             # Konfigurationsfehlers. Muster der Raumfuehler/Aussenquelle/Batterien/Handys und die Hinweise prueft der
             # Server (config_check); die Positivliste und Formen der Rollen prueft der Host selbst weiter unten
             # (_bindung_pruefen).
-            text = dokument.lokal_pruefen(self._konfiguration)
+            text = dokument.lokal_pruefen(self._konfiguration, self.kreis)
             if text:
                 raise ConfigError(text)
-            b = dokument.bindung(self._konfiguration)
+            b = dokument.bindung(self._konfiguration, self.kreis)
             geraet_trigger.pruefe_soll_ref(b.soll_entity)
             runtime = dokument_config.runtime_config(
-                self._konfiguration, rastung_pfad=config.RASTUNG_PATH, entitlement_path=config.ENTITLEMENT_PATH,
-                abo_source=self._geraet.abo_status)
+                self._konfiguration, rastung_pfad=config.RASTUNG_PATH,
+                entitlement_path=config.entitlement_path(self.kreis), kreis=self.kreis,
+                abo_source=lambda: self._geraet.abo_status(self.kreis))
             # Ohne gueltige Bindungsparameter kein Start
-            description = dokument_config.beschreibung(self._konfiguration)
+            description = dokument_config.beschreibung(self._konfiguration, self.kreis)
             _wait_for_required_entities(self._ha_api, b)
             # Die Regeln des Annehmens (Positivliste, Form je Feld, Schreibziele) gelten auch fuer eine
             # schon uebernommene Konfiguration, und zwar vor den Hilfssensoren (derived_sensors baut aus einer Rolle
             # schon ein Template in HA) und vor jedem Schreiben.
-            _bindung_pruefen(self._konfiguration)
+            _bindung_pruefen(self._konfiguration, self.kreis)
             ohne_zustand = _rollen_pruefen_mit_wiederholung(self._ha_api, b)
-            derived = _ensure_derived_sensors_with_retry(self._ha_api, b, runtime.tenant_id)
+            derived = _ensure_derived_sensors_with_retry(self._ha_api, b, runtime.tenant_id, self.kreis)
             # optionale Lese-Rollen und Batterien ohne Zustand bleiben fuer diesen Lauf ungelesen
             ungelesen = {ref for _, ref in ohne_zustand}
             rollen = {rolle: ref for rolle, ref in b.rollen.items() if ref not in ungelesen}
-            manifest = build_manifest({**rollen, "room_target": SOLL_REF}, derived.entity_ids, b.hebelsatz)
+            manifest = build_manifest(
+                {**rollen, "room_target": SOLL_REF}, derived.entity_ids, b.hebelsatz, derived.raeume)
             binding = binding_for(description, self._ha_api, manifest)
+            plant_id = dokument.anlagen_kennung(b)
         except StartupError as error:
             raise StartFailure(str(error), error.key) from error
         except (ConfigError, ManifestError) as error:
@@ -193,14 +202,14 @@ class HaHost:
         self.soll_entity = b.soll_entity
         assert self.soll_entity is not None  # lokal_pruefen verlangt sie
         bedienung, dirty = self._geraet.bedienung()
-        bedient = bedienung_start(bedienung)
+        bedient = bedienung_start(bedienung, self.kreis)
         start_value = bedient if bedient is not None else _angezeigter_start(self._ha_api, self.soll_entity)
-        self.store = TargetStore(config.ROOM_TARGET_PATH, start_value, self._clock, lambda: wallclock.now().isoformat(),
-                                 on_change=self._raum_changed)
+        self.store = TargetStore(config.room_target_path(self.kreis), start_value, self._clock,
+                                 lambda: wallclock.now().isoformat(), on_change=self._raum_changed)
         self._angleichen = bedient is not None and not dirty
         if self._angleichen and self.store.value != start_value:
             self.store.apply_portal(start_value)  # Bedienung kam waehrend eines Neustarts
-        self.raum = RaumPublisher(self._geraet.raum_merken, self.signals, self.store, manifest.refs.get("room_actual"),
+        self.raum = RaumPublisher(lambda raum: self._geraet.raum_merken(self.kreis, raum), self.signals, self.store, manifest.refs.get("room_actual"),
                                   lambda: wallclock.now().isoformat())
         runtime = dataclasses.replace(
             runtime, notify_hints_off=b.hinweise_aus,
@@ -217,8 +226,11 @@ class HaHost:
             Notice(f"entity_fehlt:{feld}", "fehlt", ENTITY_FEHLT_MESSAGE.format(feld=feld)) if feld in fehlend
             else Notice(f"entity_fehlt:{feld}", STATE_OK, ENTITY_DA_MESSAGE.format(feld=feld))
             for feld in dokument.optionale_felder(b))
-        return Loaded(config=runtime, manifest=manifest, binding=binding, plant_id=dokument.anlagen_kennung(b),
-                      notices=notices)
+        return Loaded(config=runtime, manifest=manifest, binding=binding, plant_id=plant_id, notices=notices)
+
+    def _anlagenkreise(self) -> list[int]:
+        """Alle Kreise der Anlage laut Dokument, dieser Kreis immer dabei."""
+        return sorted({*_kreisnummern(self._konfiguration), self.kreis})
 
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
         assert self._bindung is not None and self._runtime is not None and self.store is not None  # load() lief zuvor
@@ -228,8 +240,9 @@ class HaHost:
         client = geraet_trigger.build(
             manifest, self._ha_api, worker, self.store, self.soll_entity,
             tagestick=self._runtime.daily_trigger_time, wache_s=self._runtime.local_check_interval,
-            wunsch=lambda wert, herkunft, durch: geraet.wunsch(wert, herkunft=herkunft, durch=durch),
-            soll_quelle_aus=geraet.soll_quelle_aus, quelle=quelle)
+            wunsch=lambda wert, herkunft, durch: geraet.wunsch(wert, herkunft=herkunft, durch=durch, kreis=self.kreis),
+            soll_quelle_aus=geraet.soll_quelle_aus, quelle=quelle, kreis=self.kreis,
+            anlagenkreise=frozenset(self._anlagenkreise()))
         if self._angleichen and quelle is not None:
             self._soll_entity_angleichen(quelle)
         raum = self.raum
@@ -271,6 +284,37 @@ class HaHost:
     def _raum_changed(self) -> None:
         if self.raum is not None:
             self.raum.publish()
+
+
+def _kreisnummern(konfiguration) -> list[int]:
+    return [k for eintrag in kreisansicht.kreise(konfiguration) if isinstance(k := eintrag.get("kreis"), int)]
+
+
+class HaAnlagenHost:
+    """Die Sicht der Laufzeit auf die ganze Anlage (kreise.AnlagenHost): ein HaHost je Kreis des Dokuments, alle auf
+    demselben Geraet, derselben HA-API und derselben Statussenke. `kreis_host` baut den Host des Kreises jedes Mal neu
+    (auch bei einer Wiederaufnahme), damit er das aktuelle Dokument liest; `hosts` haelt den jeweils letzten."""
+
+    def __init__(self, geraet, ha_api, *, clock=time.monotonic) -> None:
+        self._geraet, self._ha_api, self._clock = geraet, ha_api, clock
+        self.status_sink: StatusSink = geraet.status_sink
+        self.hosts: dict[int, HaHost] = {}
+
+    def kreise(self) -> list[int]:
+        """Die Kreisnummern des Dokuments; ohne Einrichtung der eine Kreis 1 im Ruhezustand."""
+        konfiguration, _ = self._geraet.laufzeit_konfiguration()
+        return _kreisnummern(konfiguration) or [1]
+
+    def kreis_host(self, kreis: int) -> HaHost:
+        host = HaHost(self._geraet, self._ha_api, clock=self._clock, kreis=kreis)
+        self.hosts[kreis] = host
+        return host
+
+    @property
+    def store(self) -> TargetStore | None:
+        """Soll-Speicher des ersten Kreises (Status-Ereignis der Anlage, GeraetStatus)."""
+        erster = self.hosts.get(min(self.hosts)) if self.hosts else None
+        return erster.store if erster is not None else None
 
 
 def _angezeigter_start(ha_api, soll_ref: str) -> float:
@@ -338,9 +382,10 @@ def _wait_for_required_entities(ha_api, b: dokument.HaBindung) -> None:
     _retry_with_budget(ha_api, _check, _describe, identify=_identify)
 
 
-def _bindung_pruefen(konfiguration) -> None:
-    """Form der uebernommenen HA-Bindung (config_check): lokaler Text mit dem Feld, nie mit der Entity (Regel 6)."""
-    ablehnung = config_check.ha_bindung_pruefen(konfiguration)
+def _bindung_pruefen(konfiguration, kreis: int | None = None) -> None:
+    """Form der uebernommenen HA-Bindung des Kreises `kreis` (config_check): lokaler Text mit dem Feld, nie mit der
+    Entity (Regel 6)."""
+    ablehnung = config_check.ha_bindung_pruefen(kreisansicht.sicht(konfiguration, kreis))
     if ablehnung is not None:
         feld = (ablehnung.details or {}).get("feld", "bindung")
         raise ConfigError(f"{feld}: Form der Zuordnung ungültig – {RECONFIGURE_HINT}")
@@ -375,7 +420,7 @@ def _rollen_pruefen_mit_wiederholung(ha_api, b: dokument.HaBindung) -> list[tupl
     return ohne_zustand
 
 
-def _ensure_derived_sensors_with_retry(ha_api, b: dokument.HaBindung, tenant_id: str) -> DerivedSensors:
+def _ensure_derived_sensors_with_retry(ha_api, b: dokument.HaBindung, tenant_id: str, kreis: int = 1) -> DerivedSensors:
     return _retry_with_budget(
         ha_api,
         lambda: derived_sensors.ensure_all(
@@ -383,6 +428,8 @@ def _ensure_derived_sensors_with_retry(ha_api, b: dokument.HaBindung, tenant_id:
             tenant_id=tenant_id,
             room_sensors=list(b.raumfuehler),
             state_path=config.DERIVED_SENSORS_PATH,
+            kreis=kreis,
+            raeume=b.raeume,
         ),
         lambda error: f"Hilfs-Entities konnten nicht angelegt werden: {error}",
         identify=lambda error: "hilfs_entities",

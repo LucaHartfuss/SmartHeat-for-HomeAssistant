@@ -7,6 +7,7 @@ import datetime
 import itertools
 import json
 
+import konfig_form
 from bindung_beispiele import parameter
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -89,6 +90,7 @@ class FakeHost:
         self.synchron: bool | None = True
         self.konfigurationen, self.bedienungen, self.software, self.anzeigen_liste = [], [], [], []
         self.status: dict | None = {"status": "regelt"}
+        self.raum_werte: dict[int, dict | None] = {}  # Raum je weiterem Kreis
         self.raum_wert: dict | None = {"ist": 20.0, "soll": 21.0, "soll_quelle": "portal", "ts": "t0"}
         self.treiber_details: dict | None = None
         self.handlers: dict = {}
@@ -99,6 +101,9 @@ class FakeHost:
 
     def faehigkeiten(self):
         return {"drivers": ["simulation"], "zigbee": True, "updater": True}
+
+    def wege(self):
+        return ["simulation"]
 
     def uhr_synchron(self):
         return self.synchron
@@ -125,8 +130,8 @@ class FakeHost:
     def runtime_status(self):
         return self.status
 
-    def raum(self):
-        return self.raum_wert
+    def raum(self, kreis=1):
+        return self.raum_wert if kreis == 1 else self.raum_werte.get(kreis)
 
     def anzeigen(self, anzeige):
         self.anzeigen_liste.append(anzeige)
@@ -290,31 +295,37 @@ class Sent:
 
 
 def _command(kind="diagnostics", command_id="c1", payload=None):
-    return {"schema": 1, "command_id": command_id, "kind": kind, "payload": {} if payload is None else payload,
+    return {"schema": 2, "command_id": command_id, "kind": kind, "payload": {} if payload is None else payload,
             "expires_at": "2027-01-15T09:00:00+00:00"}
 
 
 def _konfiguration(version=1, **changes):
     inhalt = {
-        "anlage": "kunde3", "profil": "viessmann_gastherme_heizkoerper", "hebelsatz": "viessmann_vicare",
+        "anlage": "kunde3", "hebelsatz": "viessmann_vicare",
         "verteilsystem": "Heizkoerper",
         "bindung": {"treiber": {"id": "simulation", "parameter": {"heizkreis": 0}}, "thermostat": None},
         "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
         "bindungsparameter": parameter("viessmann_vicare"),
     }
     inhalt.update(changes)
-    return {"schema": 1, "version": version, **inhalt}
+    return konfig_form.nach_form({"schema": 2, "version": version, **inhalt})
 
 
 def _leer(version=1, mindest="0.6.0"):
-    return {"schema": 1, "version": version, "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
-            "bindung": None, "raumfuehler": [], "tagestick": None, "abo": None, "mindest_software": mindest,
-            "software": None, "bindungsparameter": None}
+    return konfig_form.nach_form({"schema": 2, "version": version, "anlage": None, "mindest_software": mindest})
 
 
-def _bedienung(version=1, raum_soll=21.0, **changes):
-    return {"schema": 1, "version": version, "modus": "manuell", "raum_soll": raum_soll, "quelle": "portal",
-            "ts": "2027-01-15T08:00:00+00:00", **changes}
+def _bedienung(version=1, raum_soll=21.0, *, kreis=1, modus="manuell", **changes):
+    """Bedienung mit einem Kreis; `kreise=[...]` ersetzt die Liste ganz."""
+    return {"schema": 2, "version": version, "kreise": [{"kreis": kreis, "modus": modus, "raum_soll": raum_soll}],
+            "quelle": "portal", "ts": "2027-01-15T08:00:00+00:00", **changes}
+
+
+def _anzeige(version=1, kreise=(1,), **changes):
+    """Anzeige: je Kreis der volle Feldsatz mit leeren Werten; `kreise=[...]` ersetzt die Liste ganz."""
+    leer = {"einlernphase_tag": None, "testphase_bis": None, "befunde": [], "aufgaben": [], "kennzahlen": {},
+            "raumziele": []}
+    return {"schema": 2, "version": version, "kreise": [{"kreis": nummer, **leer} for nummer in kreise], **changes}
 
 
 def _store(tmp_path, version="0.6.0"):

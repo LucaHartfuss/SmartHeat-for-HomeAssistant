@@ -150,4 +150,5 @@ def test_ak_g8_03_entfernen_ueber_stdin_stellt_zurueck_fremde_id_nicht(welt):
     with pytest.raises(Neustart):
         anlage.runde(2)
     anlage.neu_starten()
-    assert stand(anlage) == {"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 17.0}
+    # Ursprung vor dem ersten Schreiben (Zonensollwert 21, Kurve 0,9, Heizgrenze 17), nicht der gelernte Zonensollwert 22
+    assert stand(anlage) == {"curve": 0.9, "room_setpoint": 21.0, "heat_limit": 17.0}

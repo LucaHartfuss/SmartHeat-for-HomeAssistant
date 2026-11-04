@@ -3,7 +3,7 @@ import dataclasses
 import math
 
 import pytest
-from bindung_beispiele import PARAMETER, VAILLANT_MYPYLLANT, WEISHAUPT_SCHEMATA, parameter
+from bindung_beispiele import PARAMETER, VAILLANT_MYPYLLANT, WEG, WEISHAUPT_SCHEMATA, parameter
 
 from smartheat_core.binding import ENERGY_DAILY
 from smartheat_core.bindungsparameter import (
@@ -23,24 +23,27 @@ def test_energiekanaele_gleich_den_energierollen():
 
 @pytest.mark.parametrize("hebelsatz", sorted(PARAMETER))
 def test_die_heutigen_parameter_werden_angenommen(hebelsatz):
-    d = beschreibung(hebelsatz, PARAMETER[hebelsatz])
+    d = beschreibung(WEG[hebelsatz], hebelsatz, PARAMETER[hebelsatz])
     assert d.lever_set.id == hebelsatz and d.energy_counters == ENERGY_DAILY
 
 
 def test_vaillant_beschreibung_wie_bis_1_0_0():
-    d = beschreibung("vaillant_vrc720", PARAMETER["vaillant_vrc720"])
+    d = beschreibung("vaillant_myvaillant", "vaillant_vrc720", PARAMETER["vaillant_vrc720"])
     assert d.steps == {"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.1, "min_flow": 0.1}
     assert d.settle_seconds == 2100 and d.enforce_per_day == 6
     assert d.enforce_tolerance == {"curve": 0.025, "room_setpoint": 0.25, "heat_limit": 0.05, "min_flow": 0.05}
     assert d.labels == {"curve": "Heizkurve", "room_setpoint": "Wunschtemperatur der Zone",
                         "heat_limit": "Heizgrenze", "min_flow": "Mindestvorlauftemperatur"}
-    assert (d.restore_originals, d.optional_restore, d.prepared_lever) == (("heat_limit",), ("heat_limit",), "room_setpoint")
-    assert (d.daily_write_limit, d.lifetime_hint_at, d.write_groups, d.aux_originals) == (None, None, (), ())
+    assert d.restore_originals == ("curve", "room_setpoint", "heat_limit", "min_flow")
+    assert (d.optional_restore, d.prepared_lever) == (("heat_limit",), "room_setpoint")
+    assert (d.daily_write_limit, d.lifetime_hint_at, d.write_groups, d.aux_originals) == (
+        None, None, (), ("mode_select",),
+    )
     assert d.preparation_resets_setpoint is True and d.preparation_label == "Betriebsart der Zone"
 
 
 def test_weishaupt_schemata_als_tupel():
-    d = beschreibung("weishaupt_wwp", PARAMETER["weishaupt_wwp"])
+    d = beschreibung("weishaupt_modbus", "weishaupt_wwp", PARAMETER["weishaupt_wwp"])
     assert d.schemata == {"praefixe": ("hz_operationmode_", "heating_circuit_operation_mode_"),
                           "normal_bereich": {"hz_operationmode_": (16.0, 28.0),
                                              "heating_circuit_operation_mode_": (18.0, 25.0)}}
@@ -49,7 +52,7 @@ def test_weishaupt_schemata_als_tupel():
 
 def _abgelehnt(hebelsatz, werte) -> str:
     with pytest.raises(ValueError) as info:
-        beschreibung(hebelsatz, werte)
+        beschreibung(WEG.get(hebelsatz, "simulation"), hebelsatz, werte)
     return str(info.value)
 
 
@@ -78,7 +81,7 @@ def test_schrittweite(schritt, gut):
     werte["schritte"]["curve"] = schritt
     werte["toleranzen"]["curve"] = 1e-6
     if gut:
-        assert beschreibung("vaillant_vrc720", werte).steps["curve"] == schritt
+        assert beschreibung("vaillant_myvaillant", "vaillant_vrc720", werte).steps["curve"] == schritt
     else:
         assert _abgelehnt("vaillant_vrc720", werte)
 
@@ -92,7 +95,7 @@ def test_toleranz_hoechstens_ein_schritt(toleranz, gut):
 
 def _try(werte, hebelsatz="vaillant_vrc720"):
     try:
-        beschreibung(hebelsatz, werte)
+        beschreibung(WEG.get(hebelsatz, "simulation"), hebelsatz, werte)
     except ValueError as error:
         return str(error)
     return None
@@ -116,9 +119,11 @@ def test_wartezeit(wartezeit, gut):
 
 
 @pytest.mark.parametrize(("feld", "wert", "gut"), [
-    ("zurueck", ["heat_limit"], True), ("zurueck", ["min_flow"], False), ("zurueck", ["level"], False),
-    ("zurueck", ["heat_limit", "heat_limit"], False), ("zurueck", "heat_limit", False),
-    ("zurueck_optional", [], True), ("zurueck_optional", ["curve"], False), ("zurueck_optional", ["x"], False),
+    ("zurueck", ["curve", "room_setpoint", "heat_limit", "min_flow"], True),
+    ("zurueck", ["heat_limit"], False), ("zurueck", ["min_flow"], False), ("zurueck", ["level"], False),
+    ("zurueck", ["curve", "room_setpoint", "heat_limit", "min_flow", "heat_limit"], False),
+    ("zurueck", "heat_limit", False),
+    ("zurueck_optional", [], True), ("zurueck_optional", ["level"], False), ("zurueck_optional", ["x"], False),
     ("nur_lesen", ["x"], False), ("schreibgruppen", {"a": ["curve", "heat_limit"]}, False),
     ("nur_lesen", ["level"], True), ("nur_lesen", ["curve"], False),
     ("schreibgruppen", [["curve", "room_setpoint"]], False), ("schreibgruppen", [["curve"]], False),
@@ -132,7 +137,7 @@ def test_listen_und_zaehlerart(feld, wert, gut):
 def test_vaillant_schreibgruppe_ist_nicht_erlaubt():
     # Die Schreibgruppen sind eine lokale Positivliste (Verfahren.schreibgruppen_erlaubt), Vaillant hat keine
     with pytest.raises(Fehler) as fehler:
-        beschreibung("vaillant_vrc720", parameter("vaillant_vrc720", schreibgruppen=[["curve", "room_setpoint"]]))
+        beschreibung("vaillant_myvaillant", "vaillant_vrc720", parameter("vaillant_vrc720", schreibgruppen=[["curve", "room_setpoint"]]))
     assert fehler.value.details == {"feld": "schreibgruppen", "regel": "nicht_erlaubt"}
     assert str(fehler.value) == "Die Schreibgruppen der Bindungsparameter sind für diesen Hebelsatz nicht erlaubt."
 
@@ -151,7 +156,7 @@ def test_vaillant_schreibgruppe_ist_nicht_erlaubt():
 def test_schreibgruppen_nur_aus_der_positivliste(hebelsatz, gruppen, gut):
     fehler = None
     try:
-        beschreibung(hebelsatz, parameter(hebelsatz, schreibgruppen=gruppen))
+        beschreibung(WEG[hebelsatz], hebelsatz, parameter(hebelsatz, schreibgruppen=gruppen))
     except Fehler as error:
         fehler = error
     assert (fehler is None) == gut
@@ -163,7 +168,7 @@ def test_schreibgruppen_nur_aus_der_positivliste(hebelsatz, gruppen, gut):
 def test_die_formpruefungen_der_schreibgruppen_kommen_vor_der_positivliste(gruppen):
     # weniger als zwei Hebel bzw. ein Hebel in zwei Gruppen: "ungueltig", nicht "nicht_erlaubt"
     with pytest.raises(Fehler) as fehler:
-        beschreibung("viessmann_vicare", parameter("viessmann_vicare", schreibgruppen=gruppen))
+        beschreibung("viessmann_vicare", "viessmann_vicare", parameter("viessmann_vicare", schreibgruppen=gruppen))
     assert fehler.value.details == {"feld": "schreibgruppen", "regel": "ungueltig"}
 
 
@@ -225,7 +230,8 @@ def test_riesenzahlen_sind_ein_wertefehler():
 
 def test_zurueck_optional_nur_aus_zurueck():
     assert _try(parameter("vaillant_vrc720", zurueck=["curve"], zurueck_optional=["heat_limit"]))
-    assert _try(parameter("vaillant_vrc720", zurueck=["heat_limit"], zurueck_optional=[])) is None
+    alle = ["curve", "room_setpoint", "heat_limit", "min_flow"]
+    assert _try(parameter("vaillant_vrc720", zurueck=alle, zurueck_optional=[])) is None
 
 
 H = "hz_operationmode_"
@@ -267,7 +273,7 @@ def test_schreibschutz_vaillant_randfaelle(schutz, gut):
 
 
 def _vaillant_durchsetzen(durchsetzen_tag):
-    return beschreibung("vaillant_vrc720", parameter("vaillant_vrc720", schreibschutz={
+    return beschreibung("vaillant_myvaillant", "vaillant_vrc720", parameter("vaillant_vrc720", schreibschutz={
         "tag": None, "lebensdauer_hinweis": None, "durchsetzen_tag": durchsetzen_tag}))
 
 
@@ -294,7 +300,7 @@ def test_basis_lehnt_fremden_hebel_ab():
 
 def test_fehlertexte_nicht_doppelt_verpackt():
     for feld, wert in (("zurueck", ["min_flow"]), ("nur_lesen", ["curve"]), ("energie", {"gas": "kWh"}),
-                       ("schreibgruppen", [["curve"]]), ("zurueck_optional", ["curve"])):
+                       ("schreibgruppen", [["curve"]]), ("zurueck_optional", ["level"])):
         text = _try(parameter("vaillant_vrc720", **{feld: wert}))
         assert text and "ungültig (" not in text, (feld, text)
 
@@ -304,7 +310,7 @@ def test_fehlertexte_nicht_doppelt_verpackt():
     ({"enforce_tolerance": {"curve": 0.025}}, "Toleranz"),
     ({"labels": {}}, "Anzeigename"),
     ({"restore_originals": ("level",)}, "restore_originals"),
-    ({"optional_restore": ("min_flow",)}, "optional_restore"),
+    ({"optional_restore": ("level",)}, "optional_restore"),
     ({"prepared_lever": "level"}, "prepared_lever"),
     ({"settle_seconds": 0}, "Wartezeit"),
     ({"daily_write_limit": 0}, "daily_write_limit"),
@@ -352,7 +358,7 @@ def test_wartezeit_60_bis_7200_als_zahl(wartezeit, gut):
 
 
 def test_ohne_schemata_im_verfahren_ist_schemata_ein_leeres_mapping():
-    assert beschreibung("vaillant_vrc720", PARAMETER["vaillant_vrc720"]).schemata == {}
+    assert beschreibung("vaillant_myvaillant", "vaillant_vrc720", PARAMETER["vaillant_vrc720"]).schemata == {}
 
 
 @pytest.mark.parametrize(("praefix", "text"), [
@@ -387,7 +393,7 @@ _W = "weishaupt_wwp_basis"
 # Je Pruefung in beschreibung ein Verstoss (Abschlussreview Minor 1): jeder Text ist fuer sich verstaendlich und nennt
 # die Bindungsparameter genau einmal (config_check setzt kein Praefix mehr davor).
 _VERSTOESSE = {
-    "hebel": _mit("vaillant_vrc720", zurueck=["min_flow"]),
+    "hebel": _mit("vaillant_vrc720", zurueck=["level"]),
     "zahlen_je_hebel": _ohne_min_flow(),
     "schreibschutz_unvollstaendig": _mit("vaillant_vrc720", schreibschutz={"tag": None, "lebensdauer_hinweis": None}),
     "durchsetzen": _mit("vaillant_vrc720", schreibschutz={"tag": None, "lebensdauer_hinweis": None,
@@ -434,10 +440,10 @@ def test_jeder_fehler_traegt_details_des_vertrags():
               {**parameter("vaillant_vrc720"), "zaehler": "x"}, {**parameter("vaillant_vrc720"), "energie": 5}]
     for werte in kaputt:
         with pytest.raises(Fehler) as info:
-            beschreibung("vaillant_vrc720", werte)
+            beschreibung("vaillant_myvaillant", "vaillant_vrc720", werte)
         assert fehler.gueltig(info.value.details) and info.value.details["feld"] in wire.PRUEF_FELDER
     with pytest.raises(Fehler) as info:
-        beschreibung("erfunden", parameter("vaillant_vrc720"))
+        beschreibung("vaillant_myvaillant", "erfunden", parameter("vaillant_vrc720"))
     assert info.value.details == {"feld": "hebelsatz", "regel": "unbekannt"}
 
 
@@ -457,7 +463,7 @@ def test_schreibschutz_fehler_nennt_max_genau_bei_lokaler_obergrenze(hebelsatz, 
     """Die details an den Server nennen die lokale Obergrenze nur, wenn es eine
     gibt."""
     with pytest.raises(Fehler) as info:
-        beschreibung(hebelsatz, parameter(hebelsatz, schreibschutz=schutz))
+        beschreibung(WEG[hebelsatz], hebelsatz, parameter(hebelsatz, schreibschutz=schutz))
     assert info.value.details == details
 
 
@@ -465,7 +471,7 @@ def test_schreibschutz_fehler_nennt_max_genau_bei_lokaler_obergrenze(hebelsatz, 
 def test_wartezeit_fehler_nennt_min_60_und_max_7200(wartezeit):
     """Die details an den Server tragen beide Grenzen der Wartezeit."""
     with pytest.raises(Fehler) as info:
-        beschreibung("vaillant_vrc720", parameter("vaillant_vrc720", wartezeit_s=wartezeit))
+        beschreibung("vaillant_myvaillant", "vaillant_vrc720", parameter("vaillant_vrc720", wartezeit_s=wartezeit))
     assert info.value.details == {"feld": "wartezeit_s", "regel": "bereich", "min": 60, "max": 7200}
 
 
@@ -473,14 +479,14 @@ def test_wartezeit_fehler_nennt_min_60_und_max_7200(wartezeit):
 # Welche Hebel beim Abmelden oder Abo-Ende zurueckgestellt werden, entscheidet nicht der Server: eine leere oder
 # verkuerzte Liste `zurueck` weist der Client ab. Die Mindestlisten stehen hier als Literale, nie aus dem Produktcode.
 MINDEST_ZURUECK = {
-    "vaillant_vrc720": ("heat_limit",),
+    "vaillant_vrc720": ("curve", "room_setpoint", "heat_limit", "min_flow"),
     "weishaupt_wwp": ("curve", "room_setpoint", "heat_limit"),
     "weishaupt_wwp_basis": ("room_setpoint",),
     "viessmann_vicare": ("curve", "level", "room_setpoint"),
 }
 FEHLENDER_PFLICHT_HEBEL = [(satz, hebel) for satz, liste in MINDEST_ZURUECK.items() for hebel in liste]
 #: Erlaubte Hebel ausser der Mindestliste, die der Server zusaetzlich zurueckstellen lassen darf.
-ZUSATZ_HEBEL = {"vaillant_vrc720": ("curve", "room_setpoint"), "weishaupt_wwp": (), "weishaupt_wwp_basis": (),
+ZUSATZ_HEBEL = {"vaillant_vrc720": (), "weishaupt_wwp": (), "weishaupt_wwp_basis": (),
                 "viessmann_vicare": ()}
 
 
@@ -491,7 +497,7 @@ def _zurueck_mit(hebelsatz, zurueck):
 
 def _zurueck_abgewiesen(hebelsatz, werte) -> dict:
     with pytest.raises(Fehler) as info:
-        beschreibung(hebelsatz, werte)
+        beschreibung(WEG[hebelsatz], hebelsatz, werte)
     return info.value.details
 
 
@@ -516,22 +522,23 @@ def test_leere_zurueck_liste_wird_abgewiesen(hebelsatz):
 @pytest.mark.parametrize("hebelsatz", sorted(MINDEST_ZURUECK))
 def test_zurueck_mit_voller_mindestliste_und_zusatz_wird_angenommen(hebelsatz):
     zurueck = (*MINDEST_ZURUECK[hebelsatz], *ZUSATZ_HEBEL[hebelsatz])
-    d = beschreibung(hebelsatz, _zurueck_mit(hebelsatz, zurueck))
+    d = beschreibung(WEG[hebelsatz], hebelsatz, _zurueck_mit(hebelsatz, zurueck))
     assert set(d.restore_originals) == set(zurueck)
 
 
 @pytest.mark.parametrize("hebelsatz", sorted(MINDEST_ZURUECK))
 def test_reihenfolge_der_zurueck_liste_ist_gleichgueltig(hebelsatz):
     zurueck = list(reversed(MINDEST_ZURUECK[hebelsatz]))
-    assert set(beschreibung(hebelsatz, _zurueck_mit(hebelsatz, zurueck)).restore_originals) == set(zurueck)
+    assert set(beschreibung(WEG[hebelsatz], hebelsatz, _zurueck_mit(hebelsatz, zurueck)).restore_originals) == set(zurueck)
 
 
 def test_vaillant_pflicht_hebel_darf_weiter_optional_sein():
-    """Die Mindestliste fordert die Rueckstellung von heat_limit; `zurueck_optional` (darf im Wiederherstellungspunkt
-    fehlen) bleibt wie heute erlaubt."""
-    d = beschreibung("vaillant_vrc720", parameter("vaillant_vrc720", zurueck=["heat_limit"],
+    """Die Mindestliste fordert die Rueckstellung aller vier Hebel; `zurueck_optional` (darf im Wiederherstellungspunkt
+    fehlen) bleibt fuer die Heizgrenze wie heute erlaubt."""
+    alle = ["curve", "room_setpoint", "heat_limit", "min_flow"]
+    d = beschreibung("vaillant_myvaillant", "vaillant_vrc720", parameter("vaillant_vrc720", zurueck=alle,
                                                    zurueck_optional=["heat_limit"]))
-    assert d.restore_originals == ("heat_limit",) and d.optional_restore == ("heat_limit",)
+    assert d.restore_originals == tuple(alle) and d.optional_restore == ("heat_limit",)
 
 
 def test_aussenweg_ein_dokument_mit_verkuerzter_liste_wird_von_der_konfigurationspruefung_abgewiesen():
@@ -549,3 +556,29 @@ def test_aussenweg_ein_dokument_mit_verkuerzter_liste_wird_von_der_konfiguration
         ablehnung = cc.pruefen(bauen(bindungsparameter=_zurueck_mit(satz, kurz)), None, host=host)
         assert ablehnung is not None, satz
         assert ablehnung.grund == cc.UNGUELTIG and ablehnung.details["feld"] == "zurueck", satz
+
+
+@pytest.mark.parametrize("hebelsatz", sorted(PARAMETER))
+def test_die_simulation_traegt_jeden_hebelsatz_mit_denselben_werten(hebelsatz):
+    assert beschreibung("simulation", hebelsatz, PARAMETER[hebelsatz]) == beschreibung(WEG[hebelsatz], hebelsatz,
+                                                                                       PARAMETER[hebelsatz])
+
+
+@pytest.mark.parametrize("weg", ["vaillant_ebus", "", "Simulation", None])
+def test_unbekannter_weg_scheitert_vor_dem_hebelsatz(weg):
+    with pytest.raises(Fehler) as info:
+        beschreibung(weg, "vaillant_vrc720", PARAMETER["vaillant_vrc720"])
+    assert info.value.details == {"feld": "weg", "regel": "unbekannt"}
+    with pytest.raises(Fehler) as info:  # auch mit unbekanntem Hebelsatz meldet der Weg zuerst
+        beschreibung(weg, "erfunden", PARAMETER["vaillant_vrc720"])
+    assert info.value.details == {"feld": "weg", "regel": "unbekannt"}
+
+
+@pytest.mark.parametrize(("weg", "hebelsatz"), [
+    ("viessmann_vicare", "vaillant_vrc720"), ("vaillant_myvaillant", "viessmann_vicare"),
+    ("weishaupt_modbus", "viessmann_vicare"), ("vaillant_myvaillant", "weishaupt_wwp"),
+])
+def test_hebelsatz_ohne_zeile_am_weg_scheitert_wie_ein_unbekannter_hebelsatz(weg, hebelsatz):
+    with pytest.raises(Fehler) as info:
+        beschreibung(weg, hebelsatz, PARAMETER[hebelsatz])
+    assert info.value.details == {"feld": "hebelsatz", "regel": "unbekannt"}

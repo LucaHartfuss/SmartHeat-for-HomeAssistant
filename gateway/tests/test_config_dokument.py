@@ -2,8 +2,10 @@
 Konfigurationsdokument."""
 from pathlib import Path
 
+import konfig_form
 import pytest
-from configs import SENSOR, THERMOSTAT, konfiguration, leer
+from configs import SENSOR, THERMOSTAT, konfiguration, kreis_bindung, leer
+from rastung_beispiele import rastung_aus
 
 from smartheat_core import rastung
 from smartheat_device import wire
@@ -14,13 +16,35 @@ from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_runtime import dokument_config, entitlement
 from smartheat_runtime.dokument_config import ConfigError
 
+SECOND = "0x00124b0000000003"
 PARAMETER = {"lever_set": "viessmann_vicare", "heizkreis": 0}
 
 
 def test_binding_from_the_document():
     bindung = config.bindung(konfiguration())
-    assert bindung == config.GatewayBindung("simulation", PARAMETER, (f"zigbee:{SENSOR}:temperature",), THERMOSTAT)
+    assert bindung == config.GatewayBindung("simulation", PARAMETER, (f"zigbee:{SENSOR}:temperature",), THERMOSTAT,
+                                            ((1, (f"zigbee:{SENSOR}:temperature",)),))
     assert bindung.driver_spec() == {"id": "simulation", "parameter": PARAMETER}
+
+
+def test_die_bindung_traegt_alle_raeume_mit_fuehler_auch_kontrollraeume_aber_nur_referenzfuehler_im_mittel():
+    kontroll = f"zigbee:{SECOND}:temperature"
+    dokument = konfiguration()
+    dokument["kreise"][0]["raeume"] = [
+        konfig_form.raum([f"zigbee:{SENSOR}:temperature"]),
+        konfig_form.raum([kontroll], nummer=2, name="Bad", rolle="kontrolle"),
+        konfig_form.raum([], nummer=3, name="Flur", rolle="kontrolle"),  # ohne Fuehler: kein Eintrag
+    ]
+    bindung = config.bindung(dokument)
+    assert bindung.room_sensors == (f"zigbee:{SENSOR}:temperature",)
+    assert bindung.raeume == ((1, (f"zigbee:{SENSOR}:temperature",)), (2, (kontroll,)))
+
+
+def test_ein_unbrauchbarer_fuehler_eines_kontrollraums_ist_ein_konfigurationsfehler():
+    dokument = konfiguration()
+    dokument["kreise"][0]["raeume"].append(konfig_form.raum(["sensor.bad"], nummer=2, rolle="kontrolle"))
+    with pytest.raises(ConfigError, match="Raumf"):
+        config.bindung(dokument)
 
 
 @pytest.mark.parametrize("change", [
@@ -54,14 +78,14 @@ def test_an_ieee_address_in_capitals_is_refused_as_thermostat_and_as_sensor():
 def test_parse_gives_the_runtime_config_without_transport(tmp_path):
     paths = Paths(tmp_path)
     runtime, bindung = config.parse_dokument(konfiguration(), paths, lambda: entitlement.ACTIVE)
-    assert runtime.entitlement_path == paths.entitlement and runtime.abo_source() == entitlement.ACTIVE
+    assert runtime.entitlement_path == paths.entitlement(1) and runtime.abo_source() == entitlement.ACTIVE
     assert (runtime.tenant_id, runtime.lever_set_id, bindung.driver_id) == ("test-tenant", "viessmann_vicare",
                                                                             "simulation")
 
 
 def test_the_driver_check_asks_the_driver_without_creating_a_plant(tmp_path):
     paths = Paths(tmp_path)
-    assert config.treiber_pruefen(paths, konfiguration()["bindung"]) is None
+    assert config.treiber_pruefen(paths, kreis_bindung()) is None
     assert config.treiber_pruefen(paths, {"treiber": {"id": "x", "parameter": {}}}) == {"feld": "id", "regel": "unbekannt"}
     assert config.treiber_pruefen(paths, {"treiber": {"id": "vicare_cloud", "parameter": {"installation_id": "x"}}}) == {
         "feld": "parameter", "regel": "ungueltig"}
@@ -130,7 +154,7 @@ def test_rastung_path_is_where_the_document_store_writes_the_lock(tmp_path):
                           treiber_pruefen=lambda bindung: config.treiber_pruefen(paths, bindung))
     ergebnis = store.empfangen("konfiguration", {"schema": wire.SCHEMA, "version": 1, **konfiguration()})
     assert ergebnis.ok and paths.rastung.is_file()
-    assert rastung.lesen(paths.rastung) == rastung.Rastung("viessmann_vicare", "Heizkoerper")
+    assert rastung.lesen(paths.rastung) == rastung_aus(konfiguration())
     config.parse_dokument(konfiguration(), paths, lambda: entitlement.ACTIVE)
     with pytest.raises(ConfigError, match="festgelegt"):
         config.parse_dokument(konfiguration(verteilsystem="Fussbodenheizung"), paths, lambda: entitlement.ACTIVE)

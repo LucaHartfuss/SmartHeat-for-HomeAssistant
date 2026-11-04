@@ -1,8 +1,10 @@
 """Laufzeit-Host des Gateways: Konfiguration aus dem Konfigurationsdokument
 des Geraetekerns, Signale aus Zigbee, Soll-Speicher und Treiber, Status und Meldungen ueber den Gateway-Host des
 Geraetekerns (geraet_host: im Prozess bzw. als up/notifications), Anlage ueber den Treiber, Trigger ueber den lokalen
-Bus. Die Laufzeit selbst ist smartheat_runtime.app (identisch mit dem HA-Add-on). Die Konfiguration gilt fuer die
-Lebenszeit des Prozesses; eine laufzeitrelevante neue startet ihn neu (runtime_main). Die Bedienung gibt den Startwert
+Bus. Die Laufzeit selbst ist smartheat_runtime.app (identisch mit dem HA-Add-on). Ein GatewayHost gehoert einem
+Heizkreis (Treiber, Zigbee-Geraete, Soll-Speicher, Raum, Wuensche); GatewayAnlagenHost baut einen je Kreis des Dokuments.
+Die Konfiguration gilt fuer die Lebenszeit des Prozesses; eine laufzeitrelevante neue startet ihn neu (runtime_main),
+eine nur einen Kreis betreffende nimmt ihn allein wieder auf (smartheat_runtime.kreise). Die Bedienung gibt den Startwert
 des Soll-Speichers; weicht ein gespeicherter Wert ab (Bedienung kam waehrend eines Neustarts), gilt die Bedienung, ausser
 ein lokaler Wunsch ist noch offen (dirty). Die Bedienung beim Start gilt sofort im Soll-Speicher und geht wie das
 Angleichen ans Thermostat (BusTriggerSource: erst bei bekanntem Zustand, der nicht aus ist)."""
@@ -10,7 +12,7 @@ import dataclasses
 import logging
 import time
 
-from smartheat_core import bindungsparameter, wallclock
+from smartheat_core import bindungsparameter, kennung, kreisansicht, wallclock
 from smartheat_core.logtext import lesbar
 from smartheat_core.safety import resolve_local_safety
 from smartheat_gateway import config as gateway_config
@@ -49,13 +51,15 @@ DEVICES_WAIT_SECONDS = 60.0
 NOT_CONFIGURED_HINT = "Gateway ist noch nicht eingerichtet - die Einrichtung laeuft im SmartHeat-Portal."
 
 
-def build_manifest(driver) -> ChannelManifest:
+def build_manifest(driver, raeume: tuple[tuple[int, tuple[str, ...]], ...] = ()) -> ChannelManifest:
+    """`raeume`: (Nummer, Fuehler) je Raum mit Fuehler; jeder bekommt die Referenz `raum:<n>`."""
     refs = {"room_actual": REF_ROOM_MEAN, "room_target": REF_ROOM_TARGET, **driver.signals()}
     lever_set = driver.description.lever_set.id
     missing = [role for role in REQUIRED_ROLES_BY_LEVER_SET[lever_set] if role not in refs]
     if missing:
         raise ManifestError(f"Treiber liefert Pflicht-Rollen nicht: {', '.join(missing)}")
-    return ChannelManifest(refs={role: refs[role] for role in ALL_ROLES if role in refs})
+    return ChannelManifest(refs={role: refs[role] for role in ALL_ROLES if role in refs},
+                           raum_refs={nummer: f"raum:{nummer}" for nummer, _ in raeume})
 
 
 def check_lever_set(driver, lever_set_id: str) -> None:
@@ -70,7 +74,8 @@ def check_lever_set(driver, lever_set_id: str) -> None:
 
 class GatewayHost:
     def __init__(self, paths: Paths, bus: Bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, *,
-                 clock=time.monotonic, devices_wait_seconds: float = DEVICES_WAIT_SECONDS, driver_threads: bool = True) -> None:
+                 clock=time.monotonic, devices_wait_seconds: float = DEVICES_WAIT_SECONDS, driver_threads: bool = True,
+                 kreis: int | None = None) -> None:
         self._paths, self._bus, self._clock = paths, bus, clock
         self._geraet = geraet
         self._devices_wait = devices_wait_seconds
@@ -79,6 +84,9 @@ class GatewayHost:
         # mit der alten Konfiguration aus der Aufraeum-Markierung im Modus abgemeldet (Treiber-Anmeldung noch da).
         self.konfiguration: dict
         self.konfiguration, self._leer_abmelden = geraet.laufzeit_konfiguration()
+        #: der Heizkreis dieses Hosts (ohne Angabe der erste des Dokuments): Treiber, Zigbee-Geraete, Pfade, Soll-Speicher,
+        #: Raum und Wuensche gehoeren ihm; Bus, Zigbee-Spiegel und Geraet sind allen Kreisen gemeinsam
+        self.kreis = kreis if kreis is not None else dokument_config.kreisnummer(self.konfiguration)
         self.mirror = mirror
         self._signals = GatewaySignalSource(bus, mirror)
         self.signals: SignalSource = self._signals
@@ -96,8 +104,10 @@ class GatewayHost:
     def boot_info(self) -> BootInfo:
         abgemeldet = self._leer_abmelden or gateway_config.abgemeldet(self._paths, self.konfiguration)
         boot = dokument_config.boot_info(
-            self.konfiguration, abgemeldet=abgemeldet, client_version=GATEWAY_VERSION, backup_path=self._paths.backup,
-            failsafe_path=self._paths.failsafe, aufraeumen_path=self._paths.aufraeumen)
+            self.konfiguration, abgemeldet=abgemeldet, client_version=GATEWAY_VERSION,
+            backup_path=self._paths.backup(self.kreis), failsafe_path=self._paths.failsafe(self.kreis),
+            aufraeumen_path=self._paths.aufraeumen, alter_zustand=self._paths.alter_backup,
+            anlage_budget_path=self._paths.anlage_budget, kreis=self.kreis)
         if not boot.configured and not boot.signed_off:
             logger.info(NOT_CONFIGURED_HINT)
         return boot
@@ -108,35 +118,40 @@ class GatewayHost:
         self._paths.runtime_dir.mkdir(parents=True, exist_ok=True)
 
     def ursprungswerte_melden(self, werte: dict) -> None:
-        self._geraet.ursprungswerte_merken(werte)
+        self._geraet.ursprungswerte_merken(werte, self.kreis)
 
     def ursprungswerte_server(self) -> dict:
-        return self._geraet.ursprungswerte_server(self.konfiguration, self._leer_abmelden)
+        return self._geraet.ursprungswerte_server(self.konfiguration, self._leer_abmelden, self.kreis)
 
     def sign_off_parts(self) -> RestoreParts | None:
-        hebelsatz = self.konfiguration.get("hebelsatz")
+        sicht = kreisansicht.sicht(self.konfiguration, self.kreis)
+        hebelsatz = sicht.get("hebelsatz")
         try:
             dokument_config.rastung_pruefen(self.konfiguration, self._paths.rastung)
             if not isinstance(hebelsatz, str):
                 raise ConfigError("Konfiguration ohne Hebelsatz")
-            safety = resolve_local_safety(hebelsatz, self.konfiguration.get("verteilsystem"))
-            beschreibung = bindungsparameter.beschreibung(hebelsatz, self.konfiguration.get("bindungsparameter"))
-            driver = self._create_driver(gateway_config.bindung(self.konfiguration).driver_spec(), beschreibung)
+            safety = resolve_local_safety(hebelsatz, sicht.get("verteilsystem"))
+            beschreibung = bindungsparameter.beschreibung(sicht.get("weg"), hebelsatz, sicht.get("bindungsparameter"))
+            spec = gateway_config.bindung(self.konfiguration, self.kreis).driver_spec()
+            driver = self._create_driver(spec, beschreibung)
+            plant_id = registry.plant_id(spec)
             check_lever_set(driver, hebelsatz)
         except (ConfigError, KeyError, TypeError, ValueError) as error:
             logger.error("Abmelden ohne Zuruecksetzen: %s (%s)", lesbar(str(error)), type(error).__name__)
             return None
         self._activate(driver)
-        return RestoreParts(driver, safety)
+        return RestoreParts(driver, safety, plant_id)
 
     def load(self) -> Loaded:
         try:
-            runtime, bindung = gateway_config.parse_dokument(self.konfiguration, self._paths, self._geraet.abo_status)
+            runtime, bindung = gateway_config.parse_dokument(
+                self.konfiguration, self._paths, lambda: self._geraet.abo_status(self.kreis), self.kreis)
         except (ConfigError, KeyError) as error:
             raise StartFailure(str(error), KEY_CONFIG) from error
         try:
+            sicht = kreisansicht.sicht(self.konfiguration, self.kreis)
             beschreibung = bindungsparameter.beschreibung(
-                runtime.lever_set_id, self.konfiguration.get("bindungsparameter"))
+                sicht.get("weg"), runtime.lever_set_id, sicht.get("bindungsparameter"))
         except ValueError as error:
             raise StartFailure(f"Konfiguration: {error}", KEY_CONFIG) from error
         self._geraete_abwarten(self._zigbee_ieees(bindung))
@@ -154,28 +169,31 @@ class GatewayHost:
             check_lever_set(driver, runtime.lever_set_id)
         except ConfigError as error:
             raise StartFailure(str(error), KEY_CONFIG) from error
+        try:
+            plant_id = registry.plant_id(bindung.driver_spec())
+        except kennung.KennungFehler as error:
+            raise StartFailure(f"Konfiguration: {error}", KEY_CONFIG) from error
         self._activate(driver)  # erste Abfrage vor dem Manifest: optionale Signale stehen dann im Cache
         try:
-            manifest = build_manifest(driver)
+            manifest = build_manifest(driver, bindung.raeume)
         except ManifestError as error:
             driver.stop()  # kein Abfragen im Leerlauf, bis die Neupruefung den Treiber neu baut
             self.driver = None
             raise StartFailure(str(error), KEY_MANIFEST) from error
         bedienung, dirty = self._geraet.bedienung()
-        bedient = bedienung_start(bedienung)
+        bedient = bedienung_start(bedienung, self.kreis)
         start = bedient if bedient is not None else DEFAULT_RAUM_SOLL
-        store = TargetStore(self._paths.room_target, start, self._clock, lambda: wallclock.now().isoformat(),
+        store = TargetStore(self._paths.room_target(self.kreis), start, self._clock, lambda: wallclock.now().isoformat(),
                             on_change=self._raum_changed)
         self._angleichen = bedient is not None and not dirty
         self._bedienung_start = start if self._angleichen and store.value != start else None
-        self._signals.bind(driver, store, bindung.room_sensors)
+        self._signals.bind(driver, store, bindung.room_sensors, bindung.raeume)
         runtime = dataclasses.replace(runtime, battery_refs=self._battery_refs(bindung))
         self._store, self._bindung, self._runtime_config = store, bindung, runtime
-        zustand = self._geraet.zustand
-        self.raum = RaumPublisher(lambda raum: setattr(zustand, "raum", raum), self.signals, store, REF_ROOM_MEAN,
+        geraet, kreis = self._geraet, self.kreis
+        self.raum = RaumPublisher(lambda raum: geraet.raum_merken(kreis, raum), self.signals, store, REF_ROOM_MEAN,
                                   lambda: wallclock.now().isoformat())
-        return Loaded(config=runtime, manifest=manifest, binding=driver,
-                      plant_id=registry.plant_id(bindung.driver_spec()))
+        return Loaded(config=runtime, manifest=manifest, binding=driver, plant_id=plant_id)
 
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
         assert self._store is not None and self._bindung is not None and self._runtime_config is not None
@@ -188,7 +206,7 @@ class GatewayHost:
             worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
         return BusTriggerSource(
             self._bus, worker, self.mirror, self._store, thermostat=bindung.thermostat, sensor_ieees=sensor_ieees,
-            daily_trigger_time=self._runtime_config.daily_trigger_time, wunsch=self._geraet.wunsch,
+            daily_trigger_time=self._runtime_config.daily_trigger_time, wunsch=lambda wert: self._geraet.wunsch(wert, kreis=self.kreis),
             soll_quelle_aus=self._geraet.soll_quelle_aus, clock=self._clock,
             # Thermostat, Portal und Geraet zeigen denselben Wert (einmal je Start; Echo-Fenster); die Quelle
             # schreibt beim Start, nach Thermostatmodus und Anzeige (Profil), ein ganzzahliges Thermostat gerundet, und
@@ -205,6 +223,15 @@ class GatewayHost:
             driver_spec["id"], driver_spec.get("parameter") or {}, self._paths, clock=self._clock, writer=True,
             description=description,
         )
+
+    def treiber_stoppen(self) -> None:
+        """Beendet den Abfrage-Thread des Treibers dieses Hosts (die Wiederaufnahme des Kreises baut einen neuen)."""
+        if self.driver is None:
+            return
+        try:
+            self.driver.stop()
+        except Exception:
+            logger.exception("Treiber eines Kreises konnte nicht sauber beendet werden")
 
     def _activate(self, driver) -> None:
         """Erste Abfrage und Abfrage-Thread erst, wenn die Konfiguration vollstaendig geprueft ist."""
@@ -243,3 +270,39 @@ class GatewayHost:
             elif CAP_BATTERY_LOW in device.faehigkeiten:
                 refs.append(BatteryRef(f"zigbee:{ieee}:battery_low", BATTERY_LOW_FLAG))
         return tuple(refs)
+
+
+class GatewayAnlagenHost:
+    """Die Sicht der Laufzeit auf die ganze Anlage (kreise.AnlagenHost): ein GatewayHost je Kreis des Dokuments, alle auf
+    demselben lokalen Bus, demselben Zigbee-Spiegel, demselben Geraet und derselben Statussenke. `kreis_host` baut den
+    Host des Kreises jedes Mal neu (auch bei einer Wiederaufnahme), damit er das aktuelle Dokument liest; `hosts` haelt
+    den jeweils letzten."""
+
+    def __init__(self, paths: Paths, bus: Bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, *,
+                 clock=time.monotonic, devices_wait_seconds: float = DEVICES_WAIT_SECONDS,
+                 driver_threads: bool = True) -> None:
+        self._args = (paths, bus, mirror, geraet)
+        self._optionen = {"clock": clock, "devices_wait_seconds": devices_wait_seconds,
+                          "driver_threads": driver_threads}
+        self._geraet = geraet
+        self.status_sink: StatusSink = geraet.status_sink
+        self.hosts: dict[int, GatewayHost] = {}
+
+    def kreise(self) -> list[int]:
+        """Die Kreisnummern des Dokuments; ohne Einrichtung der eine Kreis 1 im Ruhezustand."""
+        konfiguration, _ = self._geraet.laufzeit_konfiguration()
+        nummern = [k for eintrag in kreisansicht.kreise(konfiguration) if isinstance(k := eintrag.get("kreis"), int)]
+        return nummern or [1]
+
+    def kreis_host(self, kreis: int) -> GatewayHost:
+        alt = self.hosts.get(kreis)
+        if alt is not None:
+            alt.treiber_stoppen()  # auch ein ruhender Kreis hat seinen Abfrage-Thread: je Kreis hoechstens einer
+        host = GatewayHost(*self._args, **self._optionen, kreis=kreis)
+        self.hosts[kreis] = host
+        return host
+
+    @property
+    def erster(self) -> GatewayHost | None:
+        """Der Host des ersten Kreises (Anlagenweites, Tests)."""
+        return self.hosts.get(min(self.hosts)) if self.hosts else None

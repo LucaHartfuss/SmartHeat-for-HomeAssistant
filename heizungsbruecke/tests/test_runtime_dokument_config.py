@@ -5,20 +5,48 @@ import json
 import re
 from pathlib import Path
 
+import konfig_form
 import pytest
 from bindung_beispiele import parameter
+from rastung_beispiele import rastung_aus
 
 from smartheat_core import rastung
 from smartheat_core.config_check import INTERVALLE
 from smartheat_core.safety import LOCAL_SAFETY, resolve_local_safety
 from smartheat_device import wire
-from smartheat_runtime import dokument_config as dc
+from smartheat_runtime import dokument_config as _dokument_config
 from smartheat_runtime import entitlement
 from smartheat_runtime.dokument_config import ConfigError
 
+#: Welche Argumente der Funktionen ein Dokument sind (die Tests beschreiben ihre Anlage flach, die Funktionen lesen
+#: die Form je Kreis).
+_DOKUMENT_ARGUMENTE = {"boot_info": (0,), "runtime_config": (0,), "abo_status": (0,), "beschreibung": (0,),
+                       "sicherheit": (0,), "rastung_pruefen": (0,), "ursprungswerte": (0,), "eingerichtet": (0,),
+                       "laufzeit_relevant": (0, 1), "abgemeldet": (1,)}
+
+
+def _form(flach):
+    return konfig_form.nach_form(flach) if isinstance(flach, dict) and "kreise" not in flach else flach
+
+
+class _FlacheSicht:
+    """dokument_config, aufgerufen mit flachen Testdokumenten."""
+
+    def __getattr__(self, name):
+        wert = getattr(_dokument_config, name)
+        stellen = _DOKUMENT_ARGUMENTE.get(name)
+        if stellen is None:
+            return wert
+
+        def aufruf(*args, **kwargs):
+            return wert(*(_form(arg) if i in stellen else arg for i, arg in enumerate(args)), **kwargs)
+        return aufruf
+
+
+dc = _FlacheSicht()
 SENSOR = "zigbee:0x00124b0000000001:temperature"
 KONF = {
-    "anlage": "kunde3", "profil": "viessmann_gastherme_heizkoerper", "hebelsatz": "viessmann_vicare",
+    "anlage": "kunde3", "hebelsatz": "viessmann_vicare",
     "verteilsystem": "Heizkoerper", "bindung": {"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None},
     "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
 }
@@ -32,7 +60,7 @@ def _boot(konfiguration, tmp_path, abgemeldet=False):
 
 
 def test_fields_are_contract_fields():
-    assert set(dc.FELDER) <= set(wire.KONFIGURATION_FIELDS) | set(wire.KONFIGURATION_OPTIONAL)
+    assert set(dc.FELDER) <= set(wire.KONFIGURATION_FIELDS)
     assert set(dc.LAUFZEIT_FELDER) <= set(dc.FELDER)
 
 
@@ -133,12 +161,82 @@ def test_unusable_documents_are_config_errors(konfiguration, tmp_path):
                           abo_source=lambda: entitlement.ACTIVE)
 
 
-@pytest.mark.parametrize("raumfuehler", [[], [5], [SENSOR, None], SENSOR, None],
-                         ids=["leer", "zahl", "mit_none", "text_statt_liste", "none"])
-def test_raumfuehler_ohne_liste_von_texten_sind_ein_konfigurationsfehler(raumfuehler, tmp_path):
+@pytest.mark.parametrize("raumfuehler", [[], [5], [None]], ids=["leer", "zahl", "none"])
+def test_ohne_referenzfuehler_ist_ein_konfigurationsfehler(raumfuehler, tmp_path):
     with pytest.raises(ConfigError, match="Konfiguration: keine Raumfühler"):
         dc.runtime_config({**KONF, "raumfuehler": raumfuehler}, rastung_pfad=tmp_path / "keine.json",
                           entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
+
+
+def test_ein_kontrollraum_ist_kein_referenzfuehler(tmp_path):
+    """Die Regelung liest nur die Fuehler der Referenzraeume: ein Kreis nur mit Kontrollraum hat keine."""
+    kontroll = konfig_form.raum([SENSOR], nummer=2, name="Leonie", rolle="kontroll")
+    konfiguration = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF, raeume=[kontroll])])
+    with pytest.raises(ConfigError, match="Konfiguration: keine Raumfühler"):
+        dc.runtime_config(konfiguration, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                          abo_source=lambda: entitlement.ACTIVE)
+
+
+def test_ein_kontrollraum_neben_dem_referenzraum_fliesst_nicht_in_die_regelung(tmp_path):
+    kontroll = konfig_form.raum(["zigbee:0x00124b0000000009:temperature"], nummer=2, name="Leonie", rolle="kontroll")
+    referenz = konfig_form.raum([SENSOR])
+    konfiguration = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF, raeume=[referenz, kontroll])])
+    config = dc.runtime_config(konfiguration, rastung_pfad=tmp_path / "keine.json",
+                               entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
+    assert config.room_sensor_refs == (SENSOR,)
+
+
+SENSOR2 = "zigbee:0x00124b0000000002:temperature"
+
+
+def _zwei_kreise():
+    return konfig_form.nach_form(KONF, kreise=[
+        konfig_form.kreis(KONF), konfig_form.kreis({**KONF, "raumfuehler": [SENSOR2], "hebelsatz": "viessmann_vicare"},
+                                                   nummer=2)])
+
+
+def _config(konfiguration, tmp_path, kreis=None):
+    return dc.runtime_config(konfiguration, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                             abo_source=lambda: entitlement.ACTIVE, **({} if kreis is None else {"kreis": kreis}))
+
+
+def test_zwei_kreise_ergeben_zwei_laufzeitkonfigurationen_mit_eigenen_fuehlern(tmp_path):
+    """Jeder Kreis des Dokuments hat seine Laufzeitkonfiguration: eigene Kreisnummer, nur die eigenen Fuehler."""
+    zwei = _zwei_kreise()
+    erste = _config(zwei, tmp_path, 1)
+    zweite = _config(zwei, tmp_path, 2)
+    assert (erste.kreis, zweite.kreis) == (1, 2)
+    assert erste.room_sensor_refs == (SENSOR,)
+    assert zweite.room_sensor_refs == (SENSOR2,)
+    assert set(erste.room_sensor_refs).isdisjoint(zweite.room_sensor_refs)
+    assert erste.tenant_id == zweite.tenant_id == "kunde3"
+    assert _config(zwei, tmp_path).kreis == 1  # ohne Nummer der erste Kreis
+
+
+def test_ein_unbekannter_kreis_und_ein_dokument_ohne_kreis_scheitern_laut(tmp_path):
+    with pytest.raises(ConfigError, match="Heizkreis 3"):
+        _config(_zwei_kreise(), tmp_path, 3)
+    with pytest.raises(ConfigError, match="Heizkreis 0"):
+        _config(_zwei_kreise(), tmp_path, 0)
+    with pytest.raises(ConfigError, match="kein Heizkreis"):
+        _config(konfig_form.nach_form(KONF, kreise=[]), tmp_path)
+    assert _config(konfig_form.nach_form(KONF), tmp_path).tenant_id == "kunde3"
+
+
+def test_kreisteile_beschreibung_sicherheit_und_bootinfo_folgen_dem_kreis(tmp_path):
+    zwei = konfig_form.nach_form(KONF_MIT, kreise=[
+        konfig_form.kreis(KONF_MIT),
+        konfig_form.kreis({**KONF_MIT, "hebelsatz": "vaillant_vrc720", "verteilsystem": "Fussbodenheizung",
+                           "ursprungswerte": {"x": 1.0}}, nummer=2)])
+    assert dc.sicherheit(zwei, kreis=2) == resolve_local_safety("vaillant_vrc720", "Fussbodenheizung")
+    assert dc.sicherheit(zwei, kreis=1) == resolve_local_safety("viessmann_vicare", "Heizkoerper")
+    assert dc.ursprungswerte(zwei, kreis=2) == {"x": 1.0}
+    assert dc.ursprungswerte(zwei, kreis=1) == {}
+    assert dc.kreisnummer(zwei, 2) == 2
+    info = dc.boot_info(zwei, abgemeldet=False, client_version="0.6.0", backup_path=tmp_path / "b.json",
+                        failsafe_path=tmp_path / "f.json", kreis=2)
+    assert info.kreis == 2 and info.kreise_der_anlage == 2
+    assert info.lever_set.id == "vaillant_vrc720"
 
 
 @pytest.mark.parametrize("abo, status", [
@@ -223,8 +321,27 @@ def test_a_sign_off_marker_removed_meanwhile_is_not_lifted_and_not_logged(tmp_pa
 
 def test_runtime_refuses_a_configuration_that_does_not_fit_the_lock(tmp_path):
     pfad = tmp_path / "sicherheitssatz.json"
-    rastung.schreiben(pfad, rastung.Rastung("viessmann_vicare", "Fussbodenheizung"), "2026-10-14T00:00:00+00:00")
+    rastung.schreiben(pfad, rastung_aus(konfig_form.nach_form(KONF), verteilsystem="Fussbodenheizung"),
+                      "2026-10-14T00:00:00+00:00")
     with pytest.raises(ConfigError, match="festgelegt"):
+        dc.runtime_config(KONF, rastung_pfad=pfad, entitlement_path=tmp_path / "e.json", abo_source=lambda: "active")
+
+
+def test_runtime_refuses_the_same_pair_with_other_write_targets(tmp_path):
+    pfad = tmp_path / "sicherheitssatz.json"
+    anders = {**KONF, "bindung": {"treiber": {"id": "simulation", "parameter": {"heizkreis": 3}}, "thermostat": None}}
+    rastung.schreiben(pfad, rastung_aus(konfig_form.nach_form(anders)), "2026-10-14T00:00:00+00:00")
+    with pytest.raises(ConfigError, match="festgelegt"):
+        dc.runtime_config(KONF, rastung_pfad=pfad, entitlement_path=tmp_path / "e.json", abo_source=lambda: "active")
+    rastung.schreiben(pfad, rastung_aus(konfig_form.nach_form(KONF)), "2026-10-14T00:00:00+00:00")
+    assert dc.runtime_config(KONF, rastung_pfad=pfad, entitlement_path=tmp_path / "e.json",
+                             abo_source=lambda: "active").tenant_id == "kunde3"  # Gegenprobe: dieselben Ziele passen
+
+
+def test_runtime_names_the_migration_for_a_lock_in_the_old_format(tmp_path):
+    pfad = tmp_path / "sicherheitssatz.json"
+    pfad.write_text('{"hebelsatz": "viessmann_vicare", "verteilsystem": "Heizkoerper", "seit": "2026-10-01"}')
+    with pytest.raises(ConfigError, match="Migration"):
         dc.runtime_config(KONF, rastung_pfad=pfad, entitlement_path=tmp_path / "e.json", abo_source=lambda: "active")
 
 
@@ -237,7 +354,7 @@ def test_runtime_refuses_everything_with_a_broken_lock(tmp_path):
 
 def test_runtime_refuses_everything_with_a_lock_that_is_a_symlink(tmp_path):
     ziel = tmp_path / "ziel.json"
-    rastung.schreiben(ziel, rastung.Rastung("viessmann_vicare", "Heizkoerper"), "2026-10-14T00:00:00+00:00")
+    rastung.schreiben(ziel, rastung_aus(konfig_form.nach_form(KONF)), "2026-10-14T00:00:00+00:00")
     (tmp_path / "sicherheitssatz.json").symlink_to(ziel)
     with pytest.raises(ConfigError, match="festgelegt"):
         dc.runtime_config(KONF, rastung_pfad=tmp_path / "sicherheitssatz.json", entitlement_path=tmp_path / "e.json",
@@ -248,14 +365,14 @@ def test_runtime_starts_without_lock_file_and_with_the_same_pair(tmp_path):
     assert dc.runtime_config(KONF, rastung_pfad=tmp_path / "fehlt.json", entitlement_path=tmp_path / "e.json",
                              abo_source=lambda: "active").tenant_id == "kunde3"
     pfad = tmp_path / "sicherheitssatz.json"
-    rastung.schreiben(pfad, rastung.Rastung("viessmann_vicare", "Heizkoerper"), "2026-10-14T00:00:00+00:00")
+    rastung.schreiben(pfad, rastung_aus(konfig_form.nach_form(KONF)), "2026-10-14T00:00:00+00:00")
     assert dc.runtime_config(KONF, rastung_pfad=pfad, entitlement_path=tmp_path / "e.json",
                              abo_source=lambda: "active").tenant_id == "kunde3"
 
 
 def test_the_lock_check_never_throws_anything_but_config_error(tmp_path):
     pfad = tmp_path / "sicherheitssatz.json"
-    rastung.schreiben(pfad, rastung.Rastung("viessmann_vicare", "Heizkoerper"), "2026-10-14T00:00:00+00:00")
+    rastung.schreiben(pfad, rastung_aus(konfig_form.nach_form(KONF)), "2026-10-14T00:00:00+00:00")
     with pytest.raises(ConfigError):
         dc.rastung_pruefen(None, pfad)
     dc.rastung_pruefen(None, tmp_path / "fehlt.json")  # ohne Rastung nichts zu pruefen
@@ -381,20 +498,47 @@ def test_an_unknown_verteilsystem_has_no_safety_values(verteilsystem):
 
 
 def test_beschreibung_uebernimmt_die_bindungsparameter():
-    vaillant = {**VAILLANT, "bindungsparameter": parameter("vaillant_vrc720")}
+    vaillant = {**VAILLANT, "weg": "vaillant_myvaillant", "bindungsparameter": parameter("vaillant_vrc720")}
     assert dc.beschreibung(vaillant).settle_seconds == 2100
-    weishaupt = {"hebelsatz": "weishaupt_wwp", "bindungsparameter": parameter("weishaupt_wwp")}
+    weishaupt = {"hebelsatz": "weishaupt_wwp", "weg": "weishaupt_modbus", "bindungsparameter": parameter("weishaupt_wwp")}
     assert dc.beschreibung(weishaupt).settle_seconds == 120
     langsam = {**weishaupt, "bindungsparameter": parameter("weishaupt_wwp", wartezeit_s=240)}
     assert dc.beschreibung(langsam).settle_seconds == 240
 
 
 @pytest.mark.parametrize("konfiguration", [
-    {"hebelsatz": "vaillant_vrc720"}, {"hebelsatz": "vaillant_vrc720", "bindungsparameter": {}},
-    {"hebelsatz": "weishaupt_wwp", "bindungsparameter": None},
-    {"hebelsatz": "vaillant_vrc720", "bindungsparameter": parameter("vaillant_vrc720", wartezeit_s=10 ** 6)},
-    {"hebelsatz": "viessmann_vicare", "bindungsparameter": parameter("vaillant_vrc720")},
+    {"hebelsatz": "vaillant_vrc720", "weg": "vaillant_myvaillant"},
+    {"hebelsatz": "vaillant_vrc720", "weg": "vaillant_myvaillant", "bindungsparameter": {}},
+    {"hebelsatz": "weishaupt_wwp", "weg": "weishaupt_modbus", "bindungsparameter": None},
+    {"hebelsatz": "vaillant_vrc720", "weg": "vaillant_myvaillant",
+     "bindungsparameter": parameter("vaillant_vrc720", wartezeit_s=10 ** 6)},
+    {"hebelsatz": "viessmann_vicare", "weg": "viessmann_vicare", "bindungsparameter": parameter("vaillant_vrc720")},
 ])
 def test_beschreibung_ohne_passende_bindungsparameter_ist_ein_konfigurationsfehler(konfiguration):
     with pytest.raises(ConfigError, match="Konfiguration"):
         dc.beschreibung(konfiguration)
+
+
+@pytest.mark.parametrize("weg", [None, "", "vaillant_ebus", "Simulation"])
+def test_beschreibung_mit_unbekanntem_weg_ist_ein_konfigurationsfehler(weg):
+    konfiguration = {"hebelsatz": "vaillant_vrc720", "weg": weg, "bindungsparameter": parameter("vaillant_vrc720")}
+    with pytest.raises(ConfigError, match="Weg"):
+        dc.beschreibung(konfiguration)
+
+
+def test_boot_info_zaehlt_die_kreise_des_dokuments(tmp_path):
+    zwei = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF, nummer=1), konfig_form.kreis(KONF, nummer=2)])
+    assert _boot(zwei, tmp_path).kreise_der_anlage == 2
+    assert _boot(KONF, tmp_path).kreise_der_anlage == 1
+    assert _boot({}, tmp_path).kreise_der_anlage == 1  # nicht eingerichtet: die BootInfo wirft nie
+
+
+def test_boot_info_und_runtime_config_tragen_die_kreisnummer(tmp_path):
+    """Die Nummer des Kreises kommt aus dem Dokument; sie bestimmt Pfade, Kennung und `kreis` auf dem Draht."""
+    zwei = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF, nummer=2)])
+    assert _boot(zwei, tmp_path).kreis == 2
+    config = dc.runtime_config(zwei, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                               abo_source=lambda: entitlement.ACTIVE)
+    assert config.kreis == 2
+    assert dc.kreisnummer(zwei) == 2
+    assert dc.kreisnummer({}) == 1  # nicht eingerichtet: der erste Kreis, die Nummer bestimmt dann nur Pfade

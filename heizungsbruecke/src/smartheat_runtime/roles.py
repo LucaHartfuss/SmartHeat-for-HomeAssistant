@@ -1,7 +1,7 @@
 """Hostneutrales Rollen-Vokabular: welche Signale und Hebel die Laufzeit kennt und welche je Hebelsatz
 Pflicht sind. ChannelManifest bildet Rolle -> Referenz der SignalSource ab (HA: Entity-ID bzw. entity::attribut)."""
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 ALL_ROLES = (
     "room_actual", "room_target", "curve_current", "shift_current", "min_flow",
@@ -55,9 +55,11 @@ class ManifestError(ValueError):
 
 @dataclass(frozen=True)
 class ChannelManifest:
-    """Rolle -> Referenz der SignalSource."""
+    """Rolle -> Referenz der SignalSource. `raum_refs` nennt je Raumnummer des Kreises (Referenz- und Kontrollraeume mit
+    Fuehlern) die Referenz, die den Mittelwert der Fuehler dieses Raums liefert."""
 
     refs: dict[str, str]
+    raum_refs: dict[int, str] = field(default_factory=dict)
 
 
 def lever_refs_identity(manifest: "ChannelManifest") -> str:

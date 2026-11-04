@@ -1,6 +1,6 @@
 """Dokumentspeicher des Geraets; geschrieben wird ueber smartheat_core.dateien.
 
-Konfiguration und Bedienung liegen je in einer Datei mit Version und Inhalt (ohne schema/version des Vertrags).
+Konfiguration, Bedienung und Anzeige liegen je in einer Datei mit Version und Inhalt (ohne schema/version des Vertrags).
 Uebernommen wird jede Version, die von der eigenen abweicht, auch eine kleinere (ein aus dem Backup zurueckgespielter
 Server); dieselbe Version nur, solange die Bedienung "dirty" ist (lokaler Bedienwunsch seit der letzten
 uebernommenen Bedienung: der Server schickt eine verlierende Bedienung mit gleicher Version zurueck).
@@ -31,12 +31,14 @@ ungueltiges oder fehlendes Feld laesst das gemerkte Angebot stehen. Das ist dass
 uebergibt; software_soll_nachholen des Gateways bietet es nach einem Neustart erneut an. Fehlt der Schluessel in
 dokumente.json oder hat sein Wert nicht die Vertragsform, ist nichts gemerkt (kein Kompatibilitaetspfad).
 
-Rastung: Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen
+Rastung: Hebelsatz, Verteilsystem, Schreibziele und Soll-Entity je Kreis der ersten eingerichteten Konfiguration stehen
 in sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der
-Konfiguration geschrieben. Fehlt die Datei bei gespeicherter eingerichteter Konfiguration (Stand vor dieser Version),
-rastet der Start (nicht in der Nur-Lese-Verwendung, rasten=False). Scheitert das Schreiben erst nach dem Ersetzen (fsync
-des Ordners), gilt die Rastung vom Datentraeger. Eine kaputte oder manipulierte Datei (auch ein Symlink) lehnt jede
-eingerichtete Konfiguration ab (rastung.lesen)."""
+Konfiguration geschrieben. Der Start rastet nie nach: fehlt die Datei bei gespeicherter eingerichteter Konfiguration
+(Code fehlt) oder steht sie im alten Format, ist die Rastung gesperrt und neue Konfigurationen werden abgelehnt, bis die
+einmalige Migration im Wartungsfenster sie nachholt (rastung_migration); die Datei wird vor jeder Annahme neu gelesen
+und nie ueberschrieben. Scheitert
+das Schreiben erst nach dem Ersetzen (fsync des Ordners), gilt die Rastung vom Datentraeger. Eine kaputte oder
+manipulierte Datei (auch ein Symlink, auch das alte Format) lehnt jede eingerichtete Konfiguration ab (rastung.lesen)."""
 import copy
 import logging
 import re
@@ -46,18 +48,19 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeGuard
 
-from smartheat_core import config_check, dateien, rastung, wallclock
+from smartheat_core import config_check, dateien, kreisansicht, rastung, wallclock
 from smartheat_core.rastung import Rastung
 from smartheat_device import fehler, nachrichten, wire
 from smartheat_runtime import soll_speicher
 
 logger = logging.getLogger(__name__)
 
-KONFIGURATION, BEDIENUNG = wire.DOKUMENTE
-DATEIEN = {KONFIGURATION: "konfiguration.json", BEDIENUNG: "bedienung.json"}
+KONFIGURATION, BEDIENUNG, ANZEIGE = wire.DOKUMENTE
+DATEIEN = {KONFIGURATION: "konfiguration.json", BEDIENUNG: "bedienung.json", ANZEIGE: "anzeige.json"}
 ZUSTAND_DATEI = "dokumente.json"
 SCHEMA_UNBEKANNT = "schema_unbekannt"
 UNGUELTIG = "ungueltig"
+_FEHLT = replace(rastung.UNBEKANNT, sperre="fehlt")  # Konfiguration da, Rastungsdatei fehlt: gesperrt
 UPDATE_NOETIG = "update_noetig"
 AUSSERHALB_BEREICH = "ausserhalb_bereich"
 _RESERVIERT = ("schema", "version")
@@ -137,16 +140,62 @@ def angebot_aus(art: str, payload: dict) -> Angebot | None:
     return Angebot(copy.deepcopy(payload["software"]))
 
 
+def _kreise_pruefen(inhalt: dict, felder: tuple[str, ...]) -> config_check.Ablehnung | None:
+    """Die Liste `kreise` eines Dokuments: nicht leer, je Eintrag genau `felder`, die Nummern ganze Zahlen von
+    KREIS_MIN bis KREIS_MAX, aufsteigend und einmalig (wie der Server sie schreibt)."""
+    eintraege = inhalt["kreise"]
+    if not isinstance(eintraege, list) or not eintraege:
+        return config_check.Ablehnung(UNGUELTIG, fehler.details("kreise", "ungueltig"))
+    letzte = wire.KREIS_MIN - 1
+    for eintrag in eintraege:
+        if not isinstance(eintrag, dict):
+            return config_check.Ablehnung(UNGUELTIG, fehler.details("kreise", "ungueltig"))
+        if ablehnung := _form(eintrag, felder):
+            return ablehnung
+        nummer = eintrag["kreis"]
+        if not _is_version(nummer) or not wire.KREIS_MIN <= nummer <= wire.KREIS_MAX:
+            return config_check.Ablehnung(UNGUELTIG, fehler.details("kreis", "ungueltig"))
+        if nummer <= letzte:
+            return config_check.Ablehnung(UNGUELTIG, fehler.details("kreis", "doppelt" if nummer == letzte else "ungueltig"))
+        letzte = nummer
+    return None
+
+
 def _bedienung_pruefen(inhalt: dict) -> config_check.Ablehnung | None:
     if ablehnung := _form(inhalt, _ohne_huelle(wire.BEDIENUNG_FIELDS)):
         return ablehnung
-    if inhalt.get("modus") not in wire.MODI:
-        return config_check.Ablehnung(UNGUELTIG, fehler.details("modus", "unbekannt"))
     if inhalt.get("quelle") not in wire.QUELLEN:
         return config_check.Ablehnung(UNGUELTIG, fehler.details("quelle", "unbekannt"))
-    if not soll_speicher.im_bedienbereich(inhalt.get("raum_soll")):
-        return config_check.Ablehnung(AUSSERHALB_BEREICH, fehler.details(
-            "raum_soll", "bereich", min=wire.RAUM_SOLL_MIN, max=wire.RAUM_SOLL_MAX))
+    if ablehnung := _kreise_pruefen(inhalt, wire.BEDIENUNG_KREIS_FIELDS):
+        return ablehnung
+    for eintrag in inhalt["kreise"]:
+        if eintrag["modus"] not in wire.MODI:
+            return config_check.Ablehnung(UNGUELTIG, fehler.details("modus", "unbekannt"))
+        if not soll_speicher.im_bedienbereich(eintrag["raum_soll"]):
+            return config_check.Ablehnung(AUSSERHALB_BEREICH, fehler.details(
+                "raum_soll", "bereich", min=wire.RAUM_SOLL_MIN, max=wire.RAUM_SOLL_MAX))
+    return None
+
+
+#: Art und Typ der Werte eines Anzeige-Eintrags; null steht nur dort, wo der Vertrag es nennt
+_ANZEIGE_TYPEN = {
+    "einlernphase_tag": (int, type(None)), "testphase_bis": (str, type(None)), "befunde": (list,), "aufgaben": (list,),
+    "kennzahlen": (dict,), "raumziele": (list,),
+}
+
+
+def _anzeige_pruefen(inhalt: dict) -> config_check.Ablehnung | None:
+    """Der volle Feldsatz je Kreis mit den Typen des Vertrags. Das Geraet zeigt nur; ein falscher Aufbau wird
+    abgelehnt, statt halb angezeigt zu werden."""
+    if ablehnung := _form(inhalt, _ohne_huelle(wire.ANZEIGE_FIELDS)):
+        return ablehnung
+    if ablehnung := _kreise_pruefen(inhalt, wire.ANZEIGE_KREIS_FIELDS):
+        return ablehnung
+    for eintrag in inhalt["kreise"]:
+        for feld, typen in _ANZEIGE_TYPEN.items():
+            wert = eintrag[feld]
+            if not isinstance(wert, typen) or isinstance(wert, bool):
+                return config_check.Ablehnung(UNGUELTIG, fehler.details(feld, "ungueltig"))
     return None
 
 
@@ -186,10 +235,8 @@ class DocumentStore:
                  treiber_pruefen: config_check.TreiberPruefung | None = None,
                  vor_speichern: Callable[[dict | None, dict], None] | None = None, rasten: bool = True) -> None:
         """vor_speichern(alt, neu): DeviceHost.konfiguration_vorbereiten; die Nur-Lese-Verwendungen (Aufraeumen beim
-        Start) uebergeben keinen und rasten=False: der Konstruktor schreibt dann keine Rastung nach (sie fehlt bei
-        gespeicherter eingerichteter Konfiguration), auch nicht bei einem Fehler im Ordner; rastung bleibt None. Ein
-        solcher Store ist nur zum Lesen: empfangen einer eingerichteten Konfiguration, die rasten muesste, wirft
-        RuntimeError (Programmierfehler), bevor etwas gespeichert wird."""
+        Start) uebergeben keinen und rasten=False. Ein solcher Store ist nur zum Lesen: empfangen einer eingerichteten
+        Konfiguration, die rasten muesste, wirft RuntimeError (Programmierfehler), bevor etwas gespeichert wird."""
         self._dir = directory
         self._rasten_erlaubt = rasten
         self._host, self._software_version, self._treiber_pruefen = host, software_version, treiber_pruefen
@@ -227,22 +274,28 @@ class DocumentStore:
         return self._rastung
 
     def _rastung_laden(self) -> Rastung | None:
-        """Fehlt die Datei und ist die gespeicherte Konfiguration eingerichtet, gilt deren Paar (Regel "erste
-        eingerichtete Konfiguration", z. B. client1 beim ersten Start mit dieser Version). Eine vorhandene, auch
-        kaputte Datei wird nie ueberschrieben."""
+        """Die Rastung vom Datentraeger, nie aus der gespeicherten Konfiguration nachgerastet. Fehlt die Datei bei
+        eingerichteter Konfiguration (Stand vor der Rastung je Kreis), gilt sie als gesperrt (Code `fehlt`): ein neues
+        Dokument mit anderem Verteilsystem oder anderen Schreibzielen wird nicht eingerastet, die Laufzeit regelt mit
+        der gespeicherten Konfiguration weiter, die einmalige Migration im Wartungsfenster
+        (smartheat_device.rastung_migration) schreibt die Datei. Nur ohne Konfiguration und ohne Datei (Erstinbetriebnahme)
+        ist sie None. Wird bei jeder Pruefung neu gelesen: eine inzwischen migrierte Datei gilt sofort."""
         gelesen = rastung.lesen(self._rastung_pfad)
-        inhalt = self.inhalt(KONFIGURATION)
-        if self._rasten_erlaubt and gelesen is None and inhalt is not None and not config_check.ist_leer(inhalt):
-            return self._rasten(inhalt)
+        if gelesen is None and self.eingerichtet():
+            return _FEHLT
         return gelesen
 
     def _rasten(self, inhalt: dict) -> Rastung | None:
+        """Schreibt die Rastung zum ersten Mal. Liegt inzwischen eine Datei da (etwa von der Migration), wird nichts
+        geschrieben und diese Rastung zurueckgegeben, auch eine gesperrte; der Aufrufer prueft dann erneut."""
         if not self._rasten_erlaubt:  # Programmierfehler: ein Nur-Lese-Store (rasten=False) empfaengt keine Dokumente
             raise RuntimeError("DocumentStore mit rasten=False schreibt keine Rastung")
-        hebelsatz, verteilsystem = inhalt.get("hebelsatz"), inhalt.get("verteilsystem")
-        if not (isinstance(hebelsatz, str) and isinstance(verteilsystem, str)):
+        vorhanden = self._rastung_laden()
+        if vorhanden is not None:
+            return vorhanden
+        neu = rastung.aus_konfiguration(inhalt)
+        if neu is None:
             return None
-        neu = Rastung(hebelsatz, verteilsystem)
         try:
             rastung.schreiben(self._rastung_pfad, neu, wallclock.now().isoformat(timespec="seconds"))
         except BaseException:
@@ -347,6 +400,13 @@ class DocumentStore:
             self._vorbereiten(inhalt)
         if art == KONFIGURATION and self._rastung is None and not config_check.ist_leer(inhalt):
             self._rastung = self._rasten(inhalt)  # vor dem Dokument: ein Absturz dazwischen schadet nicht
+            if self._rastung is None:  # eine gepruefte Konfiguration muss sich rasten lassen, sonst nichts speichern
+                logger.error("Konfiguration abgelehnt: keine Rastung ableitbar")
+                return self._abgelehnt_mit(art, version, UNGUELTIG, None)
+            ablehnung = config_check.pruefen(inhalt, self._rastung, host=self._host,
+                                             treiber_pruefen=self._treiber_pruefen)
+            if ablehnung is not None:  # inzwischen liegt eine Datei da (Migration), die das Dokument nicht deckt
+                return self._abgelehnt_mit(art, version, ablehnung.grund, ablehnung.details)
         vorher, abgelehnt = self._docs[art], self._abgelehnt.get(art)
         try:
             self._speichern(Dokument(art, version, inhalt))
@@ -395,7 +455,9 @@ class DocumentStore:
             return config_check.Ablehnung(UNGUELTIG)
         if art == BEDIENUNG:
             return _bedienung_pruefen(inhalt)
-        ablehnung = (_form(inhalt, _ohne_huelle(wire.KONFIGURATION_FIELDS), wire.KONFIGURATION_OPTIONAL)
+        if art == ANZEIGE:
+            return _anzeige_pruefen(inhalt)
+        ablehnung = (_form(inhalt, _ohne_huelle(wire.KONFIGURATION_FIELDS))
                      or software_pruefen(inhalt["software"]))
         if ablehnung is not None:
             return ablehnung
@@ -405,4 +467,16 @@ class DocumentStore:
             return None
         if self._update_anlass is not None:
             return config_check.Ablehnung(UPDATE_NOETIG)
-        return config_check.pruefen(inhalt, self._rastung, host=self._host, treiber_pruefen=self._treiber_pruefen)
+        self._rastung = self._rastung_laden()  # vor jeder Annahme neu lesen (Migration im laufenden Betrieb)
+        ablehnung = config_check.pruefen(inhalt, self._rastung, host=self._host, treiber_pruefen=self._treiber_pruefen)
+        return ablehnung or self._kreis_entfernt(inhalt)
+
+    def _kreis_entfernt(self, inhalt: dict) -> config_check.Ablehnung | None:
+        """Ein Kreis der eingerichteten Anlage darf nicht fehlen (der Server verbietet es ebenfalls): das Geraet haelt
+        den Kreis nicht an, es gaebe sonst einen laufenden Kreis ohne Dokument. Eine andere Anlage ist eine neue
+        Einrichtung, die leere Konfiguration das Abmelden; beide entfernen keinen Kreis."""
+        alt = self.inhalt(KONFIGURATION)
+        if alt is None or config_check.ist_leer(alt) or alt.get("anlage") != inhalt.get("anlage"):
+            return None
+        fehlend = {kreis["kreis"] for kreis in kreisansicht.kreise(alt)} - {kreis["kreis"] for kreis in kreisansicht.kreise(inhalt)}
+        return config_check.Ablehnung(UNGUELTIG, fehler.details("kreise", "nicht_erlaubt")) if fehlend else None

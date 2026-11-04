@@ -6,9 +6,9 @@ import queue
 import threading
 import time
 
+import konfig_form
 import pytest
-from bindung_beispiele import parameter
-from device_helpers import SENSOR, WALL, FakeHost, FakeLink, World
+from device_helpers import WALL, FakeHost, FakeLink, World, _anzeige, _konfiguration, _leer
 
 from smartheat_core import config_check, dateien
 from smartheat_device import bootstrap, commands, device, identity, wire, wish
@@ -21,25 +21,13 @@ SOFTWARE = {"version": "0.6.1", "manifest_url": "https://example.test/m.json", "
             "signature": "sig"}
 
 
-def _konfiguration(version=1, **changes):
-    inhalt = {
-        "anlage": "kunde3", "profil": "viessmann_gastherme_heizkoerper", "hebelsatz": "viessmann_vicare",
-        "verteilsystem": "Heizkoerper",
-        "bindung": {"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None},
-        "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
-        "bindungsparameter": parameter("viessmann_vicare"),
-    }
-    inhalt.update(changes)
-    return {"schema": 1, "version": version, **inhalt}
-
-
 def _bedienung(version=3, raum_soll=21.0):
-    return {"schema": 1, "version": version, "modus": "manuell", "raum_soll": raum_soll, "quelle": "portal",
-            "ts": "2027-01-15T07:00:00+00:00"}
+    return {"schema": 2, "version": version, "kreise": [{"kreis": 1, "modus": "manuell", "raum_soll": raum_soll}],
+            "quelle": "portal", "ts": "2027-01-15T07:00:00+00:00"}
 
 
 def _command(kind="diagnostics", command_id="c1", payload=None):
-    return {"schema": 1, "command_id": command_id, "kind": kind, "payload": payload or {},
+    return {"schema": 2, "command_id": command_id, "kind": kind, "payload": payload or {},
             "expires_at": "2027-01-15T09:00:00+00:00"}
 
 
@@ -121,7 +109,8 @@ def test_first_start_registers_then_connects_and_says_hello(tmp_path):
     world.device.schritt()
     (hello,) = world.link.of("up/hello")
     assert set(hello) == set(wire.HELLO_FIELDS) | {"device_state"}
-    assert hello == {"schema": 1, "schemata": [1], "konfiguration_version": 0, "bedienung_version": 0,
+    assert hello == {"schema": 2, "schemata": [2], "konfiguration_version": 0, "bedienung_version": 0,
+                     "anzeige_version": 0, "wege": ["simulation"],
                      "software_version": "0.6.0", "host": "gateway", "faehigkeiten": world.host.faehigkeiten(),
                      "boot_id": world.device.boot_id, "uhr_synchron": True, "device_state": "nicht_uebernommen"}
     assert world.device.zustand() == "nicht_uebernommen"
@@ -159,7 +148,7 @@ def test_a_configuration_is_taken_reported_and_handed_to_the_host(tmp_path):
     world = World(tmp_path)
     world.verbinden()
     world.empfangen("down/config", _konfiguration())
-    assert world.link.of("up/result") == [{"schema": 1, "dokument": "konfiguration", "version": 1, "ok": True}]
+    assert world.link.of("up/result") == [{"schema": 2, "dokument": "konfiguration", "version": 1, "ok": True}]
     ((alt, neu),) = world.host.konfigurationen
     assert alt is None and neu["anlage"] == "kunde3" and world.host.software == [None]
     assert world.device.konfiguration() == neu and world.device.abo_status() == "active"
@@ -219,7 +208,7 @@ def test_an_unverifiable_configuration_is_neither_taken_nor_refused_and_is_check
     world.host.unpruefbar = False
     world.clock.now += device.PRUEFUNG_WIEDERHOLEN_SECONDS
     world.device.schritt()
-    assert world.link.of("up/result") == [{"schema": 1, "dokument": "konfiguration", "version": 1, "ok": True}]
+    assert world.link.of("up/result") == [{"schema": 2, "dokument": "konfiguration", "version": 1, "ok": True}]
     assert len(world.host.konfigurationen) == 1 and world.host.software == [None]
     calls = world.host.aufrufe
     world.clock.now += 10 * device.PRUEFUNG_WIEDERHOLEN_SECONDS
@@ -256,7 +245,7 @@ def test_datentraegerfehler_beim_speichern_haelt_zurueck_und_wiederholt(tmp_path
     assert len(world.link.of("up/result")) == results  # noch zu frueh
     world.clock.now += 1
     world.device.schritt()
-    assert world.link.of("up/result")[-1] == {"schema": 1, "dokument": "konfiguration", "version": 2, "ok": True}
+    assert world.link.of("up/result")[-1] == {"schema": 2, "dokument": "konfiguration", "version": 2, "ok": True}
     assert world.device.documents.version("konfiguration") == 2 and len(world.host.konfigurationen) == 2
     assert world.host.konfigurationen[-1][1]["tagestick"] == "12:30"
     world.clock.now += 10 * device.PRUEFUNG_WIEDERHOLEN_SECONDS
@@ -301,13 +290,7 @@ def test_a_held_configuration_is_only_rechecked_while_connected(tmp_path):
     assert world.host.konfigurationen == []
     world.link.verbinden()
     world.device.schritt()
-    assert world.link.of("up/result") == [{"schema": 1, "dokument": "konfiguration", "version": 1, "ok": True}]
-
-
-def _leer(version):
-    return {"schema": 1, "version": version, "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
-            "bindung": None, "raumfuehler": [], "tagestick": None, "abo": None, "mindest_software": "0.6.0",
-            "software": None, "bindungsparameter": None}
+    assert world.link.of("up/result") == [{"schema": 2, "dokument": "konfiguration", "version": 1, "ok": True}]
 
 
 class BasisHost(GeraetHostBasis, FakeHost):
@@ -378,7 +361,7 @@ def test_a_failing_cleanup_marker_holds_the_empty_configuration_back_until_it_ca
         world.clock.now += 1
         world.device.schritt()
     worker.run_pending()
-    assert world.link.of("up/result")[-1] == {"schema": 1, "dokument": "konfiguration", "version": 2, "ok": True}
+    assert world.link.of("up/result")[-1] == {"schema": 2, "dokument": "konfiguration", "version": 2, "ok": True}
     assert world.device.konfiguration()["anlage"] is None and world.device.documents.version("konfiguration") == 2
     alt = {key: value for key, value in _konfiguration(version=1).items() if key not in ("schema", "version")}
     assert json.loads(pfad.read_text()) == {"anlage": "kunde3", "konfiguration": alt, "zurueckgesetzt": False}
@@ -437,9 +420,7 @@ def test_an_empty_configuration_is_handed_over(tmp_path):
     world = World(tmp_path)
     world.verbinden()
     world.empfangen("down/config", _konfiguration())
-    leer = {**_konfiguration(version=2), "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
-            "bindung": None, "raumfuehler": [], "tagestick": None, "abo": None}
-    world.empfangen("down/config", leer)
+    world.empfangen("down/config", _leer(version=2))
     assert world.host.konfigurationen[-1][1]["anlage"] is None and world.device.abo_status() == "unknown"
 
 
@@ -447,7 +428,8 @@ def test_an_operation_goes_to_the_host(tmp_path):
     world = World(tmp_path)
     world.verbinden()
     world.empfangen("down/operation", _bedienung(raum_soll=21.5))
-    assert [b["raum_soll"] for b in world.host.bedienungen] == [21.5] and world.device.bedienung()["raum_soll"] == 21.5
+    assert [b["kreise"][0]["raum_soll"] for b in world.host.bedienungen] == [21.5]
+    assert world.device.bedienung()["kreise"][0]["raum_soll"] == 21.5
 
 
 def test_unknown_topics_and_broken_messages_are_ignored(tmp_path):
@@ -469,12 +451,13 @@ def test_every_contract_down_topic_reaches_exactly_its_receiver_and_takes_effect
     worker, sollwerte = RegulationWorker(clock=world.clock), []
     worker.register(EV_SETPOINTS, sollwerte.append)
     worker.register(EV_MQTT_CONNECTED, lambda event: None)
-    world.device.laufzeit_kanal(worker)
+    world.device.laufzeit_kanal(worker, 1)
     world.verbinden()
     koerper = {"down/config": _konfiguration(version=1), "down/operation": _bedienung(version=3),
+               "down/display": _anzeige(version=2),
                "down/command": _command("hinweis", payload={"key": "geraet_doppelt", "stufe": "kritisch",
                                                             "text": "Kopie stoppen"}),
-               "down/setpoints": {"seq": "s1"}}
+               "down/setpoints": {"kreis": 1, "seq": "s1"}}
     assert (world.device.konfiguration(), world.device.bedienung(), world.link.of("up/result")) == (None, None, [])
     world.empfangen(name, koerper[name])
     worker.run_pending()
@@ -484,11 +467,14 @@ def test_every_contract_down_topic_reaches_exactly_its_receiver_and_takes_effect
         and [e.get("dokument") for e in ergebnisse] == ["konfiguration"],
         "bedienung": world.device.bedienung() is not None and world.host.bedienungen != []
         and [e.get("dokument") for e in ergebnisse] == ["bedienung"],
+        "anzeige": world.device.documents.inhalt("anzeige") is not None
+        and [e.get("dokument") for e in ergebnisse] == ["anzeige"] and world.host.bedienungen == [],
         "befehl": [(e.get("command_id"), e.get("ok")) for e in ergebnisse] == [("c1", True)]
         and world.device.hinweise.alle() != (),
-        "sollwerte": [event.data["payload"] for event in sollwerte] == [{"seq": "s1"}],
+        "sollwerte": [event.data["payload"] for event in sollwerte] == [{"kreis": 1, "seq": "s1"}],
     }
-    erwartet = {"down/config": "konfiguration", "down/operation": "bedienung", "down/command": "befehl",
+    erwartet = {"down/config": "konfiguration", "down/operation": "bedienung", "down/display": "anzeige",
+                "down/command": "befehl",
                 "down/setpoints": "sollwerte"}
     assert [art for art, wirkt in wirkung.items() if wirkt] == [erwartet[name]]
 
@@ -551,7 +537,7 @@ def test_inventory_parts_go_up_before_the_result(tmp_path):
     world = World(tmp_path, host)
     world.verbinden()
     world.empfangen("down/command", _command("inventory", payload={"stunden": 1}))
-    assert world.link.of("up/inventory") == [{"schema": 1, "command_id": "c1", "teil": 1, "teile": 1,
+    assert world.link.of("up/inventory") == [{"schema": 2, "command_id": "c1", "teil": 1, "teile": 1,
                                               "daten": {"kandidaten": [1, 2]}}]
     assert world.link.of("up/result") == []  # erst nach dem PUBACK der Teile
     world.link.gesendet(world.link.topics().index("up/inventory") + 1)
@@ -689,7 +675,7 @@ def test_software_results_go_up_only_after_hello(tmp_path):
     assert world.device.ergebnis_software("0.6.1", True) is False
     world.verbinden()
     assert world.device.ergebnis_software("0.6.1", False, "ungesund") is True
-    assert world.link.of("up/result") == [{"schema": 1, "dokument": "software", "version": "0.6.1", "ok": False,
+    assert world.link.of("up/result") == [{"schema": 2, "dokument": "software", "version": "0.6.1", "ok": False,
                                            "error": {"grund": "ungesund"}}]
     with pytest.raises(ValueError):
         world.device.ergebnis_software("0.6.1", False, "erfunden")
@@ -840,7 +826,7 @@ def test_a_wish_is_limited_applied_buffered_and_sent_after_hello(tmp_path):
         3, {"raum_soll": 15.0}, 14.0, "thermostat", "nutzer")
     world.link.gesendet(names.index("up/wish") + 1)
     world.device.schritt()
-    assert world.device.wunsch_puffer.wunsch is None
+    assert world.device.wunsch_puffer.wunsch(1) is None
 
 
 def test_a_puback_with_an_error_code_does_not_confirm_the_wish(tmp_path):
@@ -852,7 +838,7 @@ def test_a_puback_with_an_error_code_does_not_confirm_the_wish(tmp_path):
     mid = world.link.topics().index("up/wish") + 1
     world.link.gesendet(mid, ok=False)
     world.device.schritt()
-    assert world.device.wunsch_puffer.wunsch is not None
+    assert world.device.wunsch_puffer.wunsch(1) is not None
     assert world.link.topics().count("up/wish") == 1  # gesperrt, kein Sekundentakt
     world.clock.now += wish.WUNSCH_NACH_ABLEHNUNG_SECONDS - 1
     world.device.schritt()
@@ -862,7 +848,7 @@ def test_a_puback_with_an_error_code_does_not_confirm_the_wish(tmp_path):
     assert world.link.topics().count("up/wish") == 2  # nach 60 s erneut
     world.link.gesendet(len(world.link.sent))
     world.device.schritt()
-    assert world.device.wunsch_puffer.wunsch is None
+    assert world.device.wunsch_puffer.wunsch(1) is None
 
 
 def test_losing_wish_takes_the_resent_operation(tmp_path):
@@ -873,7 +859,7 @@ def test_losing_wish_takes_the_resent_operation(tmp_path):
     world.device.schritt()
     assert world.device.documents.aktuell("bedienung").dirty
     world.empfangen("down/operation", _bedienung(version=3, raum_soll=21.0))  # Server: Wunsch verliert
-    assert [b["raum_soll"] for b in world.host.bedienungen] == [21.0, 21.0]
+    assert [b["kreise"][0]["raum_soll"] for b in world.host.bedienungen] == [21.0, 21.0]
     assert not world.device.documents.aktuell("bedienung").dirty
 
 
@@ -929,7 +915,7 @@ def test_a_wish_with_an_unknown_origin_or_actor_is_refused_in_the_calling_thread
         world.device.wunsch(22.0, herkunft=herkunft, durch=durch)
     assert world.device._inbox.empty()
     world.device.schritt()
-    assert world.link.of("up/wish") == [] and world.device.wunsch_puffer.wunsch is None
+    assert world.link.of("up/wish") == [] and world.device.wunsch_puffer.wunsch(1) is None
     assert world.device.wunsch(22.0, herkunft="thermostat", durch="nutzer") == 22.0  # Gegenprobe: gueltig geht hoch
     world.device.schritt()
     assert [w["werte"] for w in world.link.of("up/wish")] == [{"raum_soll": 22.0}]
@@ -1009,13 +995,14 @@ def test_status_ignores_the_timestamp_of_the_room(tmp_path):
 def test_notifications_are_batched_and_sent_again_after_a_reconnect(tmp_path):
     world = World(tmp_path)
     world.verbinden()
-    world.device.meldung("notbetrieb", "Notbetrieb aktiv", offen=True)
-    world.device.meldung("raumfuehler:0x1", "Fühler weg", offen=True, kritisch=False)
+    world.device.meldung("notbetrieb", "Notbetrieb aktiv", offen=True, stufe="rot")
+    world.device.meldung("raumfuehler:0x1", "Fühler weg", offen=True, stufe="orange")
     world.device.schritt()
     (batch,) = world.link.of("up/notifications")
     assert [item["key"] for item in batch["items"]] == ["notbetrieb", "raumfuehler:0x1"]
+    assert [item["stufe"] for item in batch["items"]] == ["rot", "orange"]
     assert batch["items"][1]["kategorie"] == "raumfuehler" and set(batch["items"][0]) == set(wire.NOTIFICATION_FIELDS)
-    world.device.meldung("notbetrieb", "", offen=False)
+    world.device.meldung("notbetrieb", "", offen=False, stufe="rot")
     world.device.schritt()
     assert len(world.link.of("up/notifications")) == 1  # binnen 10 s
     world.clock.now += device.MELDUNGEN_MIN_SECONDS
@@ -1144,7 +1131,7 @@ def test_a_failing_software_callback_still_answers_and_hands_over(tmp_path, capl
     world = World(tmp_path, SoftwareFehlerHost())
     world.verbinden()
     world.empfangen("down/config", _konfiguration())
-    assert world.link.of("up/result") == [{"schema": 1, "dokument": "konfiguration", "version": 1, "ok": True}]
+    assert world.link.of("up/result") == [{"schema": 2, "dokument": "konfiguration", "version": 1, "ok": True}]
     assert len(world.host.konfigurationen) == 1
     assert "RuntimeError" in caplog.text and "geheimer Parameter" not in caplog.text
 
@@ -1200,9 +1187,9 @@ class WerfenderHost(FakeHost):
         self._pruefen("ursprungswerte")
         return super().ursprungswerte()
 
-    def raum(self):
+    def raum(self, kreis=1):
         self._pruefen("raum")
-        return super().raum()
+        return super().raum(kreis)
 
     def anzeigen(self, anzeige):
         self.anzeigen_versuche += 1
@@ -1307,7 +1294,37 @@ def test_a_failing_room_callback_skips_the_status_of_that_tick(tmp_path, caplog)
     _genau_eine_zeile(caplog, "raum")
     world.host.werfen.clear()
     world.device.schritt()
-    assert world.link.of("up/status")[-1]["raum"] == world.host.raum_wert
+    assert world.link.of("up/status")[-1]["kreise"] == [{"kreis": 1, "raum": world.host.raum_wert}]
+
+
+def _zwei_kreise():
+    def kreis(nummer):
+        bindung = {"treiber": {"id": "simulation", "parameter": {"heizkreis": nummer}}, "thermostat": None}
+        return konfig_form.kreis({"bindung": bindung, "raumfuehler": [f"zigbee:0x{nummer:016x}:temperature"],
+                                  "hebelsatz": "viessmann_vicare", "verteilsystem": "Heizkoerper", "abo": "aktiv"},
+                                 nummer=nummer)
+
+    return _konfiguration(kreise=[kreis(1), kreis(2)])
+
+
+def test_the_status_lists_every_circuit_of_the_configuration_with_its_own_room(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    world.empfangen("down/config", _zwei_kreise())
+    zwei = {"ist": 18.0, "soll": 20.0, "soll_quelle": "portal", "ts": "t2"}
+    world.host.raum_werte = {2: zwei}
+    world.clock.now += device.STATUS_MIN_SECONDS
+    world.device.schritt()
+    assert world.link.of("up/status")[-1]["kreise"] == [{"kreis": 1, "raum": world.host.raum_wert},
+                                                         {"kreis": 2, "raum": zwei}]
+
+
+def test_the_status_without_a_configuration_lists_circuit_one(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    world.clock.now += device.STATUS_MIN_SECONDS
+    world.device.schritt()
+    assert world.link.of("up/status")[-1]["kreise"] == [{"kreis": 1, "raum": world.host.raum_wert}]
 
 
 def test_failing_originals_are_sent_as_none(tmp_path, caplog):
@@ -1393,7 +1410,7 @@ def test_ein_nicht_endlicher_wert_im_status_wird_nicht_gesendet_der_takt_lebt_we
     world.clock.now += 60
     world.host.raum_wert = {"ist": None, "soll": 22.0, "soll_quelle": "portal", "ts": "t2"}
     world.device.schritt()
-    assert world.link.of("up/status")[-1]["raum"]["ist"] is None and len(world.link.of("up/status")) == anzahl + 1
+    assert world.link.of("up/status")[-1]["kreise"][0]["raum"]["ist"] is None and len(world.link.of("up/status")) == anzahl + 1
 
 
 def test_an_own_message_outside_the_contract_keys_is_logged_not_raised(tmp_path, caplog):
@@ -1411,18 +1428,69 @@ def test_setpoints_reach_the_runtime_and_snapshots_the_link(tmp_path):
     worker, seen = RegulationWorker(clock=world.clock), []
     worker.register(EV_SETPOINTS, seen.append)
     worker.register(EV_MQTT_CONNECTED, lambda event: None)
-    channel = world.device.laufzeit_kanal(worker)
+    channel = world.device.laufzeit_kanal(worker, 1)
     world.verbinden()
-    world.empfangen("down/setpoints", {"seq": "s1"})
+    world.empfangen("down/setpoints", {"kreis": 1, "seq": "s1"})
     worker.run_pending()
-    assert [event.data["payload"] for event in seen] == [{"seq": "s1"}]
+    assert [event.data["payload"] for event in seen] == [{"kreis": 1, "seq": "s1"}]
     channel.publish_snapshot({"room_target": 21.0})
     assert world.link.of("up/snapshot") == [{"room_target": 21.0}]
 
 
+def _kreis_worker(world):
+    worker, seen = RegulationWorker(clock=world.clock), []
+    worker.register(EV_SETPOINTS, seen.append)
+    worker.register(EV_MQTT_CONNECTED, lambda event: None)
+    return worker, seen
+
+
+def test_setpoints_go_only_to_the_worker_of_their_kreis(tmp_path):
+    world = World(tmp_path)
+    (worker1, seen1), (worker2, seen2) = _kreis_worker(world), _kreis_worker(world)
+    world.device.laufzeit_kanal(worker1, 1)
+    world.device.laufzeit_kanal(worker2, 2)
+    world.verbinden()
+    world.empfangen("down/setpoints", {"kreis": 2, "seq": "s2"})
+    world.empfangen("down/setpoints", {"kreis": 1, "seq": "s1"})
+    worker1.run_pending()
+    worker2.run_pending()
+    assert [e.data["payload"]["seq"] for e in seen1] == ["s1"]
+    assert [e.data["payload"]["seq"] for e in seen2] == ["s2"]
+
+
+@pytest.mark.parametrize("kreis", [None, True, "1", 1.0, 0, 3])
+def test_setpoints_without_a_usable_or_known_kreis_reach_nobody(tmp_path, kreis):
+    world = World(tmp_path)
+    (worker1, seen1), (worker2, seen2) = _kreis_worker(world), _kreis_worker(world)
+    world.device.laufzeit_kanal(worker1, 1)
+    world.device.laufzeit_kanal(worker2, 2)
+    world.verbinden()
+    world.empfangen("down/setpoints", {"kreis": kreis, "seq": "x"})
+    world.empfangen("down/setpoints", {"seq": "ohne"})
+    worker1.run_pending()
+    worker2.run_pending()
+    assert seen1 == [] and seen2 == []
+
+
+def test_both_kreis_channels_share_the_one_link_and_both_hear_the_connection(tmp_path):
+    world = World(tmp_path)
+    verbunden, kanaele = [], []
+    for kreis in (1, 2):
+        worker = RegulationWorker(clock=world.clock)
+        worker.register(EV_MQTT_CONNECTED, lambda event, kreis=kreis: verbunden.append(kreis))
+        kanaele.append((world.device.laufzeit_kanal(worker, kreis), worker))
+    world.verbinden()
+    for _, worker in kanaele:
+        worker.run_pending()
+    assert sorted(verbunden) == [1, 2]
+    for kreis, (kanal, _) in zip((1, 2), kanaele, strict=True):
+        kanal.publish_snapshot({"kreis": kreis})
+    assert [p["kreis"] for p in world.link.of("up/snapshot")] == [1, 2]
+
+
 def test_runtime_messages_wait_for_hello(tmp_path):
     world = World(tmp_path)
-    channel = world.device.laufzeit_kanal(RegulationWorker(clock=world.clock))
+    channel = world.device.laufzeit_kanal(RegulationWorker(clock=world.clock), 1)
     world.device.schritt()
     world.link.connected = True  # verbunden, aber das Ereignis (und damit hello) steht noch aus
     channel.publish_snapshot({"room_target": 21.0})
@@ -1594,7 +1662,7 @@ def test_at_most_fifty_notifications_go_in_one_message(tmp_path):
     world = World(tmp_path)
     world.verbinden()
     for i in range(51):
-        world.device.meldung(f"raumfuehler:0x{i:02x}", "Fühler weg", offen=True, kritisch=False)
+        world.device.meldung(f"raumfuehler:0x{i:02x}", "Fühler weg", offen=True, stufe="orange")
     world.device.schritt()
     assert [len(batch["items"]) for batch in world.link.of("up/notifications")] == [50]
     world.clock.now += 10
@@ -1608,7 +1676,7 @@ def test_an_own_notification_of_the_device_is_not_critical(tmp_path):
     world.device.soll_quelle_aus(True, 21.0)
     world.device.schritt()
     (item,) = world.link.of("up/notifications")[-1]["items"]
-    assert (item["key"], item["kritisch"], item["offen"]) == ("soll_quelle_aus", False, True)
+    assert (item["key"], item["stufe"], item["offen"]) == ("soll_quelle_aus", "orange", True)
 
 
 @pytest.mark.parametrize(("ursprung", "erwartet"), [
@@ -1745,7 +1813,7 @@ def test_a_blocked_device_sends_nothing_on_the_next_link_before_hello(tmp_path):
 
 def test_the_runtime_channel_counts_no_failures_without_a_link(tmp_path):
     world = World(tmp_path)
-    channel = world.device.laufzeit_kanal(RegulationWorker(clock=world.clock))
+    channel = world.device.laufzeit_kanal(RegulationWorker(clock=world.clock), 1)
     assert channel.connect_failures == 0
     world.device.schritt()
     world.link.connect_failures = 3
@@ -1772,7 +1840,7 @@ def test_a_message_of_exactly_120_kib_is_read_one_byte_more_is_dropped(tmp_path,
 def test_setpoints_without_a_runtime_channel_are_ignored_without_an_error(tmp_path, caplog):
     world = World(tmp_path)
     world.verbinden()
-    world.empfangen("down/setpoints", {"seq": "s1"})
+    world.empfangen("down/setpoints", {"kreis": 1, "seq": "s1"})
     assert _fehlerzeilen(caplog) == []
 
 
@@ -1868,3 +1936,34 @@ def test_eine_aufgabe_laeuft_erst_im_geraete_thread_und_ein_fehler_haelt_ihn_nic
     assert gelaufen == [threading.current_thread()]  # schritt() ist hier der Geraete-Thread
     fehler = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
     assert len(fehler) == 1 and "Fehler im Geraete-Thread (PermissionError)" in fehler[0] and "geheim" not in fehler[0]
+
+
+# --- Kreise in den Nachrichten ---
+
+def test_the_status_carries_the_room_per_circuit_and_the_hello_the_ways(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    (status,) = world.link.of("up/status")
+    assert status["kreise"] == [{"kreis": 1, "raum": world.host.raum_wert}] and "raum" not in status
+    assert world.link.of("up/hello")[0]["wege"] == world.host.wege()
+
+
+def test_a_wish_for_a_circuit_carries_its_number(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    world.empfangen("down/operation", _bedienung(version=3))
+    assert world.device.wunsch(22.0, herkunft="thermostat", durch="nutzer") == 22.0
+    assert world.device.wunsch(23.0, herkunft="ha", durch="nutzer", kreis=2) == 23.0
+    world.device.schritt()
+    assert [(w["kreis"], w["werte"]) for w in world.link.of("up/wish")] == [
+        (1, {"raum_soll": 22.0}), (2, {"raum_soll": 23.0})]
+
+
+@pytest.mark.parametrize("kreis", [0, -1, True, 1.0, "1", None])
+def test_a_wish_for_a_wrong_circuit_never_reaches_the_inbox(tmp_path, kreis):
+    world = World(tmp_path)
+    world.verbinden()
+    with pytest.raises(ValueError):
+        world.device.wunsch(22.0, herkunft="thermostat", kreis=kreis)
+    world.device.schritt()
+    assert world.link.of("up/wish") == [] and world.device.wunsch_puffer.wunsch(1) is None

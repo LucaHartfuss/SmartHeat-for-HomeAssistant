@@ -3,13 +3,13 @@ import pytest
 from bindung_beispiele import parameter
 from device_helpers import SENSOR
 from geraet_helpers import gateway_konfiguration
+from rastung_beispiele import fuer
 
 from smartheat_core import config_check as cc
 from smartheat_core import rastung
-from smartheat_core.rastung import Rastung
 from smartheat_device import fehler, wire
 
-LOCK = Rastung("viessmann_vicare", "Heizkoerper")
+LOCK = ("viessmann_vicare", "Heizkoerper")
 
 
 def _form(ablehnung):
@@ -19,7 +19,7 @@ def _form(ablehnung):
 
 
 def _pruefen(neu, rastung=None, **kwargs):
-    return _form(cc.pruefen(neu, rastung, host=cc.HOST_GATEWAY, **kwargs))
+    return _form(cc.pruefen(neu, fuer(rastung, neu), host=cc.HOST_GATEWAY, **kwargs))
 
 
 def test_grund_ausserhalb_des_vertrags_wird_ungueltig_und_geloggt(monkeypatch, caplog):
@@ -51,8 +51,8 @@ def test_no_object_is_invalid():
 
 
 @pytest.mark.parametrize("change", [
-    {"anlage": ""}, {"anlage": 5}, {"anlage": "x" * 65}, {"profil": None}, {"hebelsatz": None},
-    {"verteilsystem": 3}, {"bindung": []}, {"raumfuehler": []}, {"raumfuehler": "x"}, {"raumfuehler": [5]},
+    {"anlage": ""}, {"anlage": 5}, {"anlage": "x" * 65}, {"anlage_name": 5}, {"hebelsatz": None},
+    {"verteilsystem": 3}, {"bindung": []}, {"raumfuehler": []}, {"raumfuehler": [5]},
     {"raumfuehler": [SENSOR] * 9}, {"tagestick": "25:00"}, {"tagestick": None}, {"abo": "vielleicht"},
     {"abo": None},
 ])
@@ -136,7 +136,7 @@ def test_without_thermostat():
 def test_a_room_sensor_twice_is_a_double_assignment():
     ablehnung = _pruefen(gateway_konfiguration(raumfuehler=[SENSOR, SENSOR]))
     assert ablehnung.grund == cc.DOPPELT_BELEGT
-    assert ablehnung.details == {"feld": "raumfuehler", "regel": "doppelt"}
+    assert ablehnung.details == {"feld": "fuehler", "regel": "doppelt"}
 
 
 def test_driver_parameters_are_checked_by_the_host():
@@ -175,7 +175,7 @@ def test_a_gateway_shaped_configuration_is_not_a_home_assistant_binding():
 
 @pytest.mark.parametrize(("change", "details"), [
     ({"tagestick": "25:00"}, {"feld": "tagestick", "regel": "format"}),
-    ({"raumfuehler": [SENSOR] * 9}, {"feld": "raumfuehler", "regel": "anzahl", "min": 1, "max": 8, "anzahl": 9}),
+    ({"raumfuehler": [SENSOR] * 9}, {"feld": "fuehler", "regel": "anzahl", "min": 0, "max": 8, "anzahl": 9}),
     ({"abo": "vielleicht"}, {"feld": "abo", "regel": "unbekannt"}),
 ])
 def test_aufbau_nennt_feld_und_regel(change, details):
@@ -220,7 +220,8 @@ def test_rastung_wird_vor_den_bindungsparametern_geprueft():
 
 
 def test_bindungsparameter_werden_vor_den_rollen_geprueft():
-    neu = gateway_konfiguration(bindungsparameter=None, bindung={"thermostat": None})
+    neu = gateway_konfiguration(bindungsparameter=None, bindung={
+        "treiber": {"id": "simulation", "parameter": {"heizkreis": 0}}, "thermostat": None})
     assert _pruefen(neu).grund == cc.UNGUELTIG
 
 

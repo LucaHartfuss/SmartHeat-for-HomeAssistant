@@ -12,21 +12,21 @@ logger = logging.getLogger(__name__)
 
 ABO_ENDED_MESSAGE = (
     "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, "
-    "die zuletzt gelernten Werte bleiben eingestellt."
+    "die ursprünglichen Werte sind wieder eingestellt."
 )
 ABO_ACTIVE_MESSAGE = "SmartHeat: Abo wieder aktiv, die Heizungssteuerung läuft wieder normal."
 RESTORE_KEY = "wiederherstellung"
 RESTORE_FAILED_STATE = "fehlgeschlagen"
-RESTORE_FAILED_MESSAGE = "SmartHeat: Zurücksetzen auf die zuletzt gelernten Werte scheitert. Bitte die Anlage prüfen."
-RESTORE_OK_MESSAGE = "SmartHeat: Die zuletzt gelernten Werte sind wieder eingestellt."
-RESTORE_FAILED_REASON = "Zurücksetzen auf die zuletzt gelernten Werte scheitert"
+RESTORE_FAILED_MESSAGE = "SmartHeat: Zurücksetzen auf die ursprünglichen Werte scheitert. Bitte die Anlage prüfen."
+RESTORE_OK_MESSAGE = "SmartHeat: Die ursprünglichen Werte sind wieder eingestellt."
+RESTORE_FAILED_REASON = "Zurücksetzen auf die ursprünglichen Werte scheitert"
 
 
 def inactive_message(inactive_since: datetime) -> str:
     end = entitlement.grace_end(inactive_since).strftime("%d.%m.%Y")
     return (
         f"SmartHeat: Abo inaktiv. Die Heizung läuft noch bis {end} im Notbetrieb weiter, "
-        f"danach bleiben die zuletzt gelernten Werte fest eingestellt."
+        f"danach stellt es die ursprünglichen Werte wieder ein und beendet die Steuerung."
     )
 
 
@@ -65,7 +65,7 @@ def enter_inactive(rt: Runtime, now: datetime) -> None:
 
 def finish_grace(rt: Runtime, *, always_restore: bool, final_notice: bool) -> bool:
     """Fristende (always_restore, final_notice) bzw. Abschluss-Start (beides False): laufende
-    Boosts beenden, zuletzt gelernte Werte auf die Anlage. Danach darf kein lokaler Check mehr
+    Boosts beenden, die Werte von vor dem ersten Schreiben auf die Anlage. Danach darf kein lokaler Check mehr
     schreiben (abo_finished). False, wenn die Wiederherstellung scheitert: dann keine
     Abschlussmeldung, der Aufrufer versucht es erneut."""
     if not rt.override.restore_and_clear(always_restore):
@@ -146,7 +146,7 @@ def check_grace_end(rt: Runtime) -> None:
         return
     log_restore_failure(
         rt,
-        "Abo-inaktiv-Frist abgelaufen, zuletzt gelernte Werte konnten nicht wiederhergestellt "
+        "Abo-inaktiv-Frist abgelaufen, ursprüngliche Werte konnten nicht wiederhergestellt "
         "werden - Notbetrieb laeuft weiter, erneuter Versuch beim naechsten Check",
     )
 

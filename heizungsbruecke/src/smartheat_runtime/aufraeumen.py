@@ -14,6 +14,7 @@ die Rastung (sign_off_parts)."""
 import json
 import logging
 import os
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,9 @@ from smartheat_core import dateien
 from smartheat_runtime.dokument_config import eingerichtet
 
 logger = logging.getLogger(__name__)
+
+# Die Kreise setzen auf eigenen Faeden zurueck: Lesen, Ergaenzen und Schreiben von `kreise_fertig` ist ein Zug.
+_sperre = threading.Lock()
 
 KEINE, VERWERFEN, ZURUECKSETZEN, LOESCHEN, BEHALTEN = "keine", "verwerfen", "zuruecksetzen", "loeschen", "behalten"
 
@@ -98,12 +102,23 @@ def entscheiden(pfad: Path, gespeichert) -> tuple[str, Markierung | None]:
     return ZURUECKSETZEN, markierung
 
 
-def zurueckgesetzt(pfad: Path, anlage: str) -> bool:
-    """Nach gelungenem Zuruecksetzen: True, wenn damit die offene Markierung dieser Anlage erledigt ist."""
-    markierung = lesen(pfad)
-    if markierung is None or markierung.anlage != anlage or markierung.konfiguration is None \
-            or markierung.zurueckgesetzt:
-        return False
-    dateien.schreiben_json(pfad, {"anlage": markierung.anlage, "konfiguration": markierung.konfiguration,
-                                  "zurueckgesetzt": True}, modus=dateien.PRIVAT)
-    return True
+def zurueckgesetzt(pfad: Path, anlage: str, kreis: int = 1, kreise_der_anlage: int = 1) -> bool:
+    """Nach gelungenem Zuruecksetzen des Kreises `kreis`: True, wenn damit die offene Markierung dieser Anlage erledigt
+    ist. Bei mehreren Kreisen merkt die Markierung die fertigen (`kreise_fertig`) und ist erst erledigt, wenn alle
+    `kreise_der_anlage` fertig sind: der Neustart danach loescht den Zustand der ganzen Anlage."""
+    with _sperre:
+        markierung = lesen(pfad)
+        if markierung is None or markierung.anlage != anlage or markierung.konfiguration is None \
+                or markierung.zurueckgesetzt:
+            return False
+        fertig = sorted(set(_fertige(pfad)) | {kreis})
+        erledigt = len(fertig) >= kreise_der_anlage
+        dateien.schreiben_json(pfad, {"anlage": markierung.anlage, "konfiguration": markierung.konfiguration,
+                                      "zurueckgesetzt": erledigt, "kreise_fertig": fertig}, modus=dateien.PRIVAT)
+        return erledigt
+
+
+def _fertige(pfad: Path) -> list[int]:
+    roh = dateien.lesen_json(pfad)
+    fertig = roh.get("kreise_fertig") if isinstance(roh, dict) else None
+    return [k for k in fertig if type(k) is int] if isinstance(fertig, list) else []

@@ -5,7 +5,7 @@ Geraete-Thread loggen nur die Fehlerart. tools/contract_check.py ruft dieselben 
 dem Server.
 
 Ausser den Feldmengen setzen die Bausteine nur Vertragsregeln durch, die ohne Wert pruefbar sind: host aus HOSTS,
-zustand aus ZUSTAENDE, die Felder von raum und faehigkeiten, die Groesse des CSR."""
+zustand aus ZUSTAENDE, stufe aus STUFEN, die Felder von kreise, raum und faehigkeiten, die Groesse des CSR."""
 from collections.abc import Iterable
 
 from smartheat_device import wire
@@ -36,6 +36,23 @@ def _faehigkeiten(name: str, wert) -> dict:
     return pruefen(name, wert, wire.CAPABILITY_FIELDS, wire.CAPABILITY_OPTIONAL)
 
 
+def _kreisnummern(name: str, eintraege, felder: tuple[str, ...]) -> list[dict]:
+    """Eine Liste von Eintraegen mit genau `felder`, deren `kreis` ganze Zahlen von KREIS_MIN bis KREIS_MAX sind,
+    aufsteigend und einmalig."""
+    if not isinstance(eintraege, list):
+        raise Vertragsfehler(f"{name}: keine Liste")
+    letzte = wire.KREIS_MIN - 1
+    for eintrag in eintraege:
+        if not isinstance(eintrag, dict):
+            raise Vertragsfehler(f"{name}: Eintrag ist kein Objekt")
+        pruefen(name, eintrag, felder)
+        nummer = eintrag["kreis"]
+        if isinstance(nummer, bool) or not isinstance(nummer, int) or not letzte < nummer <= wire.KREIS_MAX:
+            raise Vertragsfehler(f"{name}: kreis ist keine aufsteigende ganze Zahl von KREIS_MIN bis KREIS_MAX")
+        letzte = nummer
+    return eintraege
+
+
 def hello(*, device_state: str | None = None, **felder) -> dict:
     body = {"schema": wire.SCHEMA, "schemata": list(wire.SCHEMATA), **felder}
     if device_state is not None:
@@ -43,26 +60,34 @@ def hello(*, device_state: str | None = None, **felder) -> dict:
     pruefen("hello", body, wire.HELLO_FIELDS, wire.HELLO_OPTIONAL)
     _host("hello", body)
     _faehigkeiten("hello.faehigkeiten", body["faehigkeiten"])
+    wege = body["wege"]
+    if not isinstance(wege, list) or not all(isinstance(weg, str) for weg in wege) or len(set(wege)) != len(wege):
+        raise Vertragsfehler("hello.wege: keine Liste verschiedener Texte")
     return body
 
 
-def status(*, zustand: str, runtime_status, raum, ts: str, ursprungswerte: dict | None = None) -> dict:
-    body = {"schema": wire.SCHEMA, "zustand": zustand, "runtime_status": runtime_status, "raum": raum, "ts": ts}
+def status(*, zustand: str, runtime_status, kreise: list[dict], ts: str, ursprungswerte: dict | None = None) -> dict:
+    body = {"schema": wire.SCHEMA, "zustand": zustand, "runtime_status": runtime_status, "kreise": kreise, "ts": ts}
     if ursprungswerte:
         body["ursprungswerte"] = ursprungswerte
     pruefen("status", body, wire.STATUS_FIELDS, wire.STATUS_OPTIONAL)
     if zustand not in wire.ZUSTAENDE:
         raise Vertragsfehler("status: zustand steht nicht in ZUSTAENDE")
-    if raum is not None:
-        if not isinstance(raum, dict):
-            raise Vertragsfehler("status.raum: kein Objekt")
-        pruefen("status.raum", raum, wire.RAUM_FIELDS)
+    for eintrag in _kreisnummern("status.kreise", kreise, wire.STATUS_KREIS_FIELDS):
+        raum = eintrag["raum"]
+        if raum is not None:
+            if not isinstance(raum, dict):
+                raise Vertragsfehler("status.kreise.raum: kein Objekt")
+            pruefen("status.kreise.raum", raum, wire.RAUM_FIELDS)
     return body
 
 
-def meldung(*, key: str, kategorie: str, kritisch: bool, text: str, offen: bool, ts: str) -> dict:
-    return pruefen("meldung", {"key": key, "kategorie": kategorie, "kritisch": kritisch, "text": text, "offen": offen,
+def meldung(*, key: str, kategorie: str, stufe: str, text: str, offen: bool, ts: str) -> dict:
+    body = pruefen("meldung", {"key": key, "kategorie": kategorie, "stufe": stufe, "text": text, "offen": offen,
                                "ts": ts}, wire.NOTIFICATION_FIELDS)
+    if stufe not in wire.STUFEN:
+        raise Vertragsfehler("meldung: stufe steht nicht in STUFEN")
+    return body
 
 
 def notifications(items: list[dict]) -> dict:

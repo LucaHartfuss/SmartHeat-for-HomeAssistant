@@ -8,7 +8,7 @@ import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
 from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, logzeilen
 
-from heizungsbruecke.ha_binding import HaPlantBinding
+from heizungsbruecke.ha_binding import KEINE_BETRIEBSART, HaPlantBinding
 from smartheat_core import write_budget
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
 from smartheat_core.safety import LocalSafety
@@ -77,7 +77,17 @@ class RecordingHa:
         return [event[1] for event in self.events if event[0] == "read"]
 
 
+# Der Mindestvorlauf gehoert bei Vaillant zur Rueckstellung und wird beim ersten Schreiben als Ursprungswert gelesen.
+# _setup merkt ihn vorab (Wert wie RecordingHa), damit die Tests ohne Bezug dazu keinen Lesezugriff darauf sehen.
+MIN_FLOW_ORIGINAL = 20.0
+# Die Betriebsart der Zone ist der Hilfs-Ursprungswert; die Zone ist hier ein number.*, also ohne Betriebsart. Wer
+# prueft, dass das Schreiben nicht vom Speichern der Hilfswerte abhaengt, merkt ihn vorab (AUX_SPEICHERT).
+AUX_SPEICHERT = {"mode_select": KEINE_BETRIEBSART}
+
+
 def _setup(make_store, backup=None, states=None, manifest=MANIFEST, clock=None, safety=SAFETY):
+    backup = dict(backup or {})
+    backup["originals"] = {"min_flow": MIN_FLOW_ORIGINAL, **backup.get("originals", {})}
     store = make_store(backup=backup)
     ha = RecordingHa(states)
     clock_kwargs = {"clock": clock} if clock is not None else {}
@@ -92,6 +102,11 @@ def _server(curve, shift, heat_limit):
 def _written(row):
     curve, shift = VALUES[row]
     return [("number.curve", curve), ("number.shift", shift)]
+
+
+def _written_back():
+    """Was die Rueckstellung bei Vaillant schreibt: Wiederherstellungspunkt und Ursprungswert des Mindestvorlaufs."""
+    return _written("restore") + [("number.min_flow", MIN_FLOW_ORIGINAL)]
 
 
 def _raise_oserror(*args, **kwargs):
@@ -129,9 +144,10 @@ def test_starting_boost_saves_restore_point_from_device_before_first_write(make_
 
     override.set_boosts(comfort=comfort, emergency=emergency)
 
-    assert ha.events[:2] == [("read", "number.curve"), ("read", "number.shift")]
+    # Erst die Ursprungswerte, dann der Wiederherstellungspunkt: je einmal Steigung und Wunschtemperatur.
+    assert ha.events[:4] == [("read", "number.curve"), ("read", "number.shift")] * 2
     # Ab hier je Hebel ein Quota-Check-Read direkt vor ihrem Schreiben (_write_lever).
-    assert [event[0] for event in ha.events[2:]] == ["read", "write", "read", "write"]
+    assert [event[0] for event in ha.events[4:]] == ["read", "write", "read", "write"]
     assert (store.state.restore_point.get("curve"), store.state.restore_point.get("room_setpoint")) == (0.7, 21.0)
     backup = load_backup(tmp_path / "backup.json")
     assert (backup["restore_point"]["curve"], backup["restore_point"]["room_setpoint"]) == (0.7, 21.0)
@@ -142,9 +158,9 @@ def test_starting_boost_reads_only_the_missing_role(make_store):
 
     override.set_boosts(comfort=True, emergency=False)
 
-    # Wiederherstellungspunkt: nur die fehlende Rolle. Danach je geschriebenem Hebel noch ein
-    # Quota-Check-Read (_write_lever).
-    assert ha.reads == ["number.shift", "number.curve", "number.shift"]
+    # Ursprungswert der Wunschtemperatur (die Steigung hat einen Punkt-Wert), Wiederherstellungspunkt: nur die fehlende
+    # Rolle. Danach je geschriebenem Hebel noch ein Quota-Check-Read (_write_lever).
+    assert ha.reads == ["number.shift", "number.shift", "number.curve", "number.shift"]
     assert (store.state.restore_point.get("curve"), store.state.restore_point.get("room_setpoint")) == (0.9, 21.0)
 
 
@@ -184,7 +200,10 @@ def test_restore_point_not_yet_on_the_card_blocks_a_new_boost(make_store, tmp_pa
     # M1: der von der Anlage gelesene Wiederherstellungspunkt steht nur im Speicher, weil
     # backup.json nicht geschrieben werden konnte. Der naechste Check darf den Boost dann
     # nicht schreiben, sondern holt zuerst das Speichern nach.
-    override, store, ha = _setup(make_store)
+    # Ursprungswerte und Hilfswerte stehen schon auf dem Datentraeger: hier geht es nur um den Wiederherstellungspunkt.
+    override, store, ha = _setup(make_store, backup={
+        "aux_originals": AUX_SPEICHERT, "originals": {"curve": 0.7, "room_setpoint": 21.0},
+    })
     monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
     with pytest.raises(OSError):
@@ -197,7 +216,7 @@ def test_restore_point_not_yet_on_the_card_blocks_a_new_boost(make_store, tmp_pa
     assert ha.writes == []
     assert store.state.boost_active is False
     assert "Boost ausgesetzt" in caplog.text
-    assert not (tmp_path / "backup.json").exists()
+    assert "restore_point" not in load_backup(tmp_path / "backup.json")
 
     monkeypatch.undo()
     assert override.set_boosts(comfort=True, emergency=False) == (True, False)  # Datentraeger wieder ok
@@ -213,7 +232,7 @@ def test_restore_point_not_yet_on_the_card_blocks_a_new_boost(make_store, tmp_pa
 def test_unsaved_boost_flag_alone_does_not_block_a_new_boost(make_store, clock, monkeypatch):
     # Steht der Wiederherstellungspunkt auf dem Datentraeger, blockiert ein nur im Speicher
     # stehendes Boost-Flag (Datentraeger kaputt) keinen neuen Boost.
-    override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT), clock=clock)
+    override, _, ha = _setup(make_store, backup={**RESTORE_POINT, "aux_originals": AUX_SPEICHERT}, clock=clock)
     monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     for comfort in (True, False):
         with pytest.raises(OSError):
@@ -262,7 +281,7 @@ def test_write_failure_leaves_flags_unchanged(make_store, tmp_path):
 
 def test_flag_save_failure_after_device_write_keeps_memory_consistent(make_store, tmp_path, monkeypatch):
     # Datentraeger schreibt nicht, nachdem die Anlage schon auf Boost-Werten steht.
-    override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT))
+    override, store, ha = _setup(make_store, backup={**RESTORE_POINT, "aux_originals": AUX_SPEICHERT})
     monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
     with pytest.raises(OSError):
@@ -310,8 +329,8 @@ def test_unmapped_roles_are_neither_read_nor_written(make_store):
 
     override.set_boosts(comfort=True, emergency=False)
 
-    # Wiederherstellungspunkt-Read plus ein Quota-Check-Read (_write_lever), beide nur curve.
-    assert ha.reads == ["number.curve", "number.curve"]
+    # Ursprungswert- und Wiederherstellungspunkt-Read plus ein Quota-Check-Read (_write_lever), alle nur curve.
+    assert ha.reads == ["number.curve", "number.curve", "number.curve"]
     assert ha.writes == [("number.curve", 1.0)]
 
 
@@ -605,7 +624,7 @@ def test_restore_and_clear_forced_without_boost_writes_restore_point(make_store)
     override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT))
 
     assert override.restore_and_clear(always_restore=True) is True
-    assert ha.writes == _written("restore")
+    assert ha.writes == _written_back()
 
 
 def test_restore_and_clear_not_forced_without_boost_writes_nothing(make_store):
@@ -621,7 +640,7 @@ def test_restore_and_clear_ends_boosts(make_store, tmp_path, flags):
 
     assert override.restore_and_clear(always_restore=False) is True
 
-    assert ha.writes == _written("restore")
+    assert ha.writes == _written_back()
     backup = load_backup(tmp_path / "backup.json")
     assert (backup["boost_active"], backup["emergency_boost_active"]) == (False, False)
 
@@ -641,7 +660,7 @@ def test_restore_and_clear_counts_as_done_when_only_saving_flags_fails(make_stor
     with caplog.at_level(logging.ERROR):
         assert override.restore_and_clear(always_restore=True) is True
 
-    assert ha.writes == _written("restore")
+    assert ha.writes == _written_back()
     assert store.state.emergency_boost_active is False
     assert "Datentraeger kaputt" in caplog.text
 
@@ -653,7 +672,7 @@ def test_emergency_boost_starts_on_the_older_saved_point_when_the_new_one_cannot
 ):
     # N6: Datentraeger nicht beschreibbar, Serverwerte nur im Speicher -- der Notfall-Boost startet
     # trotzdem und setzt am Ende auf den gespeicherten (aelteren) Punkt zurueck.
-    override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT))
+    override, store, ha = _setup(make_store, backup={**RESTORE_POINT, "aux_originals": AUX_SPEICHERT})
     monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     with pytest.raises(OSError):
         override.apply_server_values(_server(1.0, 25.0, 15.0))
@@ -673,7 +692,7 @@ def test_emergency_boost_starts_on_the_older_saved_point_when_the_new_one_cannot
 
 
 def test_comfort_boost_is_still_refused_when_only_an_older_point_is_saved(make_store, monkeypatch):
-    override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT))
+    override, store, ha = _setup(make_store, backup={**RESTORE_POINT, "aux_originals": AUX_SPEICHERT})
     monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     with pytest.raises(OSError):
         override.apply_server_values(_server(1.0, 25.0, 15.0))
@@ -720,7 +739,7 @@ def test_write_lever_min_flow_is_clamped_rounded_and_timed(make_store, clock):
     # (_write_lever) den Schreibvorgang als unveraendert ueberspringen.
     ha = RecordingHa({"number.min_flow": 25.0})
     override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
-    assert override.write_lever("min_flow", 19.2) == 20.0
+    assert override._write_lever("min_flow", 19.2) == 20.0
     assert ha.writes == [("number.min_flow", 20.0)]
     clock.advance(60)
     assert override.settled("min_flow") is False
@@ -830,9 +849,9 @@ def test_write_lever_min_flow_does_not_trust_a_stale_ha_read_after_our_own_recen
     ha = RecordingHa({"number.min_flow": 21.0})
     override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
 
-    assert override.write_lever("min_flow", 22.0) == 22.0
+    assert override._write_lever("min_flow", 22.0) == 22.0
     clock.advance(60)
-    assert override.write_lever("min_flow", 21.0) == 21.0
+    assert override._write_lever("min_flow", 21.0) == 21.0
 
     assert ha.writes == [("number.min_flow", 22.0), ("number.min_flow", 21.0)]
 
@@ -934,11 +953,11 @@ def test_write_lever_skips_inside_the_settle_window_when_our_last_write_is_the_t
     store = make_store()
     ha = RecordingHa({"number.min_flow": 21.0})
     override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
-    override.write_lever("min_flow", 22.0)
+    override._write_lever("min_flow", 22.0)
     ha.states["number.min_flow"] = 22.0
     clock.advance(60)
 
-    assert override.write_lever("min_flow", 22.0) == 22.0
+    assert override._write_lever("min_flow", 22.0) == 22.0
 
     assert ha.writes == [("number.min_flow", 22.0)]
 
@@ -995,7 +1014,7 @@ def test_settled_counts_from_the_start_and_from_each_own_write(make_store, clock
     assert override.settled("min_flow") is False
     clock.advance(SETTLE + 1)
     assert override.settled("min_flow") is True
-    override.write_lever("min_flow", 22.0)
+    override._write_lever("min_flow", 22.0)
     assert override.settled("min_flow") is False
     assert override.settled("curve") is True
     clock.advance(SETTLE + 1)
@@ -1235,7 +1254,19 @@ def test_capture_is_skipped_when_a_restore_point_of_the_heat_limit_exists(make_s
     override, store, ha = _setup_g(make_store, backup={"restore_point": {"heat_limit": 17.0}})
     override.capture_originals()
     assert store.state.originals.get("heat_limit") is None
-    assert ha.reads == []
+    assert "number.heat_limit" not in ha.reads
+
+
+@pytest.mark.parametrize("flags", [{"boost_active": True}, {"emergency_boost_active": True}])
+def test_capture_during_a_boost_never_takes_a_boost_value_as_the_original(make_store, flags):
+    # Steigung und Wunschtemperatur schreibt jeder Boost: laeuft einer ohne Wiederherstellungspunkt (kaputte Datei),
+    # ist der Live-Wert ein Boost-Wert und kein Ursprungswert. Der Mindestvorlauf bleibt unberuehrt vom Boost.
+    override, store, ha = _setup(make_store, backup=dict(flags), states={"number.min_flow": 23.0})
+    store.update(originals={})
+    override.capture_originals()
+    assert (store.state.originals.get("curve"), store.state.originals.get("room_setpoint")) == (None, None)
+    assert store.state.originals.get("min_flow") == 23.0
+    assert "number.curve" not in ha.reads and "number.shift" not in ha.reads
 
 
 @pytest.mark.parametrize("flags", [{"boost_active": True}, {"emergency_boost_active": True}])
@@ -1267,7 +1298,7 @@ def test_capture_without_mapped_heat_limit_does_nothing(make_store):
     override, store, ha = _setup(make_store)
     override.capture_originals()
     assert store.state.originals.get("heat_limit") is None
-    assert ha.reads == []
+    assert "number.heat_limit" not in ha.reads
 
 
 def test_capture_survives_a_read_error_and_stays_open(make_store):
@@ -1433,7 +1464,9 @@ def test_emergency_start_during_a_carried_over_comfort_boost_leaves_g_alone(make
 def test_emergency_boost_on_the_saved_point_without_heat_limit_leaves_g_alone(make_store, monkeypatch):
     # N6: Serverwerte (inkl. G) nur im Speicher, backup.json haelt keinen G-Punkt. Der Notfall-Boost
     # startet auf dem gespeicherten aelteren Punkt (G None) und darf G deshalb nicht schreiben.
-    override, store, ha = _setup_g(make_store, backup={**RESTORE_POINT, "originals": {"heat_limit": 15.0}})
+    override, store, ha = _setup_g(
+        make_store, backup={**RESTORE_POINT, "originals": {"heat_limit": 15.0}, "aux_originals": AUX_SPEICHERT},
+    )
     monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     with pytest.raises(OSError):
         override.apply_server_values(_server(1.0, 25.0, 18.0))
@@ -1558,7 +1591,7 @@ def _erster_start(make_store, monkeypatch):
 
 
 def _punkt_nicht_speicherbar(make_store, monkeypatch):
-    override, _, _ = _setup(make_store, backup=dict(RESTORE_POINT))
+    override, _, _ = _setup(make_store, backup={**RESTORE_POINT, "aux_originals": AUX_SPEICHERT})
     monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_fremd)
     with pytest.raises(OSError):
         override.apply_server_values(_server(1.0, 25.0, 15.0))
@@ -1719,7 +1752,10 @@ def test_an_already_manual_zone_gets_the_server_setpoint_at_once_despite_a_block
 
 def test_an_unreadable_zone_mode_with_a_blocked_quota_holds_the_setpoint_back(make_store, clock, tag):
     override, store, ha, attempts = _quota_zone(
-        make_store, clock, backup={"write_budget": {write_budget.ZONE_PREPARE: {"day": DAY, "count": 6}}},
+        make_store, clock, backup={
+            "write_budget": {write_budget.ZONE_PREPARE: {"day": DAY, "count": 6}},
+            "aux_originals": {"mode_select": "auto"},  # vor dem Ausfall der Zone gemerkt
+        },
     )
 
     lesbar = ha.get_raw_state

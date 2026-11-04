@@ -66,7 +66,7 @@ def register(ctx, tmp_path, clock):
 
 
 def _run(register, kind, payload, command_id="c1"):
-    register.empfangen({"schema": 1, "command_id": command_id, "kind": kind, "payload": payload,
+    register.empfangen({"schema": 2, "command_id": command_id, "kind": kind, "payload": payload,
                         "expires_at": "2027-01-01T00:00:00+00:00"})
     return register.sent[-1] if register.sent else None
 
@@ -346,7 +346,7 @@ def test_inventory_ist_wiederholbar(ctx, tmp_path, clock):
                           send_inventory=lambda command_id, daten: teile.append(daten) or [1],
                           uebersetzen=befehle.fehler_uebersetzen)
     befehle.eintragen(reg, ctx)
-    befehl = {"schema": 1, "command_id": "c1", "kind": "inventory",
+    befehl = {"schema": 2, "command_id": "c1", "kind": "inventory",
               "payload": {"stunden": 0, "filter": {"treiber": "simulation"}}, "expires_at": "2027-01-01T00:00:00+00:00"}
     reg.empfangen(befehl)
     assert len(teile) == 1 and teile[0]["treiber"] == "simulation" and sent == []  # Ergebnis erst nach dem PUBACK
@@ -436,7 +436,7 @@ def test_sign_off_marks_restarts_and_finishes_when_the_runtime_is_signed_off(ctx
     assert outcome.check() is None
     ctx.umgebung.status = {"status": "abgemeldet", "tenant_id": "andere", "grund": None}
     assert outcome.check() is None
-    dateien.schreiben_json(ctx.paths.backup, {"restore_point": {"curve": 1.1, "room_setpoint": 21.0}}, modus=dateien.LESBAR)
+    dateien.schreiben_json(ctx.paths.backup(1), {"restore_point": {"curve": 1.1, "room_setpoint": 21.0}}, modus=dateien.LESBAR)
     ctx.umgebung.status = {"status": "abgemeldet", "tenant_id": "test-tenant", "grund": None}
     assert outcome.check() == Done({"zurueckgesetzt": True, "werte": {"curve": 1.1, "room_setpoint": 21.0}})
 
@@ -457,7 +457,7 @@ def test_sign_off_after_the_restart_does_not_restart_again(ctx):
 def test_sign_off_through_the_register_survives_the_restart_it_causes(ctx, tmp_path, clock):
     """Der Neustart gehoert zum Befehl: das Register stellt ihn nach dem Neustart erneut zu (D1: wiederholbar), die
     Markierung steht schon, es gibt keinen zweiten Neustart, und das Ergebnis geht hoch, sobald der Status abgemeldet ist."""
-    befehl = {"schema": 1, "command_id": "c1", "kind": "sign_off", "payload": {},
+    befehl = {"schema": 2, "command_id": "c1", "kind": "sign_off", "payload": {},
               "expires_at": "2027-01-01T00:00:00+00:00"}
     sent: list[dict] = []
 
@@ -480,7 +480,7 @@ def test_sign_off_through_the_register_survives_the_restart_it_causes(ctx, tmp_p
     assert sent == []
     ctx.umgebung.status = {"status": "abgemeldet", "tenant_id": "test-tenant", "grund": None}
     neustart.pruefen()
-    assert sent == [{"schema": 1, "command_id": "c1", "ok": True,
+    assert sent == [{"schema": 2, "command_id": "c1", "ok": True,
                      "result": {"zurueckgesetzt": True, "werte": {}}, "error": None}]
     neustart.empfangen(befehl)  # fertig: das gespeicherte Ergebnis, kein weiterer Lauf
     assert len(sent) == 2 and sent[1] == sent[0] and ctx.umgebung.restarts == [1]
@@ -820,7 +820,7 @@ def _blockieren(monkeypatch, ziel: str, danach) -> tuple[threading.Event, thread
 
 
 def _befehl(world, command_id: str, kind: str, payload: dict) -> None:
-    world.server("down/command", {"schema": 1, "command_id": command_id, "kind": kind, "payload": payload,
+    world.server("down/command", {"schema": 2, "command_id": command_id, "kind": kind, "payload": payload,
                                   "expires_at": "2026-01-17T08:00:00+01:00"})
 
 

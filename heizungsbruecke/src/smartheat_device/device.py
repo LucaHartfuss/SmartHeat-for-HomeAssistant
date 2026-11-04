@@ -24,16 +24,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeVar
 
-from smartheat_core import config_check
+from smartheat_core import config_check, kreisansicht
 from smartheat_core.logtext import lesbar
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_device import bootstrap, commands, fehler, identity, inventory, nachrichten, wire, wish
-from smartheat_device.documents import BEDIENUNG, KONFIGURATION, DocumentStore, angebot_aus
+from smartheat_device.documents import ANZEIGE, BEDIENUNG, KONFIGURATION, DocumentStore, angebot_aus
 from smartheat_device.host import Anzeige, DeviceHost
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_device.link import ANMELDUNG_SCHEITERT, GESENDET, GETRENNT, NACHRICHT, VERBUNDEN, Link
 from smartheat_runtime import dokument_config
 from smartheat_runtime.notifier import category
+from smartheat_runtime.soll_speicher import KREIS
 from smartheat_runtime.worker import RegulationWorker
 
 logger = logging.getLogger(__name__)
@@ -99,9 +100,10 @@ def _ursprungsname_ok(name) -> bool:
 
 
 def _vergleichbar(body: dict) -> dict:
-    """Status ohne Zeitstempel (raum traegt bei jeder Veroeffentlichung einen frischen ts)."""
-    raum = body.get("raum")
-    return {**body, "raum": {k: v for k, v in raum.items() if k != "ts"} if isinstance(raum, dict) else raum}
+    """Status ohne Zeitstempel (der Raum jedes Kreises traegt bei jeder Veroeffentlichung einen frischen ts)."""
+    def ohne_ts(raum):
+        return {k: v for k, v in raum.items() if k != "ts"} if isinstance(raum, dict) else raum
+    return {**body, "kreise": [{**eintrag, "raum": ohne_ts(eintrag["raum"])} for eintrag in body["kreise"]]}
 
 
 class Device:
@@ -139,7 +141,7 @@ class Device:
         self._client_stand: int | None = None  # client_nr des Links im letzten Takt
         self._hello_offen = False  # verbunden, hello noch nicht gesendet (Takt versucht es erneut)
         self._rettung = False
-        self._channel: RuntimeChannel | None = None
+        self._kanaele: dict[int, RuntimeChannel] = {}  # je Kreis ein Kanal ueber denselben Link
         self._eigene: dict[str, str] = {}  # eigene Meldungen des Geraets: key -> Text
         self._meldungen: dict[str, dict] = {}  # offene Meldungen (Geraet und Laufzeit)
         self._meldungen_neu: dict[str, dict] = {}  # geaendert, noch nicht gesendet
@@ -195,12 +197,13 @@ class Device:
             self._sicher(item, takt=False)
         self._sicher(None)
 
-    def wunsch(self, wert, *, herkunft: str | None, durch: str | None = None) -> float:
+    def wunsch(self, wert, *, herkunft: str | None, durch: str | None = None, kreis: int = KREIS) -> float:
         """Lokaler Sollwert vom Host: sofort begrenzt zurueck (der Host wendet ihn an), Versand im Geraete-Thread.
-        ValueError, wenn der Wert keine endliche Zahl ist oder herkunft bzw. durch kein Vertragswert (dann kommt nichts
-        in die Inbox). Geloggt wird je Grund einmal, ohne den Wert (der Host kann wiederholen)."""
+        ValueError, wenn der Wert keine endliche Zahl ist, herkunft bzw. durch kein Vertragswert oder kreis keine
+        Kreisnummer ist (dann kommt nichts in die Inbox). Heute regelt jeder Host einen Kreis (Standard). Geloggt wird je Grund einmal, ohne den Wert (der Host kann wiederholen)."""
         try:
             wish.pruefen_herkunft(herkunft, durch)
+            wish.pruefen_kreis(kreis)
             begrenzt, roh = wish.begrenzen(wert)
         except ValueError as error:
             grund = str(error)  # feste Texte aus wish ohne Wert
@@ -208,7 +211,7 @@ class Device:
                 self._wunsch_abgelehnt.add(grund)
                 logger.error("Bedienwunsch verworfen (%s)", grund)
             raise
-        self._inbox.put(("wunsch", begrenzt, roh, herkunft, durch))
+        self._inbox.put(("wunsch", begrenzt, roh, herkunft, durch, kreis))
         return begrenzt
 
     def soll_quelle_aus(self, aus: bool, wirksam: float | None = None) -> None:
@@ -217,9 +220,10 @@ class Device:
         text = wish.soll_quelle_aus_text(wirksam) if aus else None
         self._inbox.put(("eigene", wish.SOLL_QUELLE_AUS_KEY, text))
 
-    def meldung(self, key: str, text: str, *, offen: bool, kritisch: bool = True) -> None:
-        """Meldung der Laufzeit (NotifySink des Hosts): Upsert je key ueber up/notifications."""
-        self._inbox.put(("meldung", nachrichten.meldung(key=key, kategorie=category(key), kritisch=kritisch, text=text,
+    def meldung(self, key: str, text: str, *, offen: bool, stufe: str) -> None:
+        """Meldung der Laufzeit (NotifySink des Hosts): Upsert je key ueber up/notifications. Die Stufe (wire.STUFEN)
+        setzt der Aufrufer; eine unbekannte lehnt nachrichten.meldung laut ab."""
+        self._inbox.put(("meldung", nachrichten.meldung(key=key, kategorie=category(key), stufe=stufe, text=text,
                                                         offen=offen, ts=_iso(self._wall()))))
 
     def im_geraete_thread(self, aufgabe: Callable[[], None]) -> None:
@@ -241,12 +245,13 @@ class Device:
         body = nachrichten.ergebnis_dokument(wire.DOKUMENT_SOFTWARE, version, ok, error)
         return self._publish_nach_hello("up/result", body) is not None
 
-    def laufzeit_kanal(self, worker: RegulationWorker) -> RuntimeChannel:
-        """mqtt_factory fuer app.start: Tick und Telemetrie ueber den Link."""
+    def laufzeit_kanal(self, worker: RegulationWorker, kreis: int) -> RuntimeChannel:
+        """mqtt_factory fuer app.start: Tick und Telemetrie des Kreises `kreis` ueber den Link. Jeder Kreis hat seinen
+        Kanal und seinen Worker; down/setpoints geht nach seinem Feld `kreis` an genau einen von ihnen."""
         channel = RuntimeChannel(self._publish_nach_hello,
                                  lambda: self._bereit and (link := self.link) is not None and link.connected,
                                  lambda: link.connect_failures if (link := self.link) is not None else 0)
-        self._channel = channel
+        self._kanaele[kreis] = channel
         channel.binden(worker)
         return channel
 
@@ -256,9 +261,9 @@ class Device:
     def bedienung(self) -> dict | None:
         return self.documents.inhalt(BEDIENUNG)
 
-    def abo_status(self) -> str:
-        """abo_source der Laufzeit (dokument_config.runtime_config)."""
-        return dokument_config.abo_status(self.konfiguration())
+    def abo_status(self, kreis: int | None = None) -> str:
+        """abo_source der Laufzeit (dokument_config.runtime_config): das Abo des Kreises, ohne Angabe des ersten."""
+        return dokument_config.abo_status(self.konfiguration(), kreis)
 
     def zustand(self) -> str:
         """Scheitert der Rueckruf runtime_status, gilt die Laufzeit als startend (_LAUFZEIT_UNBEKANNT)."""
@@ -429,13 +434,15 @@ class Device:
     def _hello(self) -> dict | None:
         """None: der Rueckruf faehigkeiten ist gescheitert (geloggt), hello wartet auf einen spaeteren Takt."""
         faehigkeiten, gescheitert = self._host_wert("faehigkeiten", self.host.faehigkeiten)
-        if gescheitert:
+        wege, wege_gescheitert = self._host_wert("wege", self.host.wege)
+        if gescheitert or wege_gescheitert:
             return None
         # device_state: der Server gleicht ab
         return nachrichten.hello(
             konfiguration_version=self.documents.version(KONFIGURATION),
-            bedienung_version=self.documents.version(BEDIENUNG), software_version=self.host.version,
-            host=self.host.host, faehigkeiten=faehigkeiten, boot_id=self.boot_id,
+            bedienung_version=self.documents.version(BEDIENUNG), anzeige_version=self.documents.version(ANZEIGE),
+            software_version=self.host.version, host=self.host.host, faehigkeiten=faehigkeiten, wege=wege,
+            boot_id=self.boot_id,
             uhr_synchron=self._uhr_synchron() is True, device_state=bootstrap.device_state(self._dir))
 
     def _uhr_synchron(self) -> bool | None:
@@ -479,8 +486,8 @@ class Device:
         self._meldungen_neu.update(self._meldungen)
         self._meldungen_at = None
         self._meldungen_senden(now)
-        if self._channel is not None:
-            self._channel.verbunden()
+        for kanal in tuple(self._kanaele.values()):
+            kanal.verbunden()
 
     def _nachricht(self, name: str, raw: bytes) -> None:
         if name not in wire.DOWN_TOPICS:  # Unbekannte Topics ignorieren, ohne die Nachricht zu lesen
@@ -500,8 +507,21 @@ class Device:
             self._dokument(_DOKUMENT_ART[name], body)
         elif name == "down/command":
             self.befehle.empfangen(body)
-        elif name == "down/setpoints" and self._channel is not None:
-            self._channel.setpoints(body)
+        elif name == "down/setpoints":
+            self._setpoints(body)
+
+    def _setpoints(self, body: dict) -> None:
+        """Die Antwort geht an den Kanal ihres Kreises; ohne brauchbaren oder bekannten Kreis an keinen (die Laufzeit
+        verwirft eine Antwort ohne Kreis ohnehin, und die Nummer gehoert nicht ins Log)."""
+        kreis = body.get("kreis")
+        if type(kreis) is not int:
+            logger.debug("down/setpoints ohne brauchbaren Kreis, verworfen")
+            return
+        kanal = self._kanaele.get(kreis)
+        if kanal is None:
+            logger.debug("down/setpoints fuer einen Kreis ohne Laufzeit, verworfen")
+            return
+        kanal.setpoints(body)
 
     def _dokument(self, art: str, body: dict) -> None:
         """Erst das Ergebnis und die Uebergabe, dann software: jeder Host-Rueckruf ist einzeln abgesichert, damit ein
@@ -543,7 +563,7 @@ class Device:
                 if not config_check.ist_leer(neu):
                     bootstrap.device_state_speichern(self._dir, "uebernommen")
                 self._host_rufen("konfiguration_uebernommen", self.host.konfiguration_uebernommen, alt, neu)
-            else:
+            elif art == BEDIENUNG:
                 self._host_rufen("bedienung_uebernommen", self.host.bedienung_uebernommen, neu)
         if (angebot := angebot_aus(art, body)) is not None:
             # dasselbe Angebot, das der Speicher merkt, auch aus einer abgelehnten Konfiguration (ein Update kann der
@@ -628,9 +648,9 @@ class Device:
             return commands.Failed("bereits_uebernommen")
         return commands.Done({})
 
-    def _wunsch(self, begrenzt: float, roh: float | None, herkunft: str | None, durch: str | None) -> None:
-        # herkunft und durch hat Device.wunsch schon geprueft (wish.pruefen_herkunft)
-        neu = wish.neu(begrenzt, roh, basis_version=self.documents.version(BEDIENUNG),
+    def _wunsch(self, begrenzt: float, roh: float | None, herkunft: str | None, durch: str | None, kreis: int) -> None:
+        # herkunft, durch und kreis hat Device.wunsch schon geprueft (wish.pruefen_herkunft, wish.pruefen_kreis)
+        neu = wish.neu(begrenzt, roh, kreis=kreis, basis_version=self.documents.version(BEDIENUNG),
                        uhr_synchron=self._uhr_synchron() is True, herkunft=herkunft, durch=durch, wall=self._wall())
         self.wunsch_puffer.setzen(neu)
         self.documents.mark_dirty()
@@ -639,8 +659,10 @@ class Device:
         self._wunsch_senden()
 
     def _wunsch_senden(self) -> None:
-        wunsch = self.wunsch_puffer.wunsch
-        if self._bereit and wunsch is not None and self.wunsch_puffer.offen():
+        for kreis in self.wunsch_puffer.kreise():
+            wunsch = self.wunsch_puffer.wunsch(kreis)
+            if not self._bereit or wunsch is None or not self.wunsch_puffer.offen(kreis):
+                continue
             try:
                 body = wunsch.payload()
             except nachrichten.Vertragsfehler as error:
@@ -651,7 +673,7 @@ class Device:
                     logger.error("up/wish nicht gebaut: %s", error)
                 return
             self._wunsch_fehler = None
-            self.wunsch_puffer.gesendet(self._publish("up/wish", body))
+            self.wunsch_puffer.gesendet(kreis, self._publish("up/wish", body))
 
     def _eigene_meldung(self, key: str, text: str | None) -> None:
         if key not in wire.MELDUNGEN:
@@ -661,7 +683,7 @@ class Device:
         vorher = self._eigene.pop(key, None)
         if text is not None:
             self._eigene[key] = text
-        self._meldung_merken(nachrichten.meldung(key=key, kategorie=key, kritisch=False, text=text or vorher or "",
+        self._meldung_merken(nachrichten.meldung(key=key, kategorie=key, stufe="orange", text=text or vorher or "",
                                                  offen=text is not None, ts=_iso(self._wall())))
 
     def _meldung_merken(self, item: dict) -> None:
@@ -685,11 +707,18 @@ class Device:
             if self._meldungen_neu.get(item["key"]) is item:
                 del self._meldungen_neu[item["key"]]
 
+    def _kreisnummern(self) -> list[int]:
+        """Die Kreise der gespeicherten Konfiguration; ohne eingerichtete Anlage nur Kreis 1 (der Ruhezustand meldet
+        seinen Raum unter 1)."""
+        nummern = [k for eintrag in kreisansicht.kreise(self.konfiguration() or {})
+                   if isinstance(k := eintrag.get("kreis"), int) and not isinstance(k, bool)]
+        return nummern or [KREIS]
+
     def _ursprungswerte_neu(self) -> dict:
         """Nur Namen, die in der Konfiguration (ursprungswerte, vom Server gespiegelt) fehlen, in
         den Grenzen von V1; was nicht passt, geht nicht hinaus (Log ohne Wert)."""
         konfiguration = self.konfiguration() or {}
-        bekannt = konfiguration.get("ursprungswerte")
+        bekannt = kreisansicht.erste(konfiguration).get("ursprungswerte")  # bis zum Mehrkreisbetrieb: Kreis 1
         bekannt = bekannt if isinstance(bekannt, dict) else {}
         werte: dict = {}
         gemerkt, gescheitert = self._host_wert("ursprungswerte", self.host.ursprungswerte)
@@ -718,10 +747,16 @@ class Device:
         if not self._bereit:
             return
         runtime_status, gescheitert = self._host_wert("runtime_status", self.host.runtime_status)
-        raum, raum_gescheitert = self._host_wert("raum", self.host.raum)
-        if gescheitert or raum_gescheitert:
+        kreise = []
+        for kreis in self._kreisnummern():
+            raum, raum_gescheitert = self._host_wert("raum", self.host.raum, kreis)
+            if raum_gescheitert:
+                gescheitert = True
+            kreise.append({"kreis": kreis, "raum": raum})
+        if gescheitert:
             return  # kein Status mit erfundenem Laufzeitstatus oder Raum; der naechste Takt versucht es erneut
-        felder = {"zustand": self._zustand(runtime_status), "runtime_status": runtime_status, "raum": raum,
+        felder = {"zustand": self._zustand(runtime_status), "runtime_status": runtime_status,
+                  "kreise": kreise,
                   "ursprungswerte": self._ursprungswerte_neu() or None}
         try:
             body = nachrichten.status(**felder, ts=_iso(self._wall()))

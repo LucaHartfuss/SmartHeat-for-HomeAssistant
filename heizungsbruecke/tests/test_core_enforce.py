@@ -31,7 +31,7 @@ ROWS = {"boost_active": (1.2, 24.0), "emergency_boost_active": (1.5, 25.0)}
 MANIFEST = ChannelManifest(refs={
     "curve_current": "number.curve", "shift_current": "climate.zone::temperature", "min_flow": "number.mf",
 })
-POINT = {"curve": 0.9, "room_setpoint": 21.0}
+POINT = {"curve": 0.9, "room_setpoint": 21.0, "min_flow": 20.5}
 TODAY = date(2026, 10, 3)
 _ECHTES_HEUTE = enforce._today  # vor der autouse-Fixture _fixed_day gemerkt
 
@@ -508,9 +508,9 @@ def test_partial_write_back_is_one_intervention(make_store, clock):
     assert ("climate.zone", 21.0) in ha.writes
     assert _message_pushes(rt) == [_meldung("Heizkurve")]
     pending = rt.store.state.manual_override_pending
-    assert pending["levers"] == {"curve": 1.3, "room_setpoint": 23.0}
+    assert pending["levers"] == {"curve": 1.3, "room_setpoint": 23.0, "min_flow": 20.5}
     assert pending is first  # derselbe Eingriff: KPI nicht neu geschrieben (kein erneutes Senden)
-    assert rt.store.state.manual_override["levers"] == {"curve": 1.3, "room_setpoint": 23.0}
+    assert rt.store.state.manual_override["levers"] == {"curve": 1.3, "room_setpoint": 23.0, "min_flow": 20.5}
 
 
 def test_pending_kpi_is_merged_not_replaced(make_store, clock):
@@ -524,7 +524,7 @@ def test_pending_kpi_is_merged_not_replaced(make_store, clock):
     clock.advance(SETTLE + 1)
     _rounds(rt)
     pending = rt.store.state.manual_override_pending
-    assert pending["levers"] == {"curve": 1.3, "room_setpoint": 23.0}
+    assert pending["levers"] == {"curve": 1.3, "room_setpoint": 23.0, "min_flow": 20.5}
 
 
 def test_detection_at_the_daily_limit_only_sends_the_limit_message(make_store, clock):
@@ -564,13 +564,14 @@ def test_curve_tolerance_is_half_a_plant_step(make_store, clock):
     assert rt.store.state.manual_override is None
 
 
-def test_without_room_target_the_min_flow_is_skipped_and_the_rest_enforced(make_store, clock):
-    """Beim ersten Start ohne Raum-Soll liefert derived.expected None."""
+def test_the_min_flow_is_enforced_without_a_room_target_too(make_store, clock):
+    """Der Mindestvorlauf ist ein Serverwert: sein Soll steht im Wiederherstellungspunkt, das Raum-Soll des Geraets
+    spielt fuer die Durchsetzung keine Rolle."""
     ha = Ha(curve=1.3, min_flow=25.0)
     rt = _rt(make_store, clock, ha)
     rt.store.update(stable_target=None)
     _rounds(rt)
-    assert ("number.curve", 0.9) in ha.writes and not [w for w in ha.writes if w[0] == "number.mf"]
+    assert ("number.curve", 0.9) in ha.writes and ("number.mf", 20.5) in ha.writes
 
 
 def test_a_second_change_during_an_open_intervention_extends_it(make_store, clock):

@@ -6,10 +6,12 @@ import math
 import random
 
 import pytest
-from anlagen import ALLE, hebel_von, schreibziel
+from anlagen import ALLE, schreibziel
+from anlagen import serverhebel_von as hebel_von
 
 INF = math.inf
-#: lokale Grenzen (untere, obere) je (Hebelsatz, Verteilsystem) und Hebel (Regel 4), woertlich; min_flow leitet der Client ab
+#: lokale Grenzen (untere, obere) je (Hebelsatz, Verteilsystem) und Hebel (Regel 4), woertlich; der Mindestvorlauf
+#: kommt wie jeder Hebel vom Server
 BEREICHE = {
     ("vaillant_vrc720", "Heizkoerper"): {"curve": (0.4, 1.5), "room_setpoint": (15.0, 25.0), "heat_limit": (5.0, 23.0),
                                          "min_flow": (20.0, 30.0)},
@@ -126,7 +128,7 @@ def test_ak_g10_01_feindliche_antworten_bleiben_in_den_grenzen(welt, satz, verte
         seq = anlage.link.of("up/snapshot")[-1]["seq"]
         assert seq not in beantwortet, f"Antwort {nr}: kein offener Tick"  # ein Tick, auf den noch nichts kam
         beantwortet.add(seq)
-        anlage.link.empfangen("down/setpoints", {"schema": 4, "seq": seq, "ts": "x", **antwort})
+        anlage.link.empfangen("down/setpoints", {"schema": 5, "kreis": 1, "seq": seq, "ts": "x", **antwort})
         anlage.runde(2)
         anlage.raum(22.0)
         anlage.runde(TAG)  # ein neuer Tag: das Tagesbudget der Weishaupt-Regler und die Abstaende gelten wieder

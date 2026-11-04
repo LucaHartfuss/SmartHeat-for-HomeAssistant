@@ -32,7 +32,7 @@ def _rt(ha, manifest, store, override=None, mqtt=None, clock=None, zone_prepared
     if override is None:
         override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), _safety(), clock=clock)
     return SimpleNamespace(manifest=manifest, signals=ha, mqtt_client=mqtt, store=store, override=override,
-                           manual_override_seq=None, manual_override_sent=None, zone_prepared=zone_prepared)
+                           manual_override_seq=None, manual_override_sent=None, zone_prepared=zone_prepared, config=SimpleNamespace(kreis=1))
 
 
 @pytest.mark.parametrize("mqtt", [None, FakeMqttChannel(connected=False)], ids=["ohne-kanal", "getrennt"])
@@ -149,7 +149,7 @@ def test_first_start_snapshot_reports_the_written_start_shift_not_the_stale_zone
     # uebernehmen und mit seiner Antwort die 21 ueberschreiben.
     manifest = ChannelManifest(refs={
         "room_target": "sensor.room_target", "curve_current": "number.curve",
-        "shift_current": "climate.zone::temperature", "min_flow": "number.min_flow",
+        "shift_current": "climate.zone::temperature",
     })
     ha, store, mqtt = _StaleZoneHa(), make_store(), FakeMqttChannel()
     override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), _safety(), clock=clock)
@@ -253,7 +253,7 @@ def test_riesige_ungueltige_antwort_gibt_kurzen_grund(make_store, clock):
     Stapel an den Server) bleibt bei 200 Zeichen, der Anfang mit dem Schluessel vor dem Doppelpunkt bleibt."""
     rt, sink = _rt_mit_offenem_tick(make_store, clock)
 
-    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "ok", "levers": {"curve": "x" * 130_000}})
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 5, "kreis": 1, "status": "ok", "levers": {"curve": "x" * 130_000}})
 
     grund = _server_grund(rt)
     assert len(grund) <= 200
@@ -271,11 +271,26 @@ def test_riesiges_unbekanntes_schema_gibt_kurzen_grund(make_store, clock):
     assert len(_server_grund(rt)) <= 200
 
 
+@pytest.mark.parametrize("kreis", [2, 0, True, "1", 1.0, None, "fehlt"])
+def test_antwort_eines_anderen_oder_unbrauchbaren_kreises_schreibt_nichts_und_ist_ein_serverfehler(
+        make_store, clock, kreis):
+    """Der Worker eines Kreises nimmt nur Antworten seines eigenen Kreises an (Randwert: Kreis 1 gilt, jeder andere nicht)."""
+    rt, _ = _rt_mit_offenem_tick(make_store, clock)
+    antwort = {"seq": "s1", "schema": 5, "status": "ok", "levers": {"curve": 1.0, "room_setpoint": 20.0}}
+    if kreis != "fehlt":
+        antwort["kreis"] = kreis
+
+    ticks.handle_setpoints(rt, antwort)
+
+    assert "Kreis" in _server_grund(rt)
+    assert rt.signals.writes == []
+
+
 def test_langer_ablehnungsgrund_wird_gekuerzt(make_store, clock):
     rt, sink = _rt_mit_offenem_tick(make_store, clock)
     reason = "unplausibler Wert für dat: " + "9" * 130_000
 
-    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": reason})
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 5, "kreis": 1, "status": "rejected", "reason": reason})
 
     grund = _server_grund(rt)
     assert len(grund) <= 200
@@ -287,7 +302,7 @@ def test_kurzer_ablehnungsgrund_bleibt_unveraendert(make_store, clock):
     rt, _ = _rt_mit_offenem_tick(make_store, clock)
     reason = "x" * 200
 
-    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": reason})
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 5, "kreis": 1, "status": "rejected", "reason": reason})
 
     assert _server_grund(rt) == reason
 
@@ -297,7 +312,7 @@ def test_gekuerzter_ablehnungsgrund_hat_genau_die_grenze_und_endet_auf_auslassun
     rt, _ = _rt_mit_offenem_tick(make_store, clock)
     reason = "".join(chr(ord("a") + i % 26) for i in range(1000))
 
-    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": reason})
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 5, "kreis": 1, "status": "rejected", "reason": reason})
 
     grund = _server_grund(rt)
     assert len(grund) == ticks.FREMDTEXT_MAX_CHARS == 200
@@ -307,6 +322,6 @@ def test_gekuerzter_ablehnungsgrund_hat_genau_die_grenze_und_endet_auf_auslassun
 def test_ablehnungsgrund_mit_201_zeichen_wird_gekuerzt_einer_mit_200_nicht(make_store, clock):
     rt, _ = _rt_mit_offenem_tick(make_store, clock)
 
-    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": "y" * 201})
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 5, "kreis": 1, "status": "rejected", "reason": "y" * 201})
 
     assert _server_grund(rt) == "y" * 199 + "…"

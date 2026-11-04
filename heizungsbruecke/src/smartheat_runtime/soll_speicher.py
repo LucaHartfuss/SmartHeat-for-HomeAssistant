@@ -43,10 +43,26 @@ def im_bedienbereich(value) -> bool:
 DEFAULT_RAUM_SOLL = 20.0
 
 
-def bedienung_start(bedienung) -> float | None:
-    """Startwert aus der Bedienung (5c 1.3): raum_soll, wenn im Bedienbereich, sonst None. Nur mit einem
-    solchen Wert gleicht ein Host beim Start an."""
-    value = bedienung.get("raum_soll") if isinstance(bedienung, Mapping) else None
+#: Der eine Kreis, den die Hosts heute regeln (Kreisnummern beginnen bei 1); die Bedienung traegt je Kreis einen Eintrag.
+KREIS = 1
+
+
+def raum_soll_von(bedienung, kreis: int = KREIS):
+    """Der Raum-Soll des Kreises aus einem Bedienungsdokument (Eintrag mit dieser Nummer in `kreise`); None, wenn das
+    Dokument fehlt, keine Liste fuehrt oder den Kreis nicht nennt. Der Wert ist ungeprueft (siehe im_bedienbereich)."""
+    eintraege = bedienung.get("kreise") if isinstance(bedienung, Mapping) else None
+    if not isinstance(eintraege, list):
+        return None
+    for eintrag in eintraege:
+        if isinstance(eintrag, Mapping) and eintrag.get("kreis") == kreis:
+            return eintrag.get("raum_soll")
+    return None
+
+
+def bedienung_start(bedienung, kreis: int = KREIS) -> float | None:
+    """Startwert aus der Bedienung (5c 1.3): raum_soll des Kreises `kreis`, wenn im Bedienbereich, sonst None. Nur mit
+    einem solchen Wert gleicht ein Host beim Start an."""
+    value = raum_soll_von(bedienung, kreis)
     return float(value) if isinstance(value, int | float) and im_bedienbereich(value) else None
 
 

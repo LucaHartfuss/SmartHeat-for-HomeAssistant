@@ -196,6 +196,22 @@ def test_fussbodenheizung_hat_keine_comfort_zeile(make_store, clock, key):
     assert anlage.writes == []
 
 
+#: Die Zeilen der lokalen Verfahrenstabelle je Hebelsatz: auf welchen Wegen er vorkommt. Die Werte einer Zeile sind die
+#: Werte seines Hebelsatzes aus den Tabellen unten, auf jedem Weg gleich (die Simulation traegt jeden Hebelsatz).
+WEGE_JE_HEBELSATZ = {
+    "vaillant_vrc720": ("vaillant_myvaillant", "simulation"),
+    "weishaupt_wwp": ("weishaupt_modbus", "simulation"),
+    "weishaupt_wwp_basis": ("weishaupt_modbus", "simulation"),
+    "viessmann_vicare": ("viessmann_vicare", "simulation"),
+}
+KOMBINATIONEN = [(weg, hebelsatz) for hebelsatz, wege in WEGE_JE_HEBELSATZ.items() for weg in wege]
+
+
+def je_kombination(tabelle):
+    """Die woertliche Tabelle je Hebelsatz auf alle (Weg, Hebelsatz)-Kombinationen ausgerollt."""
+    return {(weg, hebelsatz): tabelle[hebelsatz] for weg, hebelsatz in KOMBINATIONEN}
+
+
 #: Spec Stufe 3 S4b 4.2: Obergrenzen des Schreibschutzes (Hebelsatz -> (durchsetzen_tag, tag, lebensdauer_hinweis)).
 #: Der Server darf nur gleich oder strenger senden. Werte unveraendert aus smartheat_core/binding.py bis 1.0.0.
 SCHREIBSCHUTZ = {
@@ -212,7 +228,7 @@ def test_schreibschutz_obergrenzen():
     assert {
         k: (v.obergrenze.durchsetzen_tag, v.obergrenze.tag, v.obergrenze.lebensdauer_hinweis)
         for k, v in VERFAHREN.items()
-    } == SCHREIBSCHUTZ, R4
+    } == je_kombination(SCHREIBSCHUTZ), R4
 
 
 #: Lokale Positivliste der Weishaupt-Optionsschema-Praefixe (weishaupt_modbus 1.x und 2.0). Der Server darf nur eine
@@ -228,7 +244,7 @@ PRAEFIXE_ERLAUBT = {
 def test_weishaupt_praefixe_lokale_positivliste():
     from smartheat_core.verfahren import VERFAHREN
 
-    assert {k: v.praefixe_erlaubt for k, v in VERFAHREN.items()} == PRAEFIXE_ERLAUBT, R4
+    assert {k: v.praefixe_erlaubt for k, v in VERFAHREN.items()} == je_kombination(PRAEFIXE_ERLAUBT), R4
 
 
 #: Lokale Positivliste der Schreibgruppen (A6-09, Spec Fixrunde A 3.5): der Server darf nur Gruppen senden, die als
@@ -244,13 +260,15 @@ SCHREIBGRUPPEN_ERLAUBT = {
 def test_schreibgruppen_lokale_positivliste():
     from smartheat_core.verfahren import VERFAHREN
 
-    assert {k: v.schreibgruppen_erlaubt for k, v in VERFAHREN.items()} == SCHREIBGRUPPEN_ERLAUBT, R4
+    assert {k: v.schreibgruppen_erlaubt for k, v in VERFAHREN.items()} == je_kombination(SCHREIBGRUPPEN_ERLAUBT), R4
 
 
 #: Lokale Mindestliste der Rueckstellung je Hebelsatz: diese Hebel stellt der Client beim Abmelden und Abo-Ende immer
 #: zurueck; eine Konfiguration, deren `zurueck` einen davon auslaesst, weist er ab (Gefaehrdung G-9).
+#: Vaillant (Nutzer-Entscheidung 2026-10-23, Rueckstellung "alles wie vor SmartHeat"): alle vier Hebel kehren auf ihren
+#: Ursprungswert zurueck, nicht mehr nur die Heizgrenze.
 RUECKSTELLUNG_PFLICHT = {
-    "vaillant_vrc720": ("heat_limit",),
+    "vaillant_vrc720": ("curve", "room_setpoint", "heat_limit", "min_flow"),
     "weishaupt_wwp": ("curve", "room_setpoint", "heat_limit"),
     "weishaupt_wwp_basis": ("room_setpoint",),
     "viessmann_vicare": ("curve", "level", "room_setpoint"),
@@ -260,7 +278,23 @@ RUECKSTELLUNG_PFLICHT = {
 def test_rueckstellung_pflicht_lokale_mindestliste():
     from smartheat_core.verfahren import VERFAHREN
 
-    assert {k: v.rueckstellung_pflicht for k, v in VERFAHREN.items()} == RUECKSTELLUNG_PFLICHT, R4
+    assert {k: v.rueckstellung_pflicht for k, v in VERFAHREN.items()} == je_kombination(RUECKSTELLUNG_PFLICHT), R4
+
+
+#: Hilfs-Ursprungswerte je Hebelsatz, die vor dem ersten Schreiben gemerkt und beim Zurueckstellen wiederhergestellt
+#: werden. Vaillant: die Betriebsart der Zone, die danach auf das Zeitprogramm zurueckgeht.
+AUX_URSPRUENGE = {
+    "vaillant_vrc720": ("mode_select",),
+    "weishaupt_wwp": ("mode_select", "setpoint_comfort", "setpoint_setback"),
+    "weishaupt_wwp_basis": ("mode_select", "setpoint_comfort", "setpoint_setback"),
+    "viessmann_vicare": ("mode_select",),
+}
+
+
+def test_aux_ursprungswerte_lokale_tabelle():
+    from smartheat_core.verfahren import VERFAHREN
+
+    assert {k: v.aux_originals for k, v in VERFAHREN.items()} == je_kombination(AUX_URSPRUENGE), R4
 
 
 #: Spec Fixrunde A Schreibschutz 3.1/3.2 (A6-01, A6-34): Boost-Starts je Art (Schluessel -> (jeder Versuch zaehlt,

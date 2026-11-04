@@ -16,9 +16,10 @@ def entity_ref(role: str, value: str) -> str:
 
 def build_manifest(
     rollen: Mapping[str, str], derived_entity_ids: dict[str, str] | None = None, lever_set_id: str = "vaillant_vrc720",
+    raum_refs: Mapping[int, str] | None = None,
 ) -> ChannelManifest:
     """Manifest aus den Laufzeitrollen der HA-Bindung (dokument.bindung) und den Hilfs-Entities; der Aufrufer gibt
-    room_target (SOLL_REF) mit."""
+    room_target (SOLL_REF) mit. `raum_refs` sind die Mittelwert-Sensoren je Raumnummer (DerivedSensors.raeume)."""
     derived_entity_ids = derived_entity_ids or {}
     refs = {}
     for role in ALL_ROLES:
@@ -33,4 +34,4 @@ def build_manifest(
     if missing:
         raise ManifestError(f"Pflicht-Rollen fehlen in der Konfiguration: {', '.join(missing)}")
 
-    return ChannelManifest(refs=refs)
+    return ChannelManifest(refs=refs, raum_refs=dict(raum_refs or {}))

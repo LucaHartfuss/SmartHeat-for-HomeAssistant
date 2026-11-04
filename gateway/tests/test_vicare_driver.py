@@ -15,7 +15,7 @@ from smartheat_gateway.drivers.base import DriverError
 from smartheat_gateway.drivers.vicare_cloud import capabilities as caps
 from smartheat_gateway.drivers.vicare_cloud import driver as vicare_driver
 from smartheat_gateway.drivers.vicare_cloud import oauth
-from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
+from smartheat_gateway.drivers.vicare_cloud.driver import QUOTA, ViCareCloudDriver
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
 from smartheat_runtime import delivery
@@ -618,3 +618,22 @@ def test_aux_zulaessig_accepts_only_the_known_programs(env):
         assert driver.aux_zulaessig("mode_select", program) is True
     assert driver.aux_zulaessig("mode_select", "reduced; drop") is False
     assert driver.aux_zulaessig("setpoint_comfort", "eco") is False
+
+
+def test_zwei_heizkreise_zaehlen_dieselbe_kontingentdatei(tmp_path, clock):
+    """Das Kontingent der Cloud gehoert dem Konto, nicht dem Kreis: Treiber verschiedener Heizkreise derselben Anlage
+    fuehren eine Datei; zusammen duerfen sie das Kontingent nicht ueberschreiten, auf beiden Seiten der Grenze."""
+    paths = Paths(tmp_path)
+    eins = ViCareCloudDriver({**PARAMETER, "heizkreis": 0}, paths, clock=clock)
+    zwei = ViCareCloudDriver({**PARAMETER, "heizkreis": 1}, paths, clock=clock)
+
+    for _ in range(QUOTA.hard_limit - 1):
+        eins._guard.take()
+    zwei._guard.take()  # der letzte erlaubte Zugriff, vom anderen Kreis
+
+    assert [p.name for p in paths.quota_dir.iterdir()] == ["vicare_cloud.json"]
+    assert len(json.loads((paths.quota_dir / "vicare_cloud.json").read_text())["aufrufe"]) == QUOTA.hard_limit
+    with pytest.raises(QuotaExhausted):
+        eins._guard.take()
+    with pytest.raises(QuotaExhausted):
+        zwei._guard.take()

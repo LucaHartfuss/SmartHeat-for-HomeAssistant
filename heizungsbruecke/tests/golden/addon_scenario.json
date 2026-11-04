@@ -7,25 +7,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": null,
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": null,
-      "room_setpoint": null,
-      "heat_limit": null,
-      "min_flow": null
-     },
-     "gelernt": null,
-     "abo": "unbekannt",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -34,8 +23,30 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": null,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": null,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": null,
+        "room_setpoint": null,
+        "heat_limit": null,
+        "min_flow": null
+       },
+       "gelernt": null,
+       "abo": "unbekannt",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
@@ -43,25 +54,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": null,
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": null,
-      "room_setpoint": null,
-      "heat_limit": null,
-      "min_flow": null
-     },
-     "gelernt": null,
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -70,8 +70,30 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.0,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.0,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": null,
+        "room_setpoint": null,
+        "heat_limit": null,
+        "min_flow": null
+       },
+       "gelernt": null,
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
@@ -95,25 +117,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": null,
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 0.9,
-      "room_setpoint": 21.0,
-      "heat_limit": null,
-      "min_flow": 21.0
-     },
-     "gelernt": null,
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -122,8 +133,30 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.0,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.0,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 0.9,
+        "room_setpoint": 21.0,
+        "heat_limit": null,
+        "min_flow": null
+       },
+       "gelernt": null,
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
@@ -131,25 +164,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": null,
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 0.9,
-      "room_setpoint": 21.0,
-      "heat_limit": null,
-      "min_flow": 21.0
-     },
-     "gelernt": null,
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -158,19 +180,48 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.0,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.0,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 0.9,
+        "room_setpoint": 21.0,
+        "heat_limit": null,
+        "min_flow": null
+       },
+       "gelernt": null,
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 20.0,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T08:00:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 20.0
+      }
+     ],
      "room_target": 21.0,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -180,7 +231,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000001",
      "trigger": "target_change",
      "ts": "2026-01-15T08:00:00+01:00",
@@ -188,7 +240,8 @@
      "levers": {
       "curve": 0.9,
       "room_setpoint": 21.0,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 21.0
      },
      "readonly": []
     }
@@ -198,25 +251,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": null,
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 0.9,
-      "room_setpoint": 21.0,
-      "heat_limit": null,
-      "min_flow": 21.0
-     },
-     "gelernt": null,
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -225,28 +267,56 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.0,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.0,
+       "raum_ist": 20.0,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 0.9,
+        "room_setpoint": 21.0,
+        "heat_limit": null,
+        "min_flow": null
+       },
+       "gelernt": null,
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 21.0,
     "last_published_target_rt": 21.0,
     "boost_active": false,
     "emergency_boost_active": false,
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 0.9,
      "room_setpoint": 21.0
     },
     "originals": {
-     "heat_limit": 16.0
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "aux_originals": {
+     "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": {
@@ -254,7 +324,7 @@
      "trigger": "target_change"
     }
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "portal",
     "ts": "2026-01-15T08:00:00+01:00",
     "value": 21.0
@@ -284,31 +354,23 @@
    ],
    [
     "ha",
+    "number.set_value",
+    "number.min_flow",
+    21.0
+   ],
+   [
+    "ha",
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T08:00:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 0.95,
-      "room_setpoint": 23.0,
-      "heat_limit": 16.0,
-      "min_flow": 21.0
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -317,39 +379,71 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.0,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.0,
+       "raum_ist": 20.0,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 0.95,
+        "room_setpoint": 23.0,
+        "heat_limit": 16.0,
+        "min_flow": 21.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 21.0,
     "last_published_target_rt": 21.0,
     "boost_active": false,
     "emergency_boost_active": false,
     "last_ack_at": "2026-01-15T08:00:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 0.95,
      "room_setpoint": 23.0,
-     "heat_limit": 16.0
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "originals": {
-     "heat_limit": 16.0
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "learned": {
      "curve": 1.0,
      "heat_limit": 16.0
+    },
+    "aux_originals": {
+     "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "portal",
     "ts": "2026-01-15T08:00:00+01:00",
     "value": 21.0
@@ -363,7 +457,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000002",
      "trigger": "daily",
      "ts": "2026-01-15T12:01:00+01:00",
@@ -371,7 +466,8 @@
      "levers": {
       "curve": 0.95,
       "room_setpoint": 23.0,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 21.0
      },
      "readonly": []
     }
@@ -393,28 +489,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 21.0
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -423,13 +505,38 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.0,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.0,
+       "raum_ist": 20.0,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 21.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 21.0,
     "last_published_target_rt": 21.0,
     "boost_active": false,
@@ -437,26 +544,33 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 1.0,
      "room_setpoint": 23.5,
-     "heat_limit": 16.0
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "originals": {
-     "heat_limit": 16.0
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "learned": {
      "curve": 1.0,
      "heat_limit": 16.0
+    },
+    "aux_originals": {
+     "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "portal",
     "ts": "2026-01-15T08:00:00+01:00",
     "value": 21.0
@@ -467,16 +581,11 @@
   "schritt": "soll_senken",
   "wirkungen": [
    [
-    "ha",
-    "number.set_value",
-    "number.min_flow",
-    20.5
-   ],
-   [
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000003",
      "trigger": "target_change",
      "ts": "2026-01-15T12:01:00+01:00",
@@ -484,48 +593,10 @@
      "levers": {
       "curve": 1.0,
       "room_setpoint": 23.5,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 21.0
      },
      "readonly": []
-    }
-   ],
-   [
-    "ha",
-    "event",
-    "smartheat_status",
-    {
-     "schema": 3,
-     "tenant_id": "golden",
-     "addon_version": "<version>",
-     "status": "regelt",
-     "grund": null,
-     "notbetrieb": false,
-     "datenfehler": null,
-     "boost": "keiner",
-     "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
-     "hinweise": {
-      "raumfuehler_ausgefallen": [],
-      "batterie_niedrig": [],
-      "manueller_eingriff": null
-     },
-     "geraet_id": "shg-0000000000000001",
-     "geraet_zustand": "startet",
-     "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
     }
    ],
    [
@@ -536,31 +607,23 @@
    ],
    [
     "ha",
+    "number.set_value",
+    "number.min_flow",
+    20.5
+   ],
+   [
+    "ha",
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 23.0,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -569,13 +632,38 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 20.0,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 23.0,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -583,26 +671,33 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
      "curve": 1.0,
      "room_setpoint": 23.0,
-     "heat_limit": 16.0
+     "heat_limit": 16.0,
+     "min_flow": 20.5
     },
     "originals": {
-     "heat_limit": 16.0
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "learned": {
      "curve": 1.0,
      "heat_limit": 16.0
+    },
+    "aux_originals": {
+     "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:01:00+01:00",
     "value": 20.5
@@ -612,12 +707,6 @@
  {
   "schritt": "soll_erhoehen_komfort_boost",
   "wirkungen": [
-   [
-    "ha",
-    "number.set_value",
-    "number.min_flow",
-    22.0
-   ],
    [
     "ha",
     "number.set_value",
@@ -640,7 +729,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000004",
      "trigger": "target_change",
      "ts": "2026-01-15T12:01:00+01:00",
@@ -648,7 +738,8 @@
      "levers": {
       "curve": 1.5,
       "room_setpoint": 25.0,
-      "heat_limit": 23.0
+      "heat_limit": 23.0,
+      "min_flow": 20.5
      },
      "readonly": []
     }
@@ -658,28 +749,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "komfort",
      "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 23.0,
-      "heat_limit": 16.0,
-      "min_flow": 22.0
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -688,8 +765,33 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 22.0,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 22.0,
+       "raum_ist": 20.0,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "komfort",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 23.0,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
@@ -697,28 +799,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "komfort",
      "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 24.0,
-      "heat_limit": 16.0,
-      "min_flow": 22.0
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -727,34 +815,38 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 22.0,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 22.0,
+       "raum_ist": 20.0,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "komfort",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 24.0,
+        "heat_limit": 16.0,
+        "min_flow": 22.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
-    "last_room_target": 22.0,
-    "last_published_target_rt": 22.0,
-    "boost_active": true,
-    "emergency_boost_active": false,
-    "last_daily_trigger_date": "2026-01-15",
-    "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "boost_since": "2026-01-15T12:01:00+01:00",
-    "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
-    "restore_point": {
-     "curve": 1.0,
-     "room_setpoint": 24.0,
-     "heat_limit": 16.0
-    },
-    "originals": {
-     "heat_limit": 16.0
-    },
-    "learned": {
-     "curve": 1.0,
-     "heat_limit": 16.0
-    },
+   "runtime/anlage_budget.json": {
     "write_budget": {
      "boost_start": {
       "day": "2026-01-15",
@@ -763,12 +855,42 @@
      }
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/backup.json": {
+    "last_room_target": 22.0,
+    "last_published_target_rt": 22.0,
+    "boost_active": true,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:01:00+01:00",
+    "boost_since": "2026-01-15T12:01:00+01:00",
+    "tenant_id": "golden",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 24.0,
+     "heat_limit": 16.0,
+     "min_flow": 22.0
+    },
+    "originals": {
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "aux_originals": {
+     "mode_select": "auto"
+    }
+   },
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:01:00+01:00",
     "value": 22.0
@@ -798,31 +920,23 @@
    ],
    [
     "ha",
+    "number.set_value",
+    "number.min_flow",
+    22.0
+   ],
+   [
+    "ha",
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 24.0,
-      "heat_limit": 16.0,
-      "min_flow": 22.0
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -831,33 +945,38 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 22.0,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 22.0,
+       "raum_ist": 20.0,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 24.0,
+        "heat_limit": 16.0,
+        "min_flow": 22.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
-    "last_room_target": 22.0,
-    "last_published_target_rt": 22.0,
-    "boost_active": false,
-    "emergency_boost_active": false,
-    "last_daily_trigger_date": "2026-01-15",
-    "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
-    "restore_point": {
-     "curve": 1.0,
-     "room_setpoint": 24.0,
-     "heat_limit": 16.0
-    },
-    "originals": {
-     "heat_limit": 16.0
-    },
-    "learned": {
-     "curve": 1.0,
-     "heat_limit": 16.0
-    },
+   "runtime/anlage_budget.json": {
     "write_budget": {
      "boost_start": {
       "day": "2026-01-15",
@@ -866,12 +985,41 @@
      }
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/backup.json": {
+    "last_room_target": 22.0,
+    "last_published_target_rt": 22.0,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:01:00+01:00",
+    "tenant_id": "golden",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 24.0,
+     "heat_limit": 16.0,
+     "min_flow": 22.0
+    },
+    "originals": {
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "aux_originals": {
+     "mode_select": "auto"
+    }
+   },
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:01:00+01:00",
     "value": 22.0
@@ -882,16 +1030,11 @@
   "schritt": "notbetrieb",
   "wirkungen": [
    [
-    "ha",
-    "number.set_value",
-    "number.min_flow",
-    21.5
-   ],
-   [
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000005",
      "trigger": "target_change",
      "ts": "2026-01-15T12:01:00+01:00",
@@ -899,55 +1042,18 @@
      "levers": {
       "curve": 1.0,
       "room_setpoint": 24.0,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 22.0
      },
      "readonly": []
-    }
-   ],
-   [
-    "ha",
-    "event",
-    "smartheat_status",
-    {
-     "schema": 3,
-     "tenant_id": "golden",
-     "addon_version": "<version>",
-     "status": "regelt",
-     "grund": null,
-     "notbetrieb": false,
-     "datenfehler": null,
-     "boost": "keiner",
-     "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 24.0,
-      "heat_limit": 16.0,
-      "min_flow": 21.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
-     "hinweise": {
-      "raumfuehler_ausgefallen": [],
-      "batterie_niedrig": [],
-      "manueller_eingriff": null
-     },
-     "geraet_id": "shg-0000000000000001",
-     "geraet_zustand": "startet",
-     "server_verbunden": false,
-     "raum_soll": 21.5,
-     "geraet_hinweise": []
     }
    ],
    [
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000005",
      "trigger": "target_change",
      "ts": "2026-01-15T12:01:30+01:00",
@@ -955,7 +1061,8 @@
      "levers": {
       "curve": 1.0,
       "room_setpoint": 24.0,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 22.0
      },
      "readonly": []
     }
@@ -978,28 +1085,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 24.0,
-      "heat_limit": 16.0,
-      "min_flow": 21.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -1008,13 +1101,47 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.5,
+       "raum_ist": 22.0,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 24.0,
+        "heat_limit": 16.0,
+        "min_flow": 22.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 21.5,
     "last_published_target_rt": 21.5,
     "boost_active": false,
@@ -1022,7 +1149,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "notbetrieb": "aktiv"
     },
@@ -1032,24 +1159,24 @@
     "restore_point": {
      "curve": 1.0,
      "room_setpoint": 24.0,
-     "heat_limit": 16.0
+     "heat_limit": 16.0,
+     "min_flow": 22.0
     },
     "originals": {
-     "heat_limit": 16.0
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "learned": {
      "curve": 1.0,
      "heat_limit": 16.0
     },
-    "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1,
-      "last": 1030.0
-     }
+    "aux_originals": {
+     "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": {
@@ -1057,7 +1184,7 @@
      "trigger": "target_change"
     }
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:01:00+01:00",
     "value": 21.5
@@ -1090,28 +1217,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
      "datenfehler": null,
-     "boost": "notfall",
      "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 24.0,
-      "heat_limit": 16.0,
-      "min_flow": 21.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -1120,39 +1233,38 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.5,
+       "raum_ist": 22.0,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "notfall",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 24.0,
+        "heat_limit": 16.0,
+        "min_flow": 22.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
-    "last_room_target": 21.5,
-    "last_published_target_rt": 21.5,
-    "boost_active": false,
-    "emergency_boost_active": true,
-    "last_daily_trigger_date": "2026-01-15",
-    "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
-    "notify_states": {
-     "notbetrieb": "aktiv"
-    },
-    "notify_messages": {
-     "notbetrieb": "Heizungsbrücke: Server antwortet nicht, Notbetrieb aktiv. Die Heizung wird bei Bedarf lokal abgesichert."
-    },
-    "restore_point": {
-     "curve": 1.0,
-     "room_setpoint": 24.0,
-     "heat_limit": 16.0
-    },
-    "originals": {
-     "heat_limit": 16.0
-    },
-    "learned": {
-     "curve": 1.0,
-     "heat_limit": 16.0
-    },
+   "runtime/anlage_budget.json": {
     "write_budget": {
      "boost_start": {
       "day": "2026-01-15",
@@ -1166,7 +1278,42 @@
      }
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/backup.json": {
+    "last_room_target": 21.5,
+    "last_published_target_rt": 21.5,
+    "boost_active": false,
+    "emergency_boost_active": true,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:01:00+01:00",
+    "tenant_id": "golden",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
+    "notify_states": {
+     "notbetrieb": "aktiv"
+    },
+    "notify_messages": {
+     "notbetrieb": "Heizungsbrücke: Server antwortet nicht, Notbetrieb aktiv. Die Heizung wird bei Bedarf lokal abgesichert."
+    },
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 24.0,
+     "heat_limit": 16.0,
+     "min_flow": 22.0
+    },
+    "originals": {
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "aux_originals": {
+     "mode_select": "auto"
+    }
+   },
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": {
@@ -1174,7 +1321,7 @@
      "trigger": "target_change"
     }
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:01:00+01:00",
     "value": 21.5
@@ -1189,28 +1336,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
      "datenfehler": null,
-     "boost": "notfall",
      "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 24.0,
-      "heat_limit": 16.0,
-      "min_flow": 21.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -1219,19 +1352,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.5,
+       "raum_ist": 18.0,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "notfall",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 24.0,
+        "heat_limit": 16.0,
+        "min_flow": 22.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 18.0,
      "boost_active": false,
      "failsafe_active": true,
      "ts": "2026-01-15T12:07:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 18.0
+      }
+     ],
      "room_target": 21.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -1241,7 +1406,8 @@
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000005",
      "trigger": "target_change",
      "ts": "2026-01-15T12:07:00+01:00",
@@ -1249,7 +1415,8 @@
      "levers": {
       "curve": 1.5,
       "room_setpoint": 25.0,
-      "heat_limit": 23.0
+      "heat_limit": 23.0,
+      "min_flow": 22.0
      },
      "readonly": []
     }
@@ -1274,6 +1441,12 @@
    ],
    [
     "ha",
+    "number.set_value",
+    "number.min_flow",
+    21.5
+   ],
+   [
+    "ha",
     "notify",
     "notify.mobile_app_handy",
     "Heizungsbrücke: Serververbindung wiederhergestellt, Notbetrieb beendet."
@@ -1288,28 +1461,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:07:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 21.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -1318,33 +1477,38 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.5,
+       "raum_ist": 18.0,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 21.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
-    "last_room_target": 21.5,
-    "last_published_target_rt": 21.5,
-    "boost_active": false,
-    "emergency_boost_active": false,
-    "last_daily_trigger_date": "2026-01-15",
-    "last_ack_at": "2026-01-15T12:07:00+01:00",
-    "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
-    "restore_point": {
-     "curve": 1.0,
-     "room_setpoint": 23.5,
-     "heat_limit": 16.0
-    },
-    "originals": {
-     "heat_limit": 16.0
-    },
-    "learned": {
-     "curve": 1.0,
-     "heat_limit": 16.0
-    },
+   "runtime/anlage_budget.json": {
     "write_budget": {
      "boost_start": {
       "day": "2026-01-15",
@@ -1358,12 +1522,41 @@
      }
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/backup.json": {
+    "last_room_target": 21.5,
+    "last_published_target_rt": 21.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:07:00+01:00",
+    "tenant_id": "golden",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0,
+     "min_flow": 21.5
+    },
+    "originals": {
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "aux_originals": {
+     "mode_select": "auto"
+    }
+   },
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:01:00+01:00",
     "value": 21.5
@@ -1373,12 +1566,6 @@
  {
   "schritt": "datenfehler_lokal",
   "wirkungen": [
-   [
-    "ha",
-    "number.set_value",
-    "number.min_flow",
-    21.0
-   ],
    [
     "ha",
     "notify",
@@ -1397,7 +1584,7 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "datenfehler",
@@ -1409,21 +1596,7 @@
        "room_actual"
       ]
      },
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:07:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 21.0
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -1432,15 +1605,41 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.0,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.0,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 21.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000006",
      "trigger": "target_change",
      "ts": "2026-01-15T12:07:30+01:00",
@@ -1448,7 +1647,8 @@
      "levers": {
       "curve": 1.0,
       "room_setpoint": 23.5,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 21.5
      },
      "readonly": []
     }
@@ -1461,6 +1661,12 @@
    ],
    [
     "ha",
+    "number.set_value",
+    "number.min_flow",
+    21.0
+   ],
+   [
+    "ha",
     "notify",
     "notify.mobile_app_handy",
     "Heizungsbrücke: Messwerte wieder gültig, Heizkurve wird wieder angepasst."
@@ -1475,28 +1681,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 23.0,
-      "heat_limit": 16.0,
-      "min_flow": 21.0
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -1505,33 +1697,38 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.0,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.0,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 23.0,
+        "heat_limit": 16.0,
+        "min_flow": 21.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
-    "last_room_target": 21.5,
-    "last_published_target_rt": 21.0,
-    "boost_active": false,
-    "emergency_boost_active": false,
-    "last_daily_trigger_date": "2026-01-15",
-    "last_ack_at": "2026-01-15T12:07:30+01:00",
-    "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
-    "restore_point": {
-     "curve": 1.0,
-     "room_setpoint": 23.0,
-     "heat_limit": 16.0
-    },
-    "originals": {
-     "heat_limit": 16.0
-    },
-    "learned": {
-     "curve": 1.0,
-     "heat_limit": 16.0
-    },
+   "runtime/anlage_budget.json": {
     "write_budget": {
      "boost_start": {
       "day": "2026-01-15",
@@ -1545,12 +1742,41 @@
      }
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/backup.json": {
+    "last_room_target": 21.5,
+    "last_published_target_rt": 21.0,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:07:30+01:00",
+    "tenant_id": "golden",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 23.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "originals": {
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "aux_originals": {
+     "mode_select": "auto"
+    }
+   },
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:00+01:00",
     "value": 21.0
@@ -1561,16 +1787,11 @@
   "schritt": "datenfehler_server",
   "wirkungen": [
    [
-    "ha",
-    "number.set_value",
-    "number.min_flow",
-    21.5
-   ],
-   [
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000007",
      "trigger": "target_change",
      "ts": "2026-01-15T12:07:30+01:00",
@@ -1578,48 +1799,10 @@
      "levers": {
       "curve": 1.0,
       "room_setpoint": 23.0,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 21.0
      },
      "readonly": []
-    }
-   ],
-   [
-    "ha",
-    "event",
-    "smartheat_status",
-    {
-     "schema": 3,
-     "tenant_id": "golden",
-     "addon_version": "<version>",
-     "status": "regelt",
-     "grund": null,
-     "notbetrieb": false,
-     "datenfehler": null,
-     "boost": "keiner",
-     "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 23.0,
-      "heat_limit": 16.0,
-      "min_flow": 21.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
-     "hinweise": {
-      "raumfuehler_ausgefallen": [],
-      "batterie_niedrig": [],
-      "manueller_eingriff": null
-     },
-     "geraet_id": "shg-0000000000000001",
-     "geraet_zustand": "startet",
-     "server_verbunden": false,
-     "raum_soll": 21.5,
-     "geraet_hinweise": []
     }
    ],
    [
@@ -1640,7 +1823,7 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "datenfehler",
@@ -1650,21 +1833,7 @@
       "art": "server",
       "rollen": []
      },
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 23.0,
-      "heat_limit": 16.0,
-      "min_flow": 21.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -1673,21 +1842,41 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 23.0,
+        "heat_limit": 16.0,
+        "min_flow": 21.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
-   ],
-   [
-    "ha",
-    "number.set_value",
-    "number.min_flow",
-    21.0
    ],
    [
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000008",
      "trigger": "target_change",
      "ts": "2026-01-15T12:07:30+01:00",
@@ -1695,51 +1884,10 @@
      "levers": {
       "curve": 1.0,
       "room_setpoint": 23.0,
-      "heat_limit": 16.0
-     },
-     "readonly": []
-    }
-   ],
-   [
-    "ha",
-    "event",
-    "smartheat_status",
-    {
-     "schema": 3,
-     "tenant_id": "golden",
-     "addon_version": "<version>",
-     "status": "datenfehler",
-     "grund": null,
-     "notbetrieb": false,
-     "datenfehler": {
-      "art": "server",
-      "rollen": []
-     },
-     "boost": "keiner",
-     "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 23.0,
       "heat_limit": 16.0,
       "min_flow": 21.0
      },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
-     "hinweise": {
-      "raumfuehler_ausgefallen": [],
-      "batterie_niedrig": [],
-      "manueller_eingriff": null
-     },
-     "geraet_id": "shg-0000000000000001",
-     "geraet_zustand": "startet",
-     "server_verbunden": false,
-     "raum_soll": 21.0,
-     "geraet_hinweise": []
+     "readonly": []
     }
    ],
    [
@@ -1758,28 +1906,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 23.0,
-      "heat_limit": 16.0,
-      "min_flow": 21.0
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -1788,33 +1922,38 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 21.0,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 21.0,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.0,
+        "room_setpoint": 23.0,
+        "heat_limit": 16.0,
+        "min_flow": 21.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
-    "last_room_target": 21.0,
-    "last_published_target_rt": 21.0,
-    "boost_active": false,
-    "emergency_boost_active": false,
-    "last_daily_trigger_date": "2026-01-15",
-    "last_ack_at": "2026-01-15T12:07:30+01:00",
-    "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
-    "restore_point": {
-     "curve": 1.0,
-     "room_setpoint": 23.0,
-     "heat_limit": 16.0
-    },
-    "originals": {
-     "heat_limit": 16.0
-    },
-    "learned": {
-     "curve": 1.0,
-     "heat_limit": 16.0
-    },
+   "runtime/anlage_budget.json": {
     "write_budget": {
      "boost_start": {
       "day": "2026-01-15",
@@ -1828,12 +1967,41 @@
      }
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/backup.json": {
+    "last_room_target": 21.0,
+    "last_published_target_rt": 21.0,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:07:30+01:00",
+    "tenant_id": "golden",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 23.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "originals": {
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "aux_originals": {
+     "mode_select": "auto"
+    }
+   },
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 21.0
@@ -1844,16 +2012,11 @@
   "schritt": "datenfehler_anlage",
   "wirkungen": [
    [
-    "ha",
-    "number.set_value",
-    "number.min_flow",
-    20.5
-   ],
-   [
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000009",
      "trigger": "target_change",
      "ts": "2026-01-15T12:07:30+01:00",
@@ -1861,48 +2024,10 @@
      "levers": {
       "curve": 1.0,
       "room_setpoint": 23.0,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 21.0
      },
      "readonly": []
-    }
-   ],
-   [
-    "ha",
-    "event",
-    "smartheat_status",
-    {
-     "schema": 3,
-     "tenant_id": "golden",
-     "addon_version": "<version>",
-     "status": "regelt",
-     "grund": null,
-     "notbetrieb": false,
-     "datenfehler": null,
-     "boost": "keiner",
-     "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.0,
-      "room_setpoint": 23.0,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
-     "hinweise": {
-      "raumfuehler_ausgefallen": [],
-      "batterie_niedrig": [],
-      "manueller_eingriff": null
-     },
-     "geraet_id": "shg-0000000000000001",
-     "geraet_zustand": "startet",
-     "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
     }
    ],
    [
@@ -1930,7 +2055,7 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "datenfehler",
@@ -1942,21 +2067,7 @@
        "curve"
       ]
      },
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -1965,15 +2076,41 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "up/snapshot",
     {
-     "schema": 4,
+     "schema": 5,
+     "kreis": 1,
      "seq": "00000000-0000-0000-0000-000000000009",
      "trigger": "target_change",
      "ts": "2026-01-15T12:08:00+01:00",
@@ -1981,7 +2118,8 @@
      "levers": {
       "curve": 1.0,
       "room_setpoint": 23.0,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 21.0
      },
      "readonly": []
     }
@@ -2000,6 +2138,12 @@
    ],
    [
     "ha",
+    "number.set_value",
+    "number.min_flow",
+    20.5
+   ],
+   [
+    "ha",
     "notify",
     "notify.mobile_app_handy",
     "Heizungsbrücke: Anlage wieder erreichbar, Heizkurve übertragen."
@@ -2014,28 +2158,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2044,33 +2174,38 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
-    "last_room_target": 20.5,
-    "last_published_target_rt": 20.5,
-    "boost_active": false,
-    "emergency_boost_active": false,
-    "last_daily_trigger_date": "2026-01-15",
-    "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
-    "restore_point": {
-     "curve": 1.05,
-     "room_setpoint": 23.5,
-     "heat_limit": 16.0
-    },
-    "originals": {
-     "heat_limit": 16.0
-    },
-    "learned": {
-     "curve": 1.0,
-     "heat_limit": 16.0
-    },
+   "runtime/anlage_budget.json": {
     "write_budget": {
      "boost_start": {
       "day": "2026-01-15",
@@ -2084,12 +2219,41 @@
      }
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "tenant_id": "golden",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0,
+     "min_flow": 20.5
+    },
+    "originals": {
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "aux_originals": {
+     "mode_select": "auto"
+    }
+   },
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -2104,28 +2268,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2134,19 +2284,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T12:13:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2157,28 +2339,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2187,19 +2355,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T12:18:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2210,28 +2410,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2240,19 +2426,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T12:23:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2263,28 +2481,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2293,19 +2497,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T12:28:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2316,28 +2552,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2346,19 +2568,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T12:33:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2369,28 +2623,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2399,19 +2639,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T12:38:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2422,28 +2694,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2452,19 +2710,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T12:43:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2475,28 +2765,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2505,19 +2781,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T12:48:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2528,28 +2836,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2558,19 +2852,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T12:53:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2593,28 +2919,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2622,7 +2934,8 @@
        "hebel": {
         "curve": 1.4,
         "room_setpoint": 23.5,
-        "heat_limit": 16.0
+        "heat_limit": 16.0,
+        "min_flow": 20.5
        },
        "erkannt": "2026-01-15T12:53:00+01:00"
       }
@@ -2630,8 +2943,33 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
@@ -2639,28 +2977,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2668,7 +2992,8 @@
        "hebel": {
         "curve": 1.4,
         "room_setpoint": 23.5,
-        "heat_limit": 16.0
+        "heat_limit": 16.0,
+        "min_flow": 20.5
        },
        "erkannt": "2026-01-15T12:53:00+01:00"
       }
@@ -2676,19 +3001,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T12:58:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2699,28 +3056,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2729,41 +3072,38 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
-    "last_room_target": 20.5,
-    "last_published_target_rt": 20.5,
-    "boost_active": false,
-    "emergency_boost_active": false,
-    "last_daily_trigger_date": "2026-01-15",
-    "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
-    "restore_point": {
-     "curve": 1.05,
-     "room_setpoint": 23.5,
-     "heat_limit": 16.0
-    },
-    "originals": {
-     "heat_limit": 16.0
-    },
-    "learned": {
-     "curve": 1.0,
-     "heat_limit": 16.0
-    },
-    "manual_override_pending": {
-     "levers": {
-      "curve": 1.4,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0
-     },
-     "erkannt": "2026-01-15T12:53:00+01:00"
-    },
+   "runtime/anlage_budget.json": {
     "write_budget": {
      "boost_start": {
       "day": "2026-01-15",
@@ -2774,20 +3114,60 @@
       "day": "2026-01-15",
       "count": 1,
       "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "tenant_id": "golden",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0,
+     "min_flow": 20.5
+    },
+    "originals": {
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "manual_override_pending": {
+     "levers": {
+      "curve": 1.4,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
      },
+     "erkannt": "2026-01-15T12:53:00+01:00"
+    },
+    "write_budget": {
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1,
       "last": 4150.0
      }
+    },
+    "aux_originals": {
+     "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -2802,28 +3182,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -2832,19 +3198,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T13:03:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -2861,28 +3259,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -2893,44 +3277,38 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
-    "last_room_target": 20.5,
-    "last_published_target_rt": 20.5,
-    "boost_active": false,
-    "emergency_boost_active": false,
-    "last_daily_trigger_date": "2026-01-15",
-    "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
-    "notify_states": {
-     "batterie:sensor.thermostat_battery": "niedrig"
-    },
-    "restore_point": {
-     "curve": 1.05,
-     "room_setpoint": 23.5,
-     "heat_limit": 16.0
-    },
-    "originals": {
-     "heat_limit": 16.0
-    },
-    "learned": {
-     "curve": 1.0,
-     "heat_limit": 16.0
-    },
-    "manual_override_pending": {
-     "levers": {
-      "curve": 1.4,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0
-     },
-     "erkannt": "2026-01-15T12:53:00+01:00"
-    },
+   "runtime/anlage_budget.json": {
     "write_budget": {
      "boost_start": {
       "day": "2026-01-15",
@@ -2941,20 +3319,63 @@
       "day": "2026-01-15",
       "count": 1,
       "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "tenant_id": "golden",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
+    "notify_states": {
+     "batterie:sensor.thermostat_battery": "niedrig"
+    },
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0,
+     "min_flow": 20.5
+    },
+    "originals": {
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "manual_override_pending": {
+     "levers": {
+      "curve": 1.4,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
      },
+     "erkannt": "2026-01-15T12:53:00+01:00"
+    },
+    "write_budget": {
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1,
       "last": 4150.0
      }
+    },
+    "aux_originals": {
+     "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -2969,28 +3390,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": null
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "unbekannt",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -3001,8 +3408,33 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": null,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": null,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "unbekannt",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
@@ -3010,28 +3442,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": null
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -3042,8 +3460,33 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
@@ -3055,69 +3498,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
-     "tenant_id": "golden",
-     "addon_version": "<version>",
-     "status": "startet",
-     "grund": null,
-     "notbetrieb": false,
-     "datenfehler": null,
-     "boost": "keiner",
-     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
-     "hinweise": {
-      "raumfuehler_ausgefallen": [],
-      "batterie_niedrig": [
-       "sensor.thermostat_battery"
-      ],
-      "manueller_eingriff": null
-     },
-     "geraet_id": "shg-0000000000000001",
-     "geraet_zustand": "startet",
-     "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
-    }
-   ],
-   [
-    "ha",
-    "event",
-    "smartheat_status",
-    {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -3128,19 +3516,51 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "link",
     "telemetry",
     {
+     "kreis": 1,
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
      "ts": "2026-01-15T13:03:00+01:00",
      "flow_temperature": 35.0,
+     "raeume": [
+      {
+       "raum": 1,
+       "ist": 21.5
+      }
+     ],
      "room_target": 20.5,
      "outdoor_temp": 5.0,
      "flow_setpoint": 35.0
@@ -3151,28 +3571,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "aktiv",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -3183,44 +3589,38 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "aktiv",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
-    "last_room_target": 20.5,
-    "last_published_target_rt": 20.5,
-    "boost_active": false,
-    "emergency_boost_active": false,
-    "last_daily_trigger_date": "2026-01-15",
-    "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
-    "notify_states": {
-     "batterie:sensor.thermostat_battery": "niedrig"
-    },
-    "restore_point": {
-     "curve": 1.05,
-     "room_setpoint": 23.5,
-     "heat_limit": 16.0
-    },
-    "originals": {
-     "heat_limit": 16.0
-    },
-    "learned": {
-     "curve": 1.0,
-     "heat_limit": 16.0
-    },
-    "manual_override_pending": {
-     "levers": {
-      "curve": 1.4,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0
-     },
-     "erkannt": "2026-01-15T12:53:00+01:00"
-    },
+   "runtime/anlage_budget.json": {
     "write_budget": {
      "boost_start": {
       "day": "2026-01-15",
@@ -3231,20 +3631,63 @@
       "day": "2026-01-15",
       "count": 1,
       "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "tenant_id": "golden",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
+    "notify_states": {
+     "batterie:sensor.thermostat_battery": "niedrig"
+    },
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0,
+     "min_flow": 20.5
+    },
+    "originals": {
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "manual_override_pending": {
+     "levers": {
+      "curve": 1.4,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
      },
+     "erkannt": "2026-01-15T12:53:00+01:00"
+    },
+    "write_budget": {
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1,
       "last": 4150.0
      }
+    },
+    "aux_originals": {
+     "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -3259,28 +3702,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": null
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "unbekannt",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -3291,22 +3720,47 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": null,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": null,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "unbekannt",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
     "ha",
     "notify",
     "notify.mobile_app_handy",
-    "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+    "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach stellt es die ursprünglichen Werte wieder ein und beendet die Steuerung."
    ],
    [
     "ha",
     "persistent_notification.create",
     "smartheat_abo",
     "SmartHeat",
-    "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+    "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach stellt es die ursprünglichen Werte wieder ein und beendet die Steuerung."
    ],
    [
     "trigger",
@@ -3317,28 +3771,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "abo_inaktiv",
      "grund": null,
      "notbetrieb": true,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "inaktiv",
-     "abo_frist_ende": "2026-02-14",
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -3349,13 +3789,52 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "inaktiv",
+       "abo_frist_ende": "2026-02-14"
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -3363,21 +3842,25 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
      "abo": "inaktiv"
     },
     "notify_messages": {
-     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach stellt es die ursprünglichen Werte wieder ein und beendet die Steuerung."
     },
     "restore_point": {
      "curve": 1.05,
      "room_setpoint": 23.5,
-     "heat_limit": 16.0
+     "heat_limit": 16.0,
+     "min_flow": 20.5
     },
     "originals": {
-     "heat_limit": 16.0
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "learned": {
      "curve": 1.0,
@@ -3387,34 +3870,30 @@
      "levers": {
       "curve": 1.4,
       "room_setpoint": 23.5,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 20.5
      },
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
      }
+    },
+    "aux_originals": {
+     "mode_select": "auto"
     }
    },
-   "entitlement_state.json": {
+   "runtime/kreis-1/entitlement_state.json": {
     "inactive_since": "2026-01-15T13:03:00+01:00"
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -3429,28 +3908,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "abo_inaktiv",
      "grund": null,
      "notbetrieb": true,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "inaktiv",
-     "abo_frist_ende": "2026-02-14",
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -3461,8 +3926,33 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "inaktiv",
+       "abo_frist_ende": "2026-02-14"
+      }
+     ]
     }
    ],
    [
@@ -3471,7 +3961,21 @@
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -3479,21 +3983,25 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
      "abo": "inaktiv"
     },
     "notify_messages": {
-     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach stellt es die ursprünglichen Werte wieder ein und beendet die Steuerung."
     },
     "restore_point": {
      "curve": 1.05,
      "room_setpoint": 23.5,
-     "heat_limit": 16.0
+     "heat_limit": 16.0,
+     "min_flow": 20.5
     },
     "originals": {
-     "heat_limit": 16.0
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "learned": {
      "curve": 1.0,
@@ -3503,31 +4011,27 @@
      "levers": {
       "curve": 1.4,
       "room_setpoint": 23.5,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 20.5
      },
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
      }
+    },
+    "aux_originals": {
+     "mode_select": "auto"
     }
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -3542,28 +4046,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
      "notbetrieb": true,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": null
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "unbekannt",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -3574,8 +4064,33 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": null,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": null,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "unbekannt",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
@@ -3587,28 +4102,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "abo_inaktiv",
      "grund": null,
      "notbetrieb": true,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "inaktiv",
-     "abo_frist_ende": "2026-03-17",
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -3619,13 +4120,52 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "inaktiv",
+       "abo_frist_ende": "2026-03-17"
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -3633,22 +4173,26 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
      "abo": "inaktiv",
      "notbetrieb": "aktiv"
     },
     "notify_messages": {
-     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach stellt es die ursprünglichen Werte wieder ein und beendet die Steuerung."
     },
     "restore_point": {
      "curve": 1.05,
      "room_setpoint": 23.5,
-     "heat_limit": 16.0
+     "heat_limit": 16.0,
+     "min_flow": 20.5
     },
     "originals": {
-     "heat_limit": 16.0
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "learned": {
      "curve": 1.0,
@@ -3658,34 +4202,30 @@
      "levers": {
       "curve": 1.4,
       "room_setpoint": 23.5,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 20.5
      },
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
      }
+    },
+    "aux_originals": {
+     "mode_select": "auto"
     }
    },
-   "entitlement_state.json": {
+   "runtime/kreis-1/entitlement_state.json": {
     "inactive_since": "2026-02-15T13:08:00+01:00"
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -3700,28 +4240,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "abo_inaktiv",
      "grund": null,
      "notbetrieb": true,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "inaktiv",
-     "abo_frist_ende": "2026-03-17",
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -3732,21 +4258,46 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 1.05,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0,
+        "min_flow": 20.5
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "inaktiv",
+       "abo_frist_ende": "2026-03-17"
+      }
+     ]
     }
    ],
    [
     "ha",
     "number.set_value",
     "number.curve_current",
-    1.05
+    0.9
    ],
    [
     "ha",
     "climate.set_temperature",
     "climate.zone::temperature",
-    23.5
+    22.0
    ],
    [
     "ha",
@@ -3756,16 +4307,28 @@
    ],
    [
     "ha",
+    "number.set_value",
+    "number.min_flow",
+    21.0
+   ],
+   [
+    "ha",
+    "climate.set_hvac_mode",
+    "climate.zone",
+    "auto"
+   ],
+   [
+    "ha",
     "notify",
     "notify.mobile_app_handy",
-    "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die zuletzt gelernten Werte bleiben eingestellt."
+    "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die ursprünglichen Werte sind wieder eingestellt."
    ],
    [
     "ha",
     "persistent_notification.create",
     "smartheat_abo",
     "SmartHeat",
-    "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die zuletzt gelernten Werte bleiben eingestellt."
+    "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die ursprünglichen Werte sind wieder eingestellt."
    ],
    [
     "trigger",
@@ -3776,28 +4339,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "abo_beendet",
      "grund": null,
      "notbetrieb": true,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": 20.5
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "beendet",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -3808,13 +4357,52 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": 20.5,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": 20.5,
+       "raum_ist": 21.5,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 0.9,
+        "room_setpoint": 22.0,
+        "heat_limit": 16.0,
+        "min_flow": 21.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "beendet",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -3822,22 +4410,26 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
      "abo": "beendet",
      "notbetrieb": "aktiv"
     },
     "notify_messages": {
-     "abo": "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die zuletzt gelernten Werte bleiben eingestellt."
+     "abo": "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die ursprünglichen Werte sind wieder eingestellt."
     },
     "restore_point": {
-     "curve": 1.05,
-     "room_setpoint": 23.5,
-     "heat_limit": 16.0
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "originals": {
-     "heat_limit": 16.0
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "learned": {
      "curve": 1.0,
@@ -3847,34 +4439,27 @@
      "levers": {
       "curve": 1.4,
       "room_setpoint": 23.5,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 20.5
      },
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
      }
     }
    },
-   "entitlement_state.json": {
+   "runtime/kreis-1/entitlement_state.json": {
     "inactive_since": "2026-02-15T13:08:00+01:00"
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5
@@ -3889,28 +4474,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
      "notbetrieb": true,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": null
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "unbekannt",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [
@@ -3921,8 +4492,33 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": null,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": null,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 0.9,
+        "room_setpoint": 22.0,
+        "heat_limit": 16.0,
+        "min_flow": 21.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "unbekannt",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ],
    [
@@ -3945,28 +4541,14 @@
     "event",
     "smartheat_status",
     {
-     "schema": 3,
+     "schema": 4,
      "tenant_id": "golden",
      "addon_version": "<version>",
      "status": "abgemeldet",
      "grund": null,
      "notbetrieb": true,
      "datenfehler": null,
-     "boost": "keiner",
      "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
-     "hebelsatz": "vaillant_vrc720",
-     "hebel": {
-      "curve": 1.05,
-      "room_setpoint": 23.5,
-      "heat_limit": 16.0,
-      "min_flow": null
-     },
-     "gelernt": {
-      "curve": 1.0,
-      "heat_limit": 16.0
-     },
-     "abo": "unbekannt",
-     "abo_frist_ende": null,
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
@@ -3975,13 +4557,55 @@
      "geraet_id": "shg-0000000000000001",
      "geraet_zustand": "startet",
      "server_verbunden": false,
-     "raum_soll": null,
-     "geraet_hinweise": []
+     "geraet_hinweise": [],
+     "anlage_name": "Testanlage",
+     "kreise": [
+      {
+       "kreis": 1,
+       "name": "Kreis 1",
+       "raum_soll": null,
+       "raum_ist": null,
+       "einlernphase_tag": null,
+       "testphase_bis": null,
+       "befunde": [],
+       "boost": "keiner",
+       "hebelsatz": "vaillant_vrc720",
+       "hebel": {
+        "curve": 0.9,
+        "room_setpoint": 22.0,
+        "heat_limit": 16.0,
+        "min_flow": 21.0
+       },
+       "gelernt": {
+        "curve": 1.0,
+        "heat_limit": 16.0
+       },
+       "abo": "unbekannt",
+       "abo_frist_ende": null
+      }
+     ]
     }
    ]
   ],
   "dateien": {
-   "backup.json": {
+   "runtime/abgemeldet.json": {
+    "anlage": "golden"
+   },
+   "runtime/anlage_budget.json": {
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
+    }
+   },
+   "runtime/kreis-1/backup.json": {
     "last_room_target": 20.5,
     "last_published_target_rt": 20.5,
     "boost_active": false,
@@ -3989,14 +4613,18 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
     "tenant_id": "golden",
-    "plant_id": "{\"anlage\": \"S\", \"nummer\": \"0\", \"plattform\": \"mypyllant\"}",
+    "plant_id": "{\"anlage\":\"S\",\"hersteller\":\"vaillant\",\"nummer\":0}",
     "restore_point": {
-     "curve": 1.05,
-     "room_setpoint": 23.5,
-     "heat_limit": 16.0
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "originals": {
-     "heat_limit": 16.0
+     "curve": 0.9,
+     "room_setpoint": 22.0,
+     "heat_limit": 16.0,
+     "min_flow": 21.0
     },
     "learned": {
      "curve": 1.0,
@@ -4006,37 +4634,27 @@
      "levers": {
       "curve": 1.4,
       "room_setpoint": 23.5,
-      "heat_limit": 16.0
+      "heat_limit": 16.0,
+      "min_flow": 20.5
      },
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
-     "boost_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
-     "emergency_start": {
-      "day": "2026-01-15",
-      "count": 1
-     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
      }
     }
    },
-   "entitlement_state.json": {
+   "runtime/kreis-1/entitlement_state.json": {
     "inactive_since": "2026-02-15T13:08:00+01:00"
    },
-   "failsafe_state.json": {
+   "runtime/kreis-1/failsafe_state.json": {
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
    },
-   "runtime/abgemeldet.json": {
-    "anlage": "golden"
-   },
-   "runtime/room_target.json": {
+   "runtime/kreis-1/room_target.json": {
     "source": "thermostat",
     "ts": "2026-01-15T12:07:30+01:00",
     "value": 20.5

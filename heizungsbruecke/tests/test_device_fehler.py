@@ -7,8 +7,8 @@ from smartheat_device import fehler, wire
 
 
 def test_details_in_der_form_des_vertrags():
-    assert fehler.details("raumfuehler", "anzahl", min=1, max=8, anzahl=9) == {
-        "feld": "raumfuehler", "regel": "anzahl", "min": 1, "max": 8, "anzahl": 9}
+    assert fehler.details("fuehler", "anzahl", min=1, max=8, anzahl=9) == {
+        "feld": "fuehler", "regel": "anzahl", "min": 1, "max": 8, "anzahl": 9}
     assert fehler.details() == {} and fehler.gueltig(None)
 
 
@@ -36,13 +36,13 @@ def test_ueberlange_ganzzahl_ist_ungueltig_und_wirft_nicht_beim_pruefen():
     for key in ("min", "max", "wert", "anzahl"):
         assert fehler.gueltig({key: 10**400}) is False
         with pytest.raises(ValueError):
-            fehler.details("raumfuehler", "anzahl", **{key: 10**400})
+            fehler.details("fuehler", "anzahl", **{key: 10**400})
     assert fehler.gueltig({"anzahl": 10**15}) is True
 
 
 def test_alle_sechs_felder_zugleich_sind_gueltig():
-    voll = {"feld": "raumfuehler", "regel": "anzahl", "min": 1, "max": 8, "wert": -0.5, "anzahl": 9}
+    voll = {"feld": "fuehler", "regel": "anzahl", "min": 1, "max": 8, "wert": -0.5, "anzahl": 9}
     assert set(voll) == set(wire.DETAIL_FIELDS)
     assert fehler.gueltig(voll)
-    assert fehler.details("raumfuehler", "anzahl", min=1, max=8, wert=-0.5, anzahl=9) == voll
+    assert fehler.details("fuehler", "anzahl", min=1, max=8, wert=-0.5, anzahl=9) == voll
     assert fehler.body("ungueltig", voll) == {"grund": "ungueltig", "details": voll}

@@ -13,10 +13,12 @@ from pathlib import Path
 
 import pytest
 from bindung_beispiele import BINDINGS, parameter
+from bindung_beispiele import WEG as WEG_DES_HEBELSATZES
 from fakes import FakeClock
 from geraet_helpers import gateway_konfiguration, ha_konfiguration
 from hypothesis import example, given
 from hypothesis import strategies as st
+from rastung_beispiele import rastung_aus
 from runtime_helpers import (
     NICHT_NUMERISCH,
     SAETZE,
@@ -32,9 +34,7 @@ from test_regel4_werte import FBH, HK, TABELLE, TabellenAnlage
 
 from smartheat_core import config_check as cc
 from smartheat_core.bindungsparameter import beschreibung
-from smartheat_core.clamping import round_to_step
 from smartheat_core.pipeline import LeverPipeline
-from smartheat_core.rastung import Rastung
 from smartheat_core.safety import LOCAL_SAFETY, check_invariants, resolve_local_safety
 from smartheat_device import fehler
 from smartheat_runtime.state import StateStore
@@ -56,9 +56,8 @@ def _bekannt(hebelsatz, verteilsystem) -> bool:
 
 
 def _hebel(key) -> tuple[str, ...]:
-    """Gesendete und client-abgeleitete Hebel (Mindestvorlauf) des Hebelsatzes."""
-    lever_set = BINDINGS[key[0]].lever_set
-    return (*lever_set.levers, *lever_set.client_derived)
+    """Gesendete Hebel (auch der Mindestvorlauf) des Hebelsatzes."""
+    return BINDINGS[key[0]].lever_set.levers
 
 
 # --- resolve_local_safety -> check_invariants (F-client-kern-01) ---
@@ -101,7 +100,7 @@ def test_resolve_local_safety_liefert_einen_satz_in_den_invarianten_oder_einen_f
 # --- Pipeline mit einer Tabellen-Anlage (F-client-kern-02, F-client-kern-07) ---
 
 class GrenzAnlage(TabellenAnlage):
-    """TabellenAnlage (PlantBinding nur an der V2-Grenze) mit den client-abgeleiteten Hebeln (Mindestvorlauf), einer
+    """TabellenAnlage (PlantBinding nur an der V2-Grenze) mit einer
     waehlbaren Beschreibung (Schrittweiten des Servers) und einem rohen Wertebereich der Anlage je Hebel (auch NaN,
     Unendlich, Minimum ueber Maximum; None = keiner)."""
 
@@ -109,8 +108,6 @@ class GrenzAnlage(TabellenAnlage):
         super().__init__(hebelsatz, ranges)
         if description is not None:
             self.description = description
-        for lever in self.description.lever_set.client_derived:
-            self.values[lever] = round_to_step((ranges[lever][0] + ranges[lever][1]) / 2, self.description.steps[lever])
         self.device = device or {}
 
     def limits(self, lever):
@@ -128,12 +125,8 @@ def _pipeline(verzeichnis: Path, key, **anlage):
 
 
 def _schreiben(pipeline, werte: dict) -> None:
-    """Gesendete Hebel als Serverwerte (apply_server_values), den Mindestvorlauf ueber write_lever (derived.py)."""
-    gesendet = pipeline.binding.description.lever_set.levers
-    pipeline.apply_server_values({lever: wert for lever, wert in werte.items() if lever in gesendet})
-    for lever, wert in werte.items():
-        if lever not in gesendet:
-            pipeline.write_lever(lever, wert)
+    """Alle Hebel als Serverwerte (apply_server_values)."""
+    pipeline.apply_server_values(werte)
 
 
 def _alle_in_den_lokalen_grenzen(key, writes) -> None:
@@ -181,8 +174,8 @@ WERT = (st.floats(allow_nan=True, allow_infinity=True) | st.floats(-60, 60) | st
 
 def _mit_schritten(hebelsatz: str, schritte: dict):
     """Beschreibung aus den Bindungsparametern des Servers mit diesen Schrittweiten (Toleranz ein halber Schritt)."""
-    return beschreibung(hebelsatz, parameter(hebelsatz, schritte=schritte,
-                                             toleranzen={lever: s / 2 for lever, s in schritte.items()}))
+    return beschreibung(WEG_DES_HEBELSATZES[hebelsatz], hebelsatz,
+                        parameter(hebelsatz, schritte=schritte, toleranzen={lever: s / 2 for lever, s in schritte.items()}))
 
 
 def _satz_mit(werte_strategie):
@@ -311,7 +304,7 @@ def test_serverantwort_mit_beliebigen_schrittweiten_und_anlagenbereichen_schreib
     Grenze, im Regel-Worker steht kein Fehler."""
     optionen, zustand, entities = SAETZE[hebelsatz]
     bereiche = TABELLE[(hebelsatz, HK)][0]
-    erwartet = tuple(sorted(set(entities.values()) - {"min_flow"}))
+    erwartet = tuple(sorted(set(entities.values())))
     alle = _hebel((hebelsatz, HK))
     zaehler = {"angenommen": 0, "geschrieben": 0}
 
@@ -336,7 +329,7 @@ def test_serverantwort_mit_beliebigen_schrittweiten_und_anlagenbereichen_schreib
                 _ha_verbunden(env, bridge)
                 snapshot = _mqtt(env).snapshots[-1]
                 vorher = len(env.ha.writes)
-                antwort = {"seq": snapshot["seq"], "schema": 4, "ts": "x", "status": "ok", "reason": None,
+                antwort = {"seq": snapshot["seq"], "schema": 5, "kreis": 1, "ts": "x", "status": "ok", "reason": None,
                            "levers": levers, "learned": None}
                 env.geraet.channel.setpoints(json.loads(json.dumps(antwort)))
                 bridge.worker.run_pending()
@@ -363,7 +356,7 @@ def test_serverantwort_mit_beliebigen_schrittweiten_und_anlagenbereichen_schreib
 # --- config_check.pruefen (F-client-kern-04) ---
 
 VORLAGEN = {cc.HOST_GATEWAY: gateway_konfiguration(), cc.HOST_HA: ha_konfiguration()}
-RASTUNGEN = {cc.HOST_GATEWAY: Rastung("viessmann_vicare", HK), cc.HOST_HA: Rastung("vaillant_vrc720", HK)}
+RASTUNGEN = {host: rastung_aus(vorlage) for host, vorlage in VORLAGEN.items()}
 
 
 @pytest.mark.parametrize("host", sorted(VORLAGEN))

@@ -63,7 +63,7 @@ class Handgriffe:
 
     def konfiguration_senden(self, version: int, inhalt: dict) -> None:
         """Der Server sendet eine Konfiguration (down/config); verarbeitet wird sie im naechsten Geraetetakt."""
-        self.link.empfangen("down/config", {"schema": 1, "version": version, **inhalt})
+        self.link.empfangen("down/config", {"schema": 2, "version": version, **inhalt})
 
     def ergebnis(self, version: int) -> dict:
         """Das Ergebnis (up/result) des Geraets zur Konfiguration `version`: ok und, wenn abgelehnt, der Grund."""

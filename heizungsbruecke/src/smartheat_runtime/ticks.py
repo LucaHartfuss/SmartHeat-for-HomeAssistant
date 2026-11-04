@@ -123,9 +123,9 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     # Kurz nach einem eigenen Schreiben (erster Start: _prime schreibt die Startverschiebung, der
     # erzwungene Tick folgt Sekunden spaeter; eine Soll-Aenderung kurz vor dem Tagestick) zeigt HA bei
     # mypyllant noch die alten Werte; der Server protokolliert beim Erstkontakt die gemeldeten Werte und
-    # vergleicht sie an jedem Tagestick mit seinen zuletzt gesendeten ("Anlage folgt nicht"). Wie
-    # derived.sync: bis LeverPipeline.settled gilt fuer jeden geschriebenen Hebel der eigene letzte Schreibwert
-    # (auch Steigung und Heizgrenze, nicht nur die Parallelverschiebung). Der vorbereitete Hebel
+    # vergleicht sie an jedem Tagestick mit seinen zuletzt gesendeten ("Anlage folgt nicht"). Bis
+    # LeverPipeline.settled gilt fuer jeden geschriebenen Hebel der eigene letzte Schreibwert
+    # (auch Steigung, Heizgrenze und Mindestvorlauf, nicht nur die Parallelverschiebung). Der vorbereitete Hebel
     # (Vaillant: Wunschtemperatur der Zone) faellt sonst bei ruhender Zone auf den Wiederherstellungspunkt zurueck.
     pipeline = rt.override
     binding = pipeline.binding
@@ -165,7 +165,7 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     try:
         publish_snapshot(
             rt.mqtt_client, seq=seq, trigger=trigger, room_target=read.room_target, levers=read.levers,
-            manual_override=pending_override, readonly=read.readonly,
+            manual_override=pending_override, readonly=read.readonly, kreis=rt.config.kreis,
         )
         rt.manual_override_sent = pending_override
         rt.manual_override_seq = seq
@@ -271,7 +271,7 @@ def _valid_levers(levers, expected: tuple[str, ...]) -> TypeGuard[dict[str, floa
 
 
 def handle_setpoints(rt: Runtime, payload: dict) -> None:
-    """Server-Antwort (nur Schema 4), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
+    """Server-Antwort (nur Schema 5), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
     Werte gehen vor dem Ack auf die Anlage. Ein unbekanntes Schema, ein unbekannter Status oder
     ungueltige Werte zaehlen als Datenfehler vom Server. Kann die Anlage die Werte nicht
     uebernehmen, ist das eine Antwort mit eigenem Datenfehler (`WriteFailed`), kein Serverausfall."""
@@ -288,10 +288,18 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
 
     schema = payload.get("schema")
     if type(schema) is not int or schema != SNAPSHOT_SCHEMA_VERSION:
-        # Nur Schema 4 wird verstanden; alles andere zaehlt wie eine ungueltige Antwort (Datenfehler
+        # Nur Schema 5 wird verstanden; alles andere zaehlt wie eine ungueltige Antwort (Datenfehler
         # vom Server, sofort sichtbar) statt still verworfen zu werden und erst ueber den
         # Ack-Timeout im Notbetrieb zu enden.
         reason = _kuerzen(f"ungültige Serverantwort (unbekanntes Schema {schema!r})")
+        logger.warning("Setpoints-Antwort (seq=%s): %s - nichts geschrieben", seq, reason)
+        deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
+        return
+
+    kreis = payload.get("kreis")
+    if type(kreis) is not int or kreis != rt.config.kreis:
+        # Die Antwort gilt einem anderen Kreis (oder nennt keinen): ihre Werte gehoeren nicht auf diese Anlage.
+        reason = "ungültige Serverantwort (Kreis passt nicht zu diesem Kreis)"
         logger.warning("Setpoints-Antwort (seq=%s): %s - nichts geschrieben", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
         return

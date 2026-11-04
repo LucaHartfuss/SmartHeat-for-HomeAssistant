@@ -200,6 +200,16 @@ def _ohne_bootstrap(ident):
     raise AssertionError("Bootstrap-Aufruf in der Akzeptanzwelt (der Zugang ist gespeichert)")
 
 
+class _Konfiguration(dict):
+    """Das Konfigurationsdokument; `["bindung"]` gibt die Bindung des einen Kreises der Anlage heraus, damit die
+    Szenarien sie wie bisher im Dokument aendern (die Aenderung wirkt im Dokument selbst)."""
+
+    def __missing__(self, schluessel):
+        if schluessel == "bindung":
+            return self["kreise"][0]["bindung"]
+        raise KeyError(schluessel)
+
+
 class Anlage(Handgriffe):
     """Eine Anlage (Hebelsatz x Verteilsystem) mit laufendem Add-on. `starten()` bringt sie in den Regelbetrieb,
     `server_antwortet(hebel)` ist die Antwort des Servers auf den letzten Snapshot, `runde(sekunden)` ein Durchlauf von
@@ -208,7 +218,7 @@ class Anlage(Handgriffe):
     def __init__(self, tmp_path, mp, satz: str, verteilsystem: str) -> None:
         self.uhr, self.ca, self.links, self.supervisor = Uhr(), GeraeteCa(), [], FakeSupervisor()
         self.ha = FakeHa(self.uhr, zustand(satz, verteilsystem), schreibziele(satz))
-        self.konfiguration = konfiguration(satz, verteilsystem)
+        self.konfiguration = _Konfiguration(konfiguration(satz, verteilsystem))
         self.daten = tmp_path / "data"
         self.trigger: list[FakeTrigger] = []
         self._umgebung(tmp_path, mp)
@@ -217,19 +227,17 @@ class Anlage(Handgriffe):
     def _umgebung(self, tmp_path, mp) -> None:
         """Dateien in tmp_path, Uhren der Welt, Ersatz fuer Netz (Link, WebSocket, Bootstrap) und Hilfssensoren."""
         pfade = {"DEVICE_DATA_DIR": self.daten, "RASTUNG_PATH": self.daten / "device" / "sicherheitssatz.json",
-                 "OPTIONS_PATH": tmp_path / "options.json", "BACKUP_PATH": tmp_path / "backup.json",
-                 "FAILSAFE_PATH": tmp_path / "failsafe_state.json",
-                 "ENTITLEMENT_PATH": tmp_path / "entitlement_state.json",
+                 "OPTIONS_PATH": tmp_path / "options.json", "ALTER_BACKUP_PATH": tmp_path / "backup.json",
                  "DERIVED_SENSORS_PATH": tmp_path / "derived_sensors.json",
                  "AUFRAEUMEN_PATH": tmp_path / "aufraeumen.json", "RUNTIME_DIR": tmp_path / "runtime",
-                 "ROOM_TARGET_PATH": tmp_path / "runtime" / "room_target.json",
                  "ABGEMELDET_PATH": tmp_path / "runtime" / "abgemeldet.json"}
         for name, pfad in pfade.items():
             mp.setattr(config, name, pfad)
         mp.setattr(main_module.status_holder, "host", None)
         mp.setattr("smartheat_core.wallclock._now", self.uhr.wand)
         mp.setattr("heizungsbruecke.derived_sensors.ensure_all",
-                   lambda **kwargs: DerivedSensors({"room_actual": RAUMFUEHLER}, (), "fp"))
+                   lambda **kwargs: DerivedSensors({"room_actual": RAUMFUEHLER}, (), "fp",
+                                                   raeume={n: RAUMFUEHLER for n, _ in kwargs["raeume"]}))
         mp.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient",
                    type("FakeTrigger", (FakeTrigger,), {"erzeugt": self.trigger}))
 
@@ -269,10 +277,10 @@ class Anlage(Handgriffe):
         self._zugang()
         self._prozess()
         self._verbinden()
-        self.link.empfangen("down/config", {"schema": 1, "version": 1, **self.konfiguration})
+        self.link.empfangen("down/config", {"schema": 2, "version": 1, **self.konfiguration})
         self.link.empfangen("down/operation", {
-            "schema": 1, "version": 1, "modus": "manuell", "raum_soll": 21.0, "quelle": "portal",
-            "ts": "2027-01-15T07:00:00+00:00"})
+            "schema": 2, "version": 1, "kreise": [{"kreis": 1, "modus": "manuell", "raum_soll": 21.0}],
+            "quelle": "portal", "ts": "2027-01-15T07:00:00+00:00"})
         self.device.schritt()
         assert self.device.documents.eingerichtet()
         geraet, status = self._prozess()
@@ -286,9 +294,13 @@ class Anlage(Handgriffe):
 
     def server_antwortet(self, hebel: dict) -> None:
         """Antwort des Servers (setpoints) auf den letzten Snapshot; verarbeitet wird sie in der naechsten Runde."""
+        levers = dict(hebel)
+        if "number.min_flow" in self.ha.states:  # Vaillant: auch der Mindestvorlauf kommt vom Server (Startwert 21,0)
+            levers.setdefault("min_flow", 21.0)
         self.link.empfangen("down/setpoints", {
-            "schema": 4, "seq": self.link.of("up/snapshot")[-1]["seq"], "ts": "x", "status": "ok", "reason": None,
-            "levers": hebel, "learned": None})
+            "schema": 5, "kreis": 1, "seq": self.link.of("up/snapshot")[-1]["seq"], "ts": "x", "status": "ok",
+            "reason": None,
+            "levers": levers, "learned": None})
 
     def runde(self, sekunden: float = 0) -> None:
         self.device.schritt()

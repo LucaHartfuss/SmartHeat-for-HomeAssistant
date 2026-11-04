@@ -16,7 +16,7 @@ ENERGY_DAILY = "daily"
 
 @dataclass(frozen=True)
 class BindingDescription:
-    """steps: Schrittweite der Anlage je Hebel (inkl. client-abgeleiteter); enforce_tolerance: Abweichung, ab der
+    """steps: Schrittweite der Anlage je Hebel (bei Vaillant auch Mindestvorlauf);enforce_tolerance: Abweichung, ab der
     Durchsetzen schreibt; settle_seconds: so lange nach einem eigenen Schreiben kann die Anlage noch den alten Wert
     zeigen (Hersteller-Cloud); restore_originals: Hebel, die beim Ende der Regelung auf ihren Ursprungswert
     zurueckgehen; optional_restore: Hebel, die im Wiederherstellungspunkt fehlen duerfen -- ohne Wert bleiben
@@ -63,7 +63,7 @@ class BindingDescription:
 
     def __post_init__(self) -> None:
         name = self.lever_set.id
-        all_levers = set(self.lever_set.levers + self.lever_set.client_derived)
+        all_levers = set(self.lever_set.levers)
         for lever in sorted(all_levers):
             if lever not in self.steps:
                 raise ValueError(f"Binding {name}: keine Schrittweite fuer {lever}")

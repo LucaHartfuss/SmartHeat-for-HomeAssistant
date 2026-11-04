@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 from smartheat_core.levers import (
@@ -13,7 +15,7 @@ from smartheat_core.levers import (
 
 def test_vocabulary_and_vaillant_lever_set():
     assert LEVERS == ("curve", "room_setpoint", "level", "heat_limit", "min_flow")
-    assert LeverSet("vaillant_vrc720", ("curve", "room_setpoint", "heat_limit"), ("min_flow",)) == VAILLANT_VRC720
+    assert LeverSet("vaillant_vrc720", ("curve", "room_setpoint", "heat_limit", "min_flow")) == VAILLANT_VRC720
     assert LEVER_SETS["vaillant_vrc720"] is VAILLANT_VRC720
 
 
@@ -26,11 +28,15 @@ def test_new_lever_sets_mirror_the_server():
     assert list(LEVER_SETS) == ["vaillant_vrc720", "weishaupt_wwp", "weishaupt_wwp_basis", "viessmann_vicare"]
 
 
-@pytest.mark.parametrize(("levers", "derived", "match"), [
-    ((), (), "keine Hebel"),
-    (("curve", "slope"), (), "unbekannte Hebel: slope"),
-    (("curve",), ("curve",), "sowohl gesendet als auch abgeleitet: curve"),
+@pytest.mark.parametrize(("levers", "match"), [
+    ((), "keine Hebel"),
+    (("curve", "slope"), "unbekannte Hebel: slope"),
 ])
-def test_invalid_lever_sets(levers, derived, match):
+def test_invalid_lever_sets(levers, match):
     with pytest.raises(ValueError, match=match):
-        LeverSet("x", levers, derived)
+        LeverSet("x", levers)
+
+
+def test_every_lever_of_a_set_comes_from_the_server():
+    """Kein Hebel wird am Geraet abgeleitet: ein Hebelsatz kennt nur gesendete Hebel (auch den Mindestvorlauf)."""
+    assert [field.name for field in dataclasses.fields(LeverSet)] == ["id", "levers"]

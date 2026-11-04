@@ -309,12 +309,14 @@ UNGEPRUEFT = {"konfiguration": ("mindest_software", "ursprungswerte"),
 def test_nicht_endliche_zahl_an_jeder_stelle_wird_abgelehnt_oder_nie_gespeichert(tmp_path, dokument):
     """Erschoepfend: jede Stelle x jede nicht endliche Zahl x jede Form. Angenommen nur, wenn die Zahl nicht im
     gespeicherten Dokument landet (Feld ohne Wirkung). Ausgenommen: die Versionen (Zaehler: eine riesige Ganzzahl ist dort
-    eine gueltige Ganzzahl, _is_version liest sie nur als Zaehler), die Treiberparameter (`bindung.treiber.parameter`: sie
+    eine gueltige Ganzzahl, _is_version liest sie nur als Zaehler), die Treiberparameter (`kreise[0].bindung.treiber.parameter`: sie
     prueft der Treiber ueber den Rueckruf des Hosts, den dieser Store hier nicht hat; Gateway-Host-Tests) und UNGEPRUEFT."""
     name, art, gut, _optional = dokument
     zaehler = 0
     for pfad in pfade(gut):
-        if not pfad or pfad[0] in ("version", "schema", *UNGEPRUEFT[name]) or pfad[:3] == ("bindung", "treiber", "parameter"):
+        if (not pfad or pfad[0] in ("version", "schema", *UNGEPRUEFT[name])
+                or pfad[:3] == ("kreise", 0, "ursprungswerte")
+                or pfad[:5] == ("kreise", 0, "bindung", "treiber", "parameter")):
             continue
         for zahl in _NICHT_ENDLICH:
             if isinstance(zahl, int) and pfad[:2] == ("bindungsparameter", "schreibschutz"):
@@ -490,11 +492,12 @@ def _hebel(erwartet):
 
 def _antwort(erwartet):
     return st.builds(
-        lambda extra, schema, status, reason, levers, learned: {
-            **extra, "schema": schema, "ts": "x", "status": status, "reason": reason, "levers": levers,
+        lambda extra, schema, kreis, status, reason, levers, learned: {
+            **extra, "schema": schema, "kreis": kreis, "ts": "x", "status": status, "reason": reason, "levers": levers,
             "learned": learned},
         st.dictionaries(st.text(max_size=8), JSON_WERT, max_size=3),
-        st.sampled_from([4, 4, 4, 4]) | JSON_WERT,
+        st.sampled_from([5, 5, 5, 5]) | JSON_WERT,
+        st.sampled_from([1, 1, 1, 1]) | JSON_WERT,
         st.sampled_from(["ok", "ok", "ok", "skipped", "rejected", "maybe"]) | JSON_WERT,
         st.none() | st.text(max_size=20) | SURROGATTEXT | JSON_WERT,
         _hebel(erwartet),
@@ -505,7 +508,7 @@ def _antwort(erwartet):
 @pytest.mark.parametrize("hebelsatz", sorted(SAETZE))
 def test_beliebige_serverantwort_schreibt_nichts_ausserhalb_der_lokalen_grenzen_und_laesst_den_worker_laufen(hebelsatz):
     optionen, zustand, entities = SAETZE[hebelsatz]
-    erwartet = tuple(sorted(set(entities.values()) - {"min_flow"}))
+    erwartet = tuple(sorted(set(entities.values())))
     bereiche = LOCAL_SAFETY[(hebelsatz, OPTIONS["verteilsystem"])].ranges
     zaehler = {"geschrieben": 0, "angenommen": 0}
 
@@ -530,7 +533,8 @@ def test_beliebige_serverantwort_schreibt_nichts_ausserhalb_der_lokalen_grenzen_
             assert log.eintraege == []  # kein Fehler im Worker
             neu = env.ha.writes[len(vorher):]
             levers = antwort["levers"]
-            gueltig = (antwort["schema"] == 4 and type(antwort["schema"]) is int and antwort["status"] in ("ok", "skipped")
+            gueltig = (antwort["schema"] == 5 and type(antwort["schema"]) is int and antwort["kreis"] == 1
+                       and type(antwort["kreis"]) is int and antwort["status"] in ("ok", "skipped")
                        and isinstance(levers, dict) and sorted(levers) == list(erwartete_hebel)
                        and all(_endlich(wert) for wert in levers.values()))
             if not gueltig:

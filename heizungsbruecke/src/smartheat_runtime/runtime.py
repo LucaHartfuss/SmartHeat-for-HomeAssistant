@@ -13,11 +13,11 @@ from smartheat_runtime.texts import HA_TEXTS, HostTexts
 
 if TYPE_CHECKING:
     from smartheat_core.pipeline import LeverPipeline
+    from smartheat_runtime.budget_store import ZustandsSpeicher
     from smartheat_runtime.notifier import Notifier
     from smartheat_runtime.ports import MqttChannel, SignalSource, TriggerSource
     from smartheat_runtime.roles import ChannelManifest
     from smartheat_runtime.runtime_config import RuntimeConfig
-    from smartheat_runtime.state import StateStore
     from smartheat_runtime.status import StatusReporter
     from smartheat_runtime.worker import RegulationWorker
 
@@ -46,7 +46,7 @@ class Runtime:
     signals: SignalSource
     config: RuntimeConfig
     worker: RegulationWorker
-    store: StateStore
+    store: ZustandsSpeicher
     override: LeverPipeline
     notifier: Notifier
     # Neustart des Hosts, Rueckruf aus app.start; ruft nur der Worker-Thread

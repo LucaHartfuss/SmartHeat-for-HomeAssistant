@@ -1,13 +1,16 @@
 """Betrieb mit den Bindings ueber _start_bridge (Harness aus runtime_helpers.py, Geraete-Pfad): der
 Hebelsatz des Konfigurationsdokuments waehlt Binding und lokale Sicherheit; fehlende Pflicht-Rollen sind ein
 Konfigurationsfehler; Vaillant bleibt unveraendert (alle Tests in test_runtime.py)."""
+import dataclasses
 import logging
 
+import pytest
 from fakes import VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND, schreibziel_eintrag
 from runtime_helpers import (
     WEISHAUPT,
     WEISHAUPT_STATES,
     _advance,
+    _anlage_budget,
     _backup,
     _ha_verbunden,
     _last_event,
@@ -17,6 +20,7 @@ from runtime_helpers import (
     _trigger,
 )
 
+from heizungsbruecke import host as host_modul
 from smartheat_core import write_budget
 from smartheat_core.pipeline import BUDGET_KEY, BUDGET_MESSAGE
 from smartheat_runtime.backup_store import save_backup
@@ -49,8 +53,9 @@ def test_weishaupt_start_remembers_originals_prepares_and_reports_its_levers(env
     assert env.ha.writes[1:] == [
         ("number.hk", 0.8), ("number.komfort", 23.0), ("number.normal", 23.0), ("number.swu", 17.0),
     ]
-    assert _backup(env)["lifetime_writes"] == 5
-    assert _backup(env)["write_budget"]["writes:total"]["count"] == 5
+    assert _anlage_budget(env)["lifetime_writes"] == 5
+    assert _anlage_budget(env)["write_budget"]["writes:total"]["count"] == 5
+    assert "lifetime_writes" not in _backup(env) and "writes:total" not in _backup(env).get("write_budget", {})
 
 
 def test_weishaupt_basis_reports_the_curve_readonly_and_writes_only_the_room_setpoint(env):
@@ -193,7 +198,7 @@ def test_weishaupt_daily_energy_reaches_the_server_as_a_growing_sum(env):
 #: Kennung, die Add-on 1.1.0 fuer OPTIONS schrieb (roles.lever_refs_identity der Hebel-Referenzen), woertlich.
 KENNUNG_1_1_0 = ('{"curve": "number.curve_current", "heat_limit": "number.heat_limit", "min_flow": "number.min_flow", '
                  '"room_setpoint": "number.shift_current"}')
-KREIS_KENNUNG = '{"anlage": "S", "nummer": "0", "plattform": "mypyllant"}'
+KREIS_KENNUNG = '{"anlage":"S","hersteller":"vaillant","nummer":0}'
 UEBERNAHME = "Anlagen-Kennung aus dem Heizkreis übernommen"
 GAS = {"sensor.gas": 812.5, "sensor.gas::device_class": "energy", "sensor.gas::unit_of_measurement": "kWh"}
 
@@ -208,11 +213,11 @@ def test_umbenannte_hebel_entity_behaelt_die_ursprungswerte(env):
     bind_to_tenant verwarf die Ursprungswerte, und der Start nahm die schon geregelten Werte als neue Ursprungswerte."""
     bridge = _start(env)
     snapshot = _first_snapshot(env, bridge)
-    _answer_levers(env, bridge, snapshot["seq"], {"curve": 1.3, "room_setpoint": 22.0, "heat_limit": 18.0})
+    _answer_levers(env, bridge, snapshot["seq"], {"curve": 1.3, "room_setpoint": 22.0, "heat_limit": 18.0, "min_flow": 22.0})
     assert env.ha.states["number.curve_current"] == 1.3  # Gegenprobe: die Regelung hat geschrieben
     ursprung = {key: _backup(env)[key] for key in ("originals", "restore_point")}
-    assert ursprung == {"originals": {"heat_limit": 16.0},
-                        "restore_point": {"curve": 1.3, "room_setpoint": 22.0, "heat_limit": 18.0}}
+    assert ursprung == {"originals": {"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0, "min_flow": 21.0},
+                        "restore_point": {"curve": 1.3, "room_setpoint": 22.0, "heat_limit": 18.0, "min_flow": 22.0}}
     assert _backup(env)["plant_id"] == KREIS_KENNUNG
     env.ha.states["number.heat_limit_neu"] = 18.0  # dieselbe Heizgrenze unter neuem Namen
     env.ha.registry.append(schreibziel_eintrag("number.heat_limit_neu", "mypyllant"))
@@ -241,10 +246,27 @@ def test_bestand_von_1_1_0_behaelt_ursprungswerte_und_energiesummen(env, caplog)
     backup = _backup(env)
     assert backup["plant_id"] == KREIS_KENNUNG and backup["tenant_id"] == "test_tenant"
     assert backup["originals"] == bestand["originals"] and backup["restore_point"] == bestand["restore_point"]
-    assert backup["energy_state"] == bestand["energy_state"] and backup["lifetime_writes"] == 42
+    assert backup["energy_state"] == bestand["energy_state"]
+    assert _anlage_budget(env)["lifetime_writes"] == 42 and "lifetime_writes" not in backup  # wandert in die Anlagendatei
     assert _uebernahmen(caplog) == [UEBERNAHME]
     assert "Andere Anlage" not in caplog.text
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="smartheat_runtime.state"):
         _start(env, entity_energy_primary_heating="sensor.gas")
     assert _uebernahmen(caplog) == [] and _backup(env)["originals"] == bestand["originals"]
+
+
+@pytest.mark.parametrize("kreise,bleibt", [(1, False), (2, True)])
+def test_andere_anlage_setzt_die_zaehler_der_anlage_nur_bei_einem_einzigen_kreis_zurueck(env, monkeypatch, kreise, bleibt):
+    """Teilen mehrere Kreise die Zaehler der Anlage, setzt die andere Anlage eines Kreises nur dessen Zustand zurueck."""
+    save_backup(env.paths["BACKUP_PATH"], {"tenant_id": "test_tenant", "plant_id": "andere:anlage", "boost_since": None})
+    save_backup(env.paths["RUNTIME_DIR"] / "anlage_budget.json", {"lifetime_writes": 42})
+    echt = host_modul.dokument_config.boot_info
+    monkeypatch.setattr(
+        host_modul.dokument_config, "boot_info",
+        lambda *args, **kwargs: dataclasses.replace(echt(*args, **kwargs), kreise_der_anlage=kreise))
+
+    _start(env)
+
+    assert _backup(env)["plant_id"] == KREIS_KENNUNG
+    assert (_anlage_budget(env).get("lifetime_writes") == 42) is bleibt

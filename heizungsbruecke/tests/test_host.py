@@ -1,5 +1,6 @@
 """HA-Host der Laufzeit im Geraete-Pfad: Konfiguration aus dem Konfigurationsdokument."""
 import dataclasses
+import json
 import logging
 from unittest.mock import MagicMock
 
@@ -14,6 +15,7 @@ from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import DERIVED_SENSORS_RETRY_DELAYS_SECONDS, HaHost
 from smartheat_runtime.app import IdleBridge, StartFailure
 from smartheat_runtime.backup_store import load_backup, save_backup
+from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.roles import lever_refs_identity
 
@@ -64,7 +66,7 @@ def _host(env, geraet=None, **overrides):
 
 
 #: Kennung des Kreises der Test-Dokumente (geraet_helpers.konfiguration_aus_optionen), woertlich.
-KREIS_KENNUNG = '{"anlage": "S", "nummer": "0", "plattform": "mypyllant"}'
+KREIS_KENNUNG = '{"anlage":"S","hersteller":"vaillant","nummer":0}'
 
 
 def test_anlagen_kennung_kommt_aus_dem_kreis(env, angelegt, sleeps):
@@ -82,6 +84,25 @@ def test_anlagen_kennung_kommt_aus_dem_kreis(env, angelegt, sleeps):
     assert dokument.anlagen_kennung(dataclasses.replace(b, kreis={**b.kreis, "config_entry": "e-neu"})) == KREIS_KENNUNG
     for feld, wert in (("plattform", "vicare"), ("anlage", "T"), ("nummer", "1")):
         assert dokument.anlagen_kennung(dataclasses.replace(b, kreis={**b.kreis, feld: wert})) != KREIS_KENNUNG, feld
+
+
+def test_die_raumsensoren_der_hilfssensoren_gehen_ins_manifest(env, angelegt, sleeps, monkeypatch):
+    """Der lokale Check liest je Referenzraum den Hilfssensor des Raums, nicht den Kreismittelwert."""
+    monkeypatch.setattr(
+        "heizungsbruecke.derived_sensors.ensure_all",
+        lambda **kwargs: DerivedSensors({"room_actual": "sensor.room_actual"}, (), "fp1",
+                                        raeume={1: "sensor.raum_1", 2: "sensor.raum_2"}))
+    loaded = _host(env).load()
+    assert loaded.manifest.raum_refs == {1: "sensor.raum_1", 2: "sensor.raum_2"}
+
+
+def test_der_weg_gehoert_nicht_zur_kennung_und_eine_unbrauchbare_kennung_scheitert_laut():
+    """Plattform und Anlage bestimmen den Hersteller; ohne gueltige Kennung gibt es keine plant_id (ConfigError)."""
+    b = dokument.bindung(konfiguration_aus_optionen(OPTIONS))
+    assert set(json.loads(dokument.anlagen_kennung(b))) == {"hersteller", "anlage", "nummer"}
+    for feld, wert in (("plattform", "unbekannt"), ("anlage", ""), ("nummer", "x"), ("nummer", None)):
+        with pytest.raises(ConfigError):
+            dokument.anlagen_kennung(dataclasses.replace(b, kreis={**b.kreis, feld: wert}))
 
 
 def test_eine_uebernommene_rolle_auf_einer_person_startet_nicht_und_legt_nichts_an(env, angelegt, sleeps):
@@ -122,7 +143,7 @@ def test_ein_raumfuehler_ohne_zustand_ist_nicht_pruefbar(env, angelegt, sleeps):
     del env.ha.states["sensor.room_actual"], env.ha.states["sensor.room_actual::device_class"]
     with pytest.raises(StartFailure) as fehler:
         _host(env).load()
-    assert fehler.value.key == "rollen_nicht_pruefbar" and fehler.value.grund.startswith("raumfuehler: ")
+    assert fehler.value.key == "rollen_nicht_pruefbar" and fehler.value.grund.startswith("fuehler: ")
 
 
 def test_eine_optionale_rolle_ohne_zustand_startet_ungelesen_mit_hinweis(env, angelegt, sleeps):
@@ -370,8 +391,8 @@ def test_ein_kreis_fremder_plattform_startet_nicht(env, angelegt, sleeps):
     shelly = {"platform": "shelly", "config_entry_id": "e-shelly", "device_id": "d-shelly"}
     _registry(env, dict.fromkeys(SCHREIBZIELE, shelly))
     konfiguration = konfiguration_aus_optionen(OPTIONS)
-    konfiguration["bindung"]["kreis"] = {**konfiguration["bindung"]["kreis"], "plattform": "shelly",
-                                         "config_entry": "e-shelly"}
+    bindung = konfiguration["kreise"][0]["bindung"]
+    bindung["kreis"] = {**bindung["kreis"], "plattform": "shelly", "config_entry": "e-shelly"}
     with pytest.raises(StartFailure) as fehler:
         HaHost(FakeGeraet(konfiguration), env.ha).load()
     assert fehler.value.grund == "plattform: diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)"

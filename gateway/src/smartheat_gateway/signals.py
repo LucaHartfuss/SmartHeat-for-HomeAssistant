@@ -1,6 +1,6 @@
 """SignalSource des Gateways: zigbee:<ieee>:<feld> aus dem Zigbee-Spiegel, soll:room_target aus
 dem Soll-Speicher, treiber:<rolle> aus dem Cache des Treibers, raum:mittel = Raummittel (room_mean) ueber die
-Referenzraum-Fuehler. Ungueltige Werte werfen ValueError/KeyError wie beim HA-Host; ein getrennter lokaler Bus wirft
+Referenzraum-Fuehler, raum:<n> = Mittel der Fuehler des Raums mit dieser Nummer (Referenz- und Kontrollraeume). Ungueltige Werte werfen ValueError/KeyError wie beim HA-Host; ein getrennter lokaler Bus wirft
 SourceUnavailable; eine unbekannte Referenz SignalNotFound. Gelesen wird nur im Worker-Thread."""
 import re
 
@@ -11,6 +11,7 @@ from smartheat_runtime.room_mean import room_mean
 
 REF_ROOM_TARGET = "soll:room_target"
 REF_ROOM_MEAN = "raum:mittel"
+_RAUM = re.compile(r"raum:([0-9]+)")
 _ZIGBEE = re.compile(r"zigbee:(0x[0-9a-f]{16}):([a-z_]+)")
 
 
@@ -21,9 +22,25 @@ class GatewaySignalSource:
         self._driver = None
         self._store = None
         self._room_refs: tuple[str, ...] = ()
+        self._raeume: dict[int, tuple[str, ...]] = {}
 
-    def bind(self, driver, store, room_sensor_refs: tuple[str, ...]) -> None:
+    def bind(self, driver, store, room_sensor_refs: tuple[str, ...],
+             raeume: tuple[tuple[int, tuple[str, ...]], ...] = ()) -> None:
+        """`room_sensor_refs`: Fuehler der Referenzraeume (Kreismittel); `raeume`: (Nummer, Fuehler) je Raum."""
         self._driver, self._store, self._room_refs = driver, store, tuple(room_sensor_refs)
+        self._raeume = {nummer: tuple(fuehler) for nummer, fuehler in raeume}
+
+    def _mittel(self, sensors: tuple[str, ...]) -> float:
+        values = []
+        for sensor in sensors:
+            try:
+                values.append(self.get_state(sensor))
+            except (ValueError, KeyError, TypeError, SignalNotFound):
+                values.append(None)
+        mean = room_mean(values)
+        if mean is None:
+            raise SignalUngueltig("kein Raumfuehler liefert einen gueltigen Wert")
+        return mean
 
     def _raw(self, ref: str):
         if ref == REF_ROOM_TARGET:
@@ -31,16 +48,13 @@ class GatewaySignalSource:
                 raise SourceUnavailable("Soll-Speicher noch nicht geladen")
             return self._store.value
         if ref == REF_ROOM_MEAN:
-            values = []
-            for sensor in self._room_refs:
-                try:
-                    values.append(self.get_state(sensor))
-                except (ValueError, KeyError, TypeError, SignalNotFound):
-                    values.append(None)
-            mean = room_mean(values)
-            if mean is None:
-                raise SignalUngueltig("kein Raumfuehler liefert einen gueltigen Wert")
-            return mean
+            return self._mittel(self._room_refs)
+        raum = _RAUM.fullmatch(ref)
+        if raum is not None:
+            sensors = self._raeume.get(int(raum.group(1)))
+            if sensors is None:
+                raise SignalNotFound(ref)
+            return self._mittel(sensors)
         if ref.startswith("treiber:"):
             if self._driver is None:
                 raise SourceUnavailable("Treiber noch nicht geladen")

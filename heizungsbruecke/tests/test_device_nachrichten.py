@@ -9,7 +9,11 @@ RAUM = {"ist": 20.5, "soll": 21.0, "soll_quelle": "portal", "ts": "t"}
 
 def _hello_felder() -> dict:
     felder = {name: None for name in wire.HELLO_FIELDS if name not in ("schema", "schemata")}
-    return felder | {"host": "gateway", "faehigkeiten": dict(FAEHIGKEITEN)}
+    return felder | {"host": "gateway", "faehigkeiten": dict(FAEHIGKEITEN), "wege": ["simulation"]}
+
+
+def _kreise(raum, nummer=1) -> list[dict]:
+    return [{"kreis": nummer, "raum": raum}]
 
 
 def _register_felder() -> dict:
@@ -51,11 +55,11 @@ def test_hello_prueft_host_und_faehigkeiten_ohne_werte():
 
 
 def test_status_meldung_notifications_ergebnis_register_zertifikat():
-    status = nachrichten.status(zustand="regelt", runtime_status=None, raum=None, ts="t")
+    status = nachrichten.status(zustand="regelt", runtime_status=None, kreise=_kreise(None), ts="t")
     assert set(status) == set(wire.STATUS_FIELDS)
-    assert set(nachrichten.status(zustand="regelt", runtime_status=None, raum=None, ts="t", ursprungswerte={"a": 1})) \
+    assert set(nachrichten.status(zustand="regelt", runtime_status=None, kreise=_kreise(None), ts="t", ursprungswerte={"a": 1})) \
         == set(wire.STATUS_FIELDS) | {"ursprungswerte"}
-    item = nachrichten.meldung(key="k", kategorie="k", kritisch=False, text="t", offen=True, ts="t")
+    item = nachrichten.meldung(key="k", kategorie="k", stufe="orange", text="t", offen=True, ts="t")
     assert set(item) == set(wire.NOTIFICATION_FIELDS)
     assert set(nachrichten.notifications([item])) == set(wire.NOTIFICATIONS_FIELDS)
     assert set(nachrichten.ergebnis_dokument("konfiguration", 1, True)) <= set(wire.RESULT_FIELDS) | set(
@@ -67,14 +71,14 @@ def test_status_meldung_notifications_ergebnis_register_zertifikat():
 
 
 def test_status_prueft_zustand_und_raum_ohne_werte():
-    assert nachrichten.status(zustand="regelt", runtime_status=None, raum=RAUM, ts="t")["raum"] == RAUM
+    assert nachrichten.status(zustand="regelt", runtime_status=None, kreise=_kreise(RAUM), ts="t")["kreise"] == _kreise(RAUM)
     for zustand in wire.ZUSTAENDE:
-        nachrichten.status(zustand=zustand, runtime_status=None, raum=None, ts="t")
+        nachrichten.status(zustand=zustand, runtime_status=None, kreise=_kreise(None), ts="t")
     with pytest.raises(nachrichten.Vertragsfehler, match="status.*zustand"):
-        nachrichten.status(zustand="GEHEIM-ZUSTAND", runtime_status=None, raum=None, ts="t")
+        nachrichten.status(zustand="GEHEIM-ZUSTAND", runtime_status=None, kreise=_kreise(None), ts="t")
     for raum in ({**RAUM, "GEHEIM-FELD": 1}, {"ist": 20.0}, [1]):
         with pytest.raises(nachrichten.Vertragsfehler, match="raum"):
-            nachrichten.status(zustand="regelt", runtime_status=None, raum=raum, ts="t")
+            nachrichten.status(zustand="regelt", runtime_status=None, kreise=_kreise(raum), ts="t")
 
 
 def test_register_prueft_host_faehigkeiten_und_csr_groesse():
@@ -95,7 +99,7 @@ def test_register_prueft_host_faehigkeiten_und_csr_groesse():
 
 def test_ergebnis_dokument_mit_fehler():
     body = nachrichten.ergebnis_dokument("konfiguration", 2, False, {"grund": "ungueltig", "details": None})
-    assert body == {"schema": 1, "dokument": "konfiguration", "version": 2, "ok": False,
+    assert body == {"schema": 2, "dokument": "konfiguration", "version": 2, "ok": False,
                     "error": {"grund": "ungueltig", "details": None}}
 
 
@@ -110,3 +114,50 @@ def test_dokument_ergebnis_hat_nie_result_und_error_nur_bei_ablehnung():
     abgelehnt = nachrichten.ergebnis_dokument("konfiguration", 3, False, {"grund": "ungueltig"})
     assert set(ok) == {"schema", "ok", "dokument", "version"}
     assert set(abgelehnt) == {"schema", "ok", "dokument", "version", "error"}
+
+
+def test_hello_traegt_wege_und_anzeige_version():
+    body = nachrichten.hello(**_hello_felder())
+    assert body["wege"] == ["simulation"] and "anzeige_version" in body
+    assert nachrichten.hello(**(_hello_felder() | {"wege": []}))["wege"] == []
+
+
+@pytest.mark.parametrize("wege", [None, "simulation", ["a", "a"], [1], [None], ("simulation",)])
+def test_hello_lehnt_falsche_wege_ab(wege):
+    with pytest.raises(nachrichten.Vertragsfehler, match="hello.wege"):
+        nachrichten.hello(**(_hello_felder() | {"wege": wege}))
+
+
+def test_status_ohne_kreis_ist_erlaubt():
+    assert nachrichten.status(zustand="startet", runtime_status=None, kreise=[], ts="t")["kreise"] == []
+
+
+def test_status_traegt_den_raum_je_kreis():
+    kreise = [{"kreis": 1, "raum": RAUM}, {"kreis": 2, "raum": None}, {"kreis": 2**31 - 1, "raum": RAUM}]
+    assert nachrichten.status(zustand="regelt", runtime_status=None, kreise=kreise, ts="t")["kreise"] == kreise
+    assert "raum" not in nachrichten.status(zustand="regelt", runtime_status=None, kreise=kreise, ts="t")
+
+
+@pytest.mark.parametrize("kreise", [
+    None, "1", [{"kreis": 0, "raum": None}], [{"kreis": -1, "raum": None}], [{"kreis": True, "raum": None}],
+    [{"kreis": 1.0, "raum": None}], [{"kreis": "1", "raum": None}],
+    [{"kreis": 1, "raum": None}, {"kreis": 1, "raum": None}],
+    [{"kreis": 2, "raum": None}, {"kreis": 1, "raum": None}],
+    [{"kreis": 1}], [{"kreis": 1, "raum": None, "name": "GEHEIM"}], [1],
+    [{"kreis": 2**31, "raum": None}],
+])
+def test_status_lehnt_falsche_kreise_ab(kreise):
+    with pytest.raises(nachrichten.Vertragsfehler, match="status.kreise"):
+        nachrichten.status(zustand="regelt", runtime_status=None, kreise=kreise, ts="t")
+
+
+def test_meldung_traegt_stufe_statt_kritisch():
+    for stufe in wire.STUFEN:
+        item = nachrichten.meldung(key="k", kategorie="k", stufe=stufe, text="t", offen=True, ts="t")
+        assert item["stufe"] == stufe and "kritisch" not in item
+
+
+@pytest.mark.parametrize("stufe", [True, False, "kritisch", "ROT", "", None, 1])
+def test_meldung_lehnt_unbekannte_stufe_ohne_bool_alias_ab(stufe):
+    with pytest.raises(nachrichten.Vertragsfehler):
+        nachrichten.meldung(key="k", kategorie="k", stufe=stufe, text="t", offen=True, ts="t")

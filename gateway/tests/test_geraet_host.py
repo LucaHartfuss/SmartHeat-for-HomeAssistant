@@ -10,12 +10,13 @@ from pathlib import Path
 
 import pytest
 from befehle_sicht import registrierte_befehle
-from configs import dokumente_schreiben, konfiguration
+from configs import bedienung, dokumente_schreiben, konfiguration, leer
 from fakes import FakeBus
 from geraet_welt import WALL, FakeDevice, Welt
+from rastung_beispiele import rastung_aus
 from world import GatewayWorld
 
-from smartheat_core import dateien
+from smartheat_core import dateien, rastung
 from smartheat_device import nachrichten, wire
 from smartheat_device.documents import DocumentStore
 from smartheat_device.geraet_host_basis import EV_RELOAD
@@ -31,8 +32,7 @@ from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
 from smartheat_runtime.worker import RegulationWorker
 
-LEER = {**konfiguration(), "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
-        "bindung": None, "raumfuehler": [], "tagestick": None, "abo": None}
+LEER = leer()
 
 
 @pytest.fixture
@@ -73,7 +73,7 @@ def test_clock_sync_comes_from_the_host_status(welt):
 
 def test_status_and_room_stay_in_the_process(welt):
     welt.host.status_sink.publish({"schema": 2, "status": "regelt"})
-    welt.host.zustand.raum = {"ist": 20.0, "soll": 21.0, "soll_quelle": "portal", "ts": "t"}
+    welt.host.raum_merken(1, {"ist": 20.0, "soll": 21.0, "soll_quelle": "portal", "ts": "t"})
     assert welt.host.runtime_status() == {"schema": 2, "status": "regelt"}
     assert welt.host.raum()["soll"] == 21.0
 
@@ -85,8 +85,16 @@ def test_runtime_messages_become_notifications(welt):
     sink.push("batterie:0x1", "Batterie schwach")
     sink.withdraw("notbetrieb")
     assert welt.device.meldungen == [
-        ("notbetrieb", "Notbetrieb aktiv", True, True), ("notbetrieb", "Notbetrieb aktiv", True, True),
-        ("batterie:0x1", "Batterie schwach", False, False), ("notbetrieb", "Notbetrieb aktiv", False, True)]
+        ("notbetrieb", "Notbetrieb aktiv", True, "rot"), ("notbetrieb", "Notbetrieb aktiv", True, "rot"),
+        ("batterie:0x1", "Batterie schwach", False, "orange"), ("notbetrieb", "Notbetrieb aktiv", False, "rot")]
+
+
+def test_the_gateway_reports_the_ways_of_its_drivers(welt):
+    """Jeder Treiber der Registry hat einen Weg; gemeldet werden die Weg-IDs des Servers, sortiert und einmalig."""
+    assert set(registry.driver_ids()) <= set(gh.WEG_JE_TREIBER)
+    assert welt.host.wege() == sorted({gh.WEG_JE_TREIBER[t] for t in registry.driver_ids()})
+    assert all(isinstance(weg, str) and weg for weg in welt.host.wege())
+    assert welt.host.wege() == ["simulation", "viessmann_vicare"]
 
 
 def test_a_runtime_relevant_configuration_requests_a_restart(welt):
@@ -134,7 +142,7 @@ def test_the_first_empty_configuration_marks_nothing(welt):
 
 
 def test_vergessen_removes_the_plant_state_but_keeps_device_and_simulation(welt):
-    for path in (welt.paths.backup, welt.paths.failsafe, welt.paths.abgemeldet, welt.paths.room_target,
+    for path in (welt.paths.backup(1), welt.paths.failsafe(1), welt.paths.abgemeldet, welt.paths.room_target(1),
                  welt.paths.inventur, welt.paths.driver_secrets_dir / "vicare.json",
                  welt.paths.device_dir / "konfiguration.json", welt.paths.sim_dir / "plant.json"):
         dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
@@ -145,7 +153,7 @@ def test_vergessen_removes_the_plant_state_but_keeps_device_and_simulation(welt)
 
 
 def _dokument(inhalt: dict, version: int) -> dict:
-    return {"schema": 1, "version": version, **inhalt}
+    return {"schema": 2, "version": version, **inhalt}
 
 
 @pytest.mark.parametrize("anders", [{"verteilsystem": "Fussbodenheizung"}, {"hebelsatz": "vaillant_vrc720"}])
@@ -156,7 +164,7 @@ def test_vergessen_keeps_the_lever_set_lock(welt, anders):
     store = DocumentStore(welt.paths.device_dir, host="gateway", software_version=GATEWAY_VERSION)
     assert store.empfangen("konfiguration", _dokument(konfiguration(), 1)).uebernommen
     assert store.empfangen("konfiguration", _dokument(LEER, 2)).uebernommen
-    dateien.schreiben_json(welt.paths.backup, {"x": 1}, modus=dateien.LESBAR)
+    dateien.schreiben_json(welt.paths.backup(1), {"x": 1}, modus=dateien.LESBAR)
     assert runtime_main._vergessen(welt.paths)
     assert not welt.paths.runtime_dir.exists()  # das Aufraeumen lief
     store = DocumentStore(welt.paths.device_dir, host="gateway", software_version=GATEWAY_VERSION)
@@ -184,7 +192,7 @@ def _entfernt_vorbereiten(paths) -> bytes:
     store = DocumentStore(paths.device_dir, host="gateway", software_version=GATEWAY_VERSION)
     assert store.empfangen("konfiguration", _dokument(konfiguration(), 1)).uebernommen
     assert store.empfangen("konfiguration", _dokument(LEER, 2)).uebernommen
-    for path in (paths.backup, paths.failsafe, paths.entitlement, paths.room_target, paths.abgemeldet,
+    for path in (paths.backup(1), paths.failsafe(1), paths.entitlement(1), paths.room_target(1), paths.abgemeldet,
                  paths.inventur, paths.driver_secrets_dir / "vicare.json"):
         dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
     dateien.schreiben_json(paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
@@ -204,15 +212,15 @@ def test_a_state_file_that_cannot_be_deleted_keeps_the_marker_and_the_binding_an
     der uebrige Zustand ist weg, im Log Datei und Fehlerart, keine Erfolgsmeldung. Der naechste Start loescht den Rest
     samt Markierung. Die Rastung bleibt in jedem Fall (G-1)."""
     rastung = _entfernt_vorbereiten(world.paths)
-    echt = _unlink_scheitert_fuer(monkeypatch, world.paths.failsafe, fehler)
+    echt = _unlink_scheitert_fuer(monkeypatch, world.paths.failsafe(1), fehler)
     with caplog.at_level(logging.INFO):
         world.start_runtime()  # wirft nicht
     assert world.result is not None
-    assert world.paths.failsafe.exists() and world.paths.backup.exists() and world.paths.aufraeumen.exists()
-    assert not world.paths.entitlement.exists() and not world.paths.room_target.exists()
+    assert world.paths.failsafe(1).exists() and world.paths.backup(1).exists() and world.paths.aufraeumen.exists()
+    assert not world.paths.entitlement(1).exists() and not world.paths.room_target(1).exists()
     assert not world.paths.abgemeldet.exists() and not world.paths.inventur.exists()
     assert not (world.paths.driver_secrets_dir / "vicare.json").exists()
-    assert f"{world.paths.failsafe.name} nicht geloescht ({art})" in caplog.text
+    assert f"{world.paths.failsafe(1).name} nicht geloescht ({art})" in caplog.text
     assert "Anlagengebundener Zustand geloescht" not in caplog.text
     assert world.paths.rastung.read_bytes() == rastung
 
@@ -232,9 +240,9 @@ def test_leftover_inventory_or_driver_login_keeps_the_marker_and_the_binding(wel
     with caplog.at_level(logging.INFO):
         assert runtime_main._vergessen(welt.paths) is False
         runtime_main.aufraeumen(welt.paths)
-    assert ziel.exists() and welt.paths.backup.exists() and welt.paths.aufraeumen.exists()
-    assert not welt.paths.failsafe.exists() and not welt.paths.entitlement.exists()
-    assert not welt.paths.room_target.exists() and not welt.paths.abgemeldet.exists()
+    assert ziel.exists() and welt.paths.backup(1).exists() and welt.paths.aufraeumen.exists()
+    assert not welt.paths.failsafe(1).exists() and not welt.paths.entitlement(1).exists()
+    assert not welt.paths.room_target(1).exists() and not welt.paths.abgemeldet.exists()
     assert "Anlagengebundener Zustand geloescht" not in caplog.text
     if pfad == "inventur":
         # Zwei Aufrufe (vergessen, aufraeumen), je Aufruf genau eine Zeile zur Datei: bisher ERROR und WARNING
@@ -251,12 +259,12 @@ def test_leftover_inventory_or_driver_login_keeps_the_marker_and_the_binding(wel
 def test_a_binding_that_cannot_be_deleted_keeps_the_marker(welt, monkeypatch, caplog):
     """Scheitert nur das Loeschen von backup.json, ist der uebrige Zustand weg und die Markierung bleibt."""
     rastung = _entfernt_vorbereiten(welt.paths)
-    _unlink_scheitert_fuer(monkeypatch, welt.paths.backup, errno.EIO)
+    _unlink_scheitert_fuer(monkeypatch, welt.paths.backup(1), errno.EIO)
     runtime_main.aufraeumen(welt.paths)
-    assert welt.paths.backup.exists() and welt.paths.aufraeumen.exists()
-    assert not welt.paths.failsafe.exists() and not welt.paths.inventur.exists()
+    assert welt.paths.backup(1).exists() and welt.paths.aufraeumen.exists()
+    assert not welt.paths.failsafe(1).exists() and not welt.paths.inventur.exists()
     assert not (welt.paths.driver_secrets_dir / "vicare.json").exists()
-    assert f"{welt.paths.backup.name} nicht geloescht (OSError)" in caplog.text
+    assert f"{welt.paths.backup(1).name} nicht geloescht (OSError)" in caplog.text
     assert welt.paths.rastung.read_bytes() == rastung
 
 
@@ -293,7 +301,7 @@ def test_an_unreadable_runtime_folder_keeps_the_marker_and_the_binding(welt, mon
 
     monkeypatch.setattr(Path, "iterdir", iterdir)
     runtime_main.aufraeumen(welt.paths)
-    assert welt.paths.failsafe.exists() and welt.paths.backup.exists() and welt.paths.aufraeumen.exists()
+    assert welt.paths.failsafe(1).exists() and welt.paths.backup(1).exists() and welt.paths.aufraeumen.exists()
     assert f"{welt.paths.runtime_dir.name} nicht geloescht (OSError)" in caplog.text
     monkeypatch.setattr(Path, "iterdir", echt)
     runtime_main.aufraeumen(welt.paths)
@@ -312,6 +320,8 @@ def test_the_sign_off_ends_only_with_a_new_version_of_the_same_plant(world):
     Zustellung derselben Version (kein Neustart); eine neue Version mit gleichem Inhalt hebt die Markierung auf, und der
     Neustart regelt wieder."""
     dokumente_schreiben(world.paths, konfiguration(), version=1)
+    # die Rastung gehoert zur gespeicherten Konfiguration (ohne sie lehnt der Speicher jede neue Konfiguration ab)
+    rastung.schreiben(world.paths.rastung, rastung_aus(konfiguration()), "2026-11-01T00:00:00")
     dokument_config.abmelden(world.paths.abgemeldet, "test-tenant")
     world.start_runtime()
     world.connect()
@@ -330,7 +340,7 @@ def test_the_sign_off_ends_only_with_a_new_version_of_the_same_plant(world):
 
 def test_an_operation_goes_to_the_worker_as_target_input(welt):
     welt.host.worker_binden(welt.worker)
-    welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 22.5})
+    welt.host.bedienung_uebernommen(bedienung(22.5))
     welt.worker.run_pending()
     (event,) = welt.events
     assert (event.kind, event.data) == (EV_TARGET_INPUT, {"value": 22.5, "source": SOURCE_PORTAL})
@@ -338,8 +348,8 @@ def test_an_operation_goes_to_the_worker_as_target_input(welt):
 
 def test_an_operation_before_the_worker_exists_is_posted_on_binding(welt):
     # main(): der Geraete-Thread laeuft vor dem Worker; eine Bedienung gleich nach hello geht nicht verloren
-    welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 21.0})
-    welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 22.5})
+    welt.host.bedienung_uebernommen(bedienung(21.0))
+    welt.host.bedienung_uebernommen(bedienung(22.5))
     welt.host.worker_binden(welt.worker)
     welt.worker.run_pending()
     (event,) = welt.events  # nur die letzte
@@ -348,8 +358,8 @@ def test_an_operation_before_the_worker_exists_is_posted_on_binding(welt):
 
 def test_operation_and_abo_for_the_runtime_host(welt):
     assert welt.host.bedienung() == (None, False)
-    welt.device.bed, welt.device.dirty = {"raum_soll": 21.0}, True
-    assert welt.host.bedienung() == ({"raum_soll": 21.0}, True)
+    welt.device.bed, welt.device.dirty = bedienung(21.0), True
+    assert welt.host.bedienung() == (bedienung(21.0), True)
     assert welt.host.abo_status() == "active" and welt.host.konfiguration()["anlage"] == "test-tenant"
 
 
@@ -559,9 +569,9 @@ def test_an_operation_in_the_idle_state_is_not_posted_to_the_worker(welt, caplog
     """Ruhezustand (IdleBridge): der Worker hat keinen Soll-Eingang; die Bedienung bleibt im Geraetekern gespeichert
     und gilt beim naechsten Start mit Regelung. Kein "Kein Handler ... verworfen" je Dokument."""
     leerlauf = RegulationWorker(clock=welt.clock)
-    welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 21.0})  # vor dem Binden
+    welt.host.bedienung_uebernommen(bedienung(21.0))  # vor dem Binden
     with caplog.at_level("WARNING"):
         welt.host.worker_binden(leerlauf, soll_eingang=False)
-        welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 22.5})
+        welt.host.bedienung_uebernommen(bedienung(22.5))
         leerlauf.run_pending()
     assert "Kein Handler" not in caplog.text

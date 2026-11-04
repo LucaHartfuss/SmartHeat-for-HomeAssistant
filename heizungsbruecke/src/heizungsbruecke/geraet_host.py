@@ -8,7 +8,7 @@ Konfiguration derselben Anlage, die die Abmelde-Markierung aufhebt; der Wechsel 
 markiert das Aufraeumen vor dem Speichern.
 Eine neue Bedienung geht als Soll-Eingang (portal) an den Worker, der Soll-Eingang schreibt sie in den Soll-Speicher und
 gleicht die Soll-Entity an; kommt sie vor dem Binden, stellt worker_binden die letzte nach. Status
-(runtime_status_event) und Raum (raum_merken, HaHost) legt der Worker-Thread hier ab, der Geraete-Thread liest
+(runtime_status_event) und Raum (raum_merken je Kreis, HaHost) legt der Worker-Thread hier ab, der Geraete-Thread liest
 sie fuer up/status. Meldungen der Laufzeit gehen wie beim Gateway (MeldungSink) als up/notifications an den Server und
 zusaetzlich an HA (notify_sink_fuer). anzeigen meldet Geraete-ID, Uebernahmestand und Code an die Supervisor-Discovery
 (discovery.Discovery)."""
@@ -30,6 +30,10 @@ from smartheat_runtime import dokument_config
 
 logger = logging.getLogger(__name__)
 
+#: Weg-ID des Server-Katalogs je Schreib-Plattform der Home-Assistant-Integration; eine neue Plattform ohne Eintrag
+#: faellt im Test auf.
+WEG_JE_PLATTFORM = {"mypyllant": "vaillant_myvaillant", "vicare": "viessmann_vicare",
+                    "weishaupt_modbus": "weishaupt_modbus"}
 UHR_CACHE_SECONDS = 60
 INVENTUR_SECONDS = 120
 _FREMD = ("zigbee_permit_join", "zigbee_devices", "driver_login")
@@ -51,7 +55,7 @@ class HaDeviceHost(GeraetHostBasis):
         self.discovery: Discovery | None = None  # Supervisor-Meldung (__main__.verdrahten)
         self.claim_code: Callable[[], str | None] = lambda: None  # Uebernahme-Code des Geraets (__main__.verdrahten)
         self.runtime_status_event: dict | None = None  # letztes Status-Ereignis der Laufzeit (laufzeit_merken)
-        self._raum: dict | None = None
+        self._raeume: dict[int, dict | None] = {}  # je Kreis der Raum des letzten Takts
         self._uhr: tuple[float, bool | None] | None = None
 
     def aufraeumen_pfad(self) -> Path:
@@ -67,15 +71,19 @@ class HaDeviceHost(GeraetHostBasis):
         Gateways) und an HA (Notify-Dienste, persistent_notification)."""
         return GeraetUndHaSink(self.notify_sink, HaNotifySink(self._ha, services))
 
-    def raum_merken(self, raum: dict | None) -> None:
-        """Worker-Thread (raum.RaumPublisher): {ist, soll, soll_quelle, ts} fuer up/status."""
-        self._raum = raum
+    def raum_merken(self, kreis: int, raum: dict | None) -> None:
+        """Worker-Thread des Kreises (raum.RaumPublisher): {ist, soll, soll_quelle, ts} fuer up/status."""
+        self._raeume[kreis] = raum
 
     # --- DeviceHost ---
 
     def faehigkeiten(self) -> dict:
         return nachrichten.pruefen("faehigkeiten", {"drivers": [], "zigbee": False}, wire.CAPABILITY_FIELDS,
                                    wire.CAPABILITY_OPTIONAL)
+
+    def wege(self) -> list[str]:
+        """Wege des Katalogs, die dieser Host ueber seine Schreib-Plattformen bedient (Plattform -> Weg-ID)."""
+        return sorted({WEG_JE_PLATTFORM[plattform] for plattform in dokument.SCHREIB_PLATTFORM.values()})
 
     def uhr_synchron(self) -> bool | None:
         """dt_synchronized aus GET /host/info; kein bool oder Fehler = unbekannt (gilt als nicht synchron). Der Aufruf
@@ -94,10 +102,10 @@ class HaDeviceHost(GeraetHostBasis):
         return result
 
     def treiber_pruefen(self, konfiguration: dict) -> dict | None:
-        """HA-Teil der Pruefung (config_check gibt fuer Host ha die ganze Konfiguration): details oder None. Gegen die
-        uebernommene Konfiguration (Dokumentspeicher, ohne Sperre lesbar): bleiben Bindung, Raumfuehler und Hebelsatz
-        gleich, entfaellt der HA-Teil. Wirft NichtPruefbar, wenn HA gerade nicht antwortet (der Geraetekern prueft
-        spaeter erneut)."""
+        """HA-Teil der Pruefung (config_check gibt fuer Host ha ein Dokument mit dem einen Kreis, der geprueft wird; sein
+        Referenzraum traegt die Fuehler aller Raeume): details oder None. Gegen die uebernommene Konfiguration
+        (Dokumentspeicher, ohne Sperre lesbar): bleiben Bindung, Raumfuehler und Hebelsatz gleich, entfaellt der HA-Teil.
+        Wirft NichtPruefbar, wenn HA gerade nicht antwortet (der Geraetekern prueft spaeter erneut)."""
         return dokument.zuordnung_pruefen(konfiguration, self._ha, self.konfiguration())
 
     def befehle_eintragen(self, register: CommandRegister) -> None:
@@ -118,8 +126,8 @@ class HaDeviceHost(GeraetHostBasis):
     def runtime_status(self) -> dict | None:
         return self.runtime_status_event
 
-    def raum(self) -> dict | None:
-        return self._raum
+    def raum(self, kreis: int = 1) -> dict | None:
+        return self._raeume.get(kreis)
 
     def anzeigen(self, anzeige: Anzeige) -> None:
         self.letzte_anzeige = anzeige
@@ -210,7 +218,7 @@ class HaDeviceHost(GeraetHostBasis):
             return Failed("nicht_eingerichtet")
         anlage = ergebnis[0]
 
-        return abmeldung_abwarten(anlage, lambda: self.runtime_status_event, config.BACKUP_PATH,
+        return abmeldung_abwarten(anlage, lambda: self.runtime_status_event, config.backup_path(dokument_config.kreisnummer(self.konfiguration())),
                                   self._clock() + SIGN_OFF_WAIT_SECONDS)
 
     def _diagnostics(self, payload: dict) -> Done:

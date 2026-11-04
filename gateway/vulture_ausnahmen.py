@@ -36,3 +36,6 @@ _.frame  # smartheat_gateway/runtime_main.py _terminate
 
 # --- Objekt mit Wirkung im Konstruktor ---
 _._eingang  # smartheat_gateway/triggers.py: der SollEingang registriert sich beim Worker; das Attribut haelt ihn
+
+# --- Kennung der Anlage: die Namen stehen im Geraetekern (kennung.TREIBER), die Treiber nennen sie noch einmal ---
+_.IDENTITY_PARAMETERS  # smartheat_gateway/drivers: gelesen vom Contract-Check (45, 53) und gateway/tests/test_kennung_registry.py

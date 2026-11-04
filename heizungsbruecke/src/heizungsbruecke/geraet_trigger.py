@@ -2,7 +2,7 @@
 die Soll-Entity (mit for: 10 s), ihren HVAC-Modus (Climate), das Raumfuehler-Mittel, das Ereignis
 smartheat_wunsch der Integration und den Tagestick. Der WS-Thread stellt nur Ereignisse in den Worker ein; dort
 entscheidet der Soll-Eingang (smartheat_runtime.soll_eingang, entprellen 0 s): Wunsch mit Herkunft (soll_entity bzw.
-smartheat_entity) und durch (nutzer/automation aus dem HA-Kontext), Thermostat aus/Frostschutz, Angleichen der
+ha) und durch (nutzer/automation aus dem HA-Kontext), Thermostat aus/Frostschutz, Angleichen der
 Soll-Entity (nur Climate ist schreibbar) ohne Echo."""
 import logging
 import math
@@ -15,7 +15,7 @@ from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
 from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
 from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_TARGET_INPUT, FROSTSCHUTZ_BIS, SollEingang
-from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_THERMOSTAT, TargetStore
+from smartheat_runtime.soll_speicher import KREIS, SOURCE_LOKAL, SOURCE_THERMOSTAT, TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ OHNE_ZAHL_LOG_SECONDS = 3600.0
 
 EREIGNIS_WUNSCH = "smartheat_wunsch"
 HERKUNFT_SOLL = "soll_entity"
-HERKUNFT_SMARTHEAT = "smartheat_entity"
+HERKUNFT_SMARTHEAT = "ha"
 
 
 def durch_aus_kontext(context) -> str | None:
@@ -78,6 +78,13 @@ def pruefe_soll_ref(soll_ref: str | None) -> None:
     if soll_ref and soll_ref.startswith("climate.") and _split(soll_ref)[1] is None:
         raise ConfigError(f"Soll-Entity {soll_ref} ohne Attribut: bei einer Climate-Entity ist "
                           f"{soll_ref}::temperature erforderlich")
+
+
+def _wunsch_kreis(daten) -> int | None:
+    """Der Kreis, dem das Ereignis smartheat_wunsch gilt: `kreis` der Ereignisdaten (Pflicht); fehlt er oder ist er
+    ungueltig (kein ganzzahliger Kreis ab 1), ist das Ergebnis None."""
+    wert = daten.get("kreis") if isinstance(daten, dict) else None
+    return wert if isinstance(wert, int) and not isinstance(wert, bool) and wert >= 1 else None
 
 
 def _wunschwert(value) -> float | None:
@@ -125,8 +132,11 @@ class HaSollQuelle:
 
 def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_ref: str | None, *,
           tagestick: str | None, wache_s: float, wunsch, soll_quelle_aus,
-          quelle: HaSollQuelle | None = None) -> HaTriggerClient:
-    """soll_ref: die echte Soll-Entity aus der Konfiguration (nicht manifest.refs["room_target"], das ist SOLL_REF).
+          quelle: HaSollQuelle | None = None, kreis: int = KREIS,
+          anlagenkreise: frozenset[int] | None = None) -> HaTriggerClient:
+    """kreis: der Heizkreis des Clients; ein Ereignis smartheat_wunsch gilt dem Kreis seiner Ereignisdaten (Pflicht;
+    ohne gueltigen Kreis wird es verworfen) und erreicht nur den Client dieses Kreises. anlagenkreise: alle Kreise der
+    Anlage; gilt ein Wunsch keinem davon, meldet das nur der Client des niedrigsten Kreises (sonst eine Meldung je Kreis). soll_ref: die echte Soll-Entity aus der Konfiguration (nicht manifest.refs["room_target"], das ist SOLL_REF).
     tagestick: Uhrzeit des taeglichen Ticks (HH:MM) oder None; wache_s: Takt des lokalen Checks (RuntimeConfig).
     Der Bericht der Soll-Entity (EV_SOLL_BERICHT) geht als Eingabe der Soll-Quelle in den Soll-Eingang. Faellt er in
     das Echo-Fenster nach dem eigenen Schreiben, verwirft ihn der Soll-Speicher; HA meldet einen unveraenderten Wert
@@ -286,6 +296,16 @@ def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_r
         platform = trigger.get("platform")
         if platform == "event":
             event = trigger.get("event") or {}
+            ziel = _wunsch_kreis(event.get("data"))
+            if ziel is None:
+                logger.warning("Ereignis %s mit ungueltigem Kreis verworfen", EREIGNIS_WUNSCH)
+                return
+            if anlagenkreise is not None and ziel not in anlagenkreise:
+                if kreis == min(anlagenkreise):
+                    logger.warning("Ereignis %s mit unbekanntem Kreis verworfen", EREIGNIS_WUNSCH)
+                return
+            if ziel != kreis:
+                return  # gilt dem Client eines anderen Kreises
             value = (event.get("data") or {}).get("raum_soll")
             number = _wunschwert(value)
             if number is None:

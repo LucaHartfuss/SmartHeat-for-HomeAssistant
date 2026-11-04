@@ -9,8 +9,18 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+import konfig_form
 import pytest
-from geraet_helpers import CLAIM_CODE, DEVICE_ID, FakeDevice, FakeSupervisor, FakeThread, konfiguration_aus_optionen
+from geraet_helpers import (
+    CLAIM_CODE,
+    DEVICE_ID,
+    FakeDevice,
+    FakeSupervisor,
+    FakeThread,
+    bedienung_inhalt,
+    konfiguration_aus_optionen,
+)
+from rastung_beispiele import rastung_aus
 from runtime_helpers import OPTIONS, _quiet_backup
 
 import heizungsbruecke.__main__ as main_module
@@ -192,14 +202,15 @@ def test_start_without_document_waits_unconfigured_and_reports_through_the_devic
     supervisor = FakeSupervisor()
     device = FakeDevice()
     geraet, status = _verdrahtet(geraet_env, device, supervisor)
-    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    laufzeit, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    result = laufzeit.kreise()[1]
     result.worker.run_pending()
     assert isinstance(result, app.IdleBridge) and result.reason == app.IDLE_NOT_CONFIGURED
     assert geraet_env.ha.events == [] and geraet.runtime_status_event is None
 
     geraet.anzeigen(_anzeige())
     ((typ, event),) = geraet_env.ha.events
-    assert typ == "smartheat_status" and event["schema"] == 3
+    assert typ == "smartheat_status" and event["schema"] == 4
     assert event["geraet_id"] == DEVICE_ID and event["geraet_zustand"] == "nicht_uebernommen"
     assert CLAIM_CODE not in json.dumps(event)
     assert supervisor.gemeldet == [{"geraet_id": DEVICE_ID, "zustand": "nicht_uebernommen", "claim_code": CLAIM_CODE}]
@@ -208,27 +219,29 @@ def test_start_without_document_waits_unconfigured_and_reports_through_the_devic
 def test_an_operation_while_idle_is_not_posted_to_the_worker(geraet_env, caplog):
     device = FakeDevice()
     geraet, status = _verdrahtet(geraet_env, device)
-    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    laufzeit, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    result = laufzeit.kreise()[1]
     with caplog.at_level(logging.WARNING):
-        geraet.bedienung_uebernommen({"raum_soll": 22.0})
+        geraet.bedienung_uebernommen(bedienung_inhalt(22.0))
         result.worker.run_pending()
     assert "Kein Handler" not in caplog.text
 
 
 def test_start_with_document_regulates_and_wires_status_and_operations(geraet_env):
-    device = FakeDevice(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 21.0})
+    device = FakeDevice(konfiguration_aus_optionen(OPTIONS), bedienung=bedienung_inhalt(21.0))
     geraet, status = _verdrahtet(geraet_env, device)
-    result, host = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    laufzeit, host = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    result = laufzeit.kreise()[1]
     result.worker.run_pending()
     assert isinstance(result, Runtime)
     # laufzeit_merken: das unveraenderte Laufzeit-Ereignis liegt fuer up/status und sign_off beim Geraete-Host
     assert geraet.runtime_status_event["tenant_id"] == OPTIONS["tenant_id"]
 
-    geraet.bedienung_uebernommen({"raum_soll": 22.5})
+    geraet.bedienung_uebernommen(bedienung_inhalt(22.5))
     result.worker.run_pending()
     assert host.store.value == 22.5
     geraet.anzeigen(_anzeige("regelt", eingerichtet=True))
-    assert geraet_env.ha.events[-1][1]["raum_soll"] == 22.5  # wirksamer Raum-Soll aus dem Soll-Speicher
+    assert geraet_env.ha.events[-1][1]["kreise"][0]["raum_soll"] == 22.5  # wirksamer Raum-Soll aus dem Soll-Speicher
 
 
 def test_restarts_of_the_runtime_take_the_clean_restart_path(geraet_env):
@@ -236,7 +249,8 @@ def test_restarts_of_the_runtime_take_the_clean_restart_path(geraet_env):
     nach dem Zuruecksetzen), beendet den Worker ueber Neustart statt os.execv, das den Link ohne DISCONNECT abrisse."""
     device = FakeDevice()
     geraet, status = _verdrahtet(geraet_env, device)
-    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    laufzeit, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    result = laufzeit.kreise()[1]
     with pytest.raises(prozess.Neustart):
         result.neustart()
 
@@ -368,7 +382,7 @@ def test_an_unwritable_data_dir_during_cleanup_pauses_and_execs(geraet_env, monk
         main_module.main()
     # SIGTERM steht vor dem Aufraeumen (bis zu 120 s Warten auf HA): ein Stopp darin endet ueber SystemExit
     assert order == ["signal", "unlink", ("pause", 60.0), "exec"]
-    assert config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()  # nichts geloescht
+    assert config.AUFRAEUMEN_PATH.exists() and config.backup_path(1).exists()  # nichts geloescht
     assert _kein_geraetekern()
     assert "PermissionError" in caplog.text and "geheim" not in caplog.text
 
@@ -385,7 +399,7 @@ def test_a_failing_document_store_during_cleanup_pauses_and_execs(geraet_env, mo
     with caplog.at_level(logging.WARNING):
         main_module.main()
     assert order == ["signal", ("pause", 60.0), "exec"]
-    assert config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()
+    assert config.AUFRAEUMEN_PATH.exists() and config.backup_path(1).exists()
     assert _kein_geraetekern()
     assert "OSError" in caplog.text and "geheim" not in caplog.text
 
@@ -492,16 +506,16 @@ TRACKING = {"room_temperature": {"entity_id": "sensor.smartheat_raum", "source":
 
 
 def _entfernt_vorbereiten(tracking=TRACKING):
-    for path in (config.BACKUP_PATH, config.FAILSAFE_PATH, config.ENTITLEMENT_PATH):
+    config.kreis_dir(1).mkdir(parents=True, exist_ok=True)
+    for path in (config.backup_path(1), config.failsafe_path(1), config.entitlement_path(1)):
         path.write_text("{}")
-    config.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     config.ABGEMELDET_PATH.write_text(json.dumps({"anlage": "alt"}))
     config.DERIVED_SENSORS_PATH.write_text(json.dumps(tracking))
     config.AUFRAEUMEN_PATH.write_text(json.dumps({"anlage": "alt"}))
 
 
 def _anlage_geloescht() -> bool:
-    return not any(p.exists() for p in (config.BACKUP_PATH, config.FAILSAFE_PATH, config.ENTITLEMENT_PATH,
+    return not any(p.exists() for p in (config.backup_path(1), config.failsafe_path(1), config.entitlement_path(1),
                                         config.RUNTIME_DIR))
 
 
@@ -514,13 +528,34 @@ def test_cleanup_after_removal_deletes_the_plant_state_and_helpers(geraet_env):
     assert not config.DERIVED_SENSORS_PATH.exists() and not config.AUFRAEUMEN_PATH.exists()
 
 
+def test_cleanup_deletes_the_unmigrated_old_backup_but_keeps_the_pre_copies(geraet_env):
+    """Die Sicherung im Format vor der Kreisordnung bindet an die alte Anlage: bliebe sie liegen, stoppte sie den Start
+    der naechsten Anlage. Die Sicherungen `*.pre-<Release>` der Migration loescht das Aufraeumen nicht."""
+    _entfernt_vorbereiten()
+    alt = config.ALTER_BACKUP_PATH
+    alt.write_text(json.dumps({"plant_id": "alt"}))
+    pre = alt.with_name("backup.json.pre-0.0.1")
+    pre.write_text("{}")
+    main_module.aufraeumen(DeletingHa())
+    assert _anlage_geloescht() and not alt.exists() and not config.AUFRAEUMEN_PATH.exists()
+    assert pre.exists()
+
+
+def test_an_old_backup_that_cannot_be_deleted_keeps_the_marker(geraet_env, monkeypatch):
+    _entfernt_vorbereiten()
+    config.ALTER_BACKUP_PATH.write_text("{}")
+    _unlink_scheitert_fuer(monkeypatch, config.ALTER_BACKUP_PATH, errno.EIO)
+    main_module.aufraeumen(DeletingHa())
+    assert config.ALTER_BACKUP_PATH.exists() and config.AUFRAEUMEN_PATH.exists()
+
+
 def test_cleanup_keeps_a_new_setup(geraet_env):
     _entfernt_vorbereiten()
     dateien.schreiben_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",
                            {"version": 2, "inhalt": {"anlage": "neu"}, "dirty": False}, modus=dateien.PRIVAT)
     ha = DeletingHa()
     main_module.aufraeumen(ha)
-    assert ha.deleted == [] and config.BACKUP_PATH.exists() and config.DERIVED_SENSORS_PATH.exists()
+    assert ha.deleted == [] and config.backup_path(1).exists() and config.DERIVED_SENSORS_PATH.exists()
     assert not config.AUFRAEUMEN_PATH.exists()
 
 
@@ -532,7 +567,7 @@ def test_cleanup_reads_the_stored_configuration_without_writing_the_lock(geraet_
     dateien.schreiben_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",
                            {"version": 2, "inhalt": neue, "dirty": False}, modus=dateien.PRIVAT)
     main_module.aufraeumen(DeletingHa())
-    assert not config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()  # Neueinrichtung: Markierung verworfen
+    assert not config.AUFRAEUMEN_PATH.exists() and config.backup_path(1).exists()  # Neueinrichtung: Markierung verworfen
     assert not (config.DEVICE_DATA_DIR / "device" / "sicherheitssatz.json").exists()
 
 
@@ -571,12 +606,12 @@ def test_a_state_file_that_cannot_be_deleted_keeps_the_marker_and_the_backup_and
     zuletzt und nur nach allem anderen geloescht) bleiben fuer den naechsten Start, der uebrige Zustand ist weg; im Log
     Datei und Fehlerart, keine Erfolgsmeldung. Der naechste Start loescht den Rest, backup.json und die Markierung."""
     _entfernt_vorbereiten()
-    echt = _unlink_scheitert_fuer(monkeypatch, config.FAILSAFE_PATH, fehler)
+    echt = _unlink_scheitert_fuer(monkeypatch, config.failsafe_path(1), fehler)
     with caplog.at_level(logging.INFO):
         main_module.aufraeumen(DeletingHa())  # wirft nicht
-    assert config.FAILSAFE_PATH.exists() and config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()
-    assert not config.ENTITLEMENT_PATH.exists() and not config.RUNTIME_DIR.exists()
-    assert f"{config.FAILSAFE_PATH.name} nicht geloescht ({art})" in caplog.text
+    assert config.failsafe_path(1).exists() and config.AUFRAEUMEN_PATH.exists() and config.backup_path(1).exists()
+    assert not config.entitlement_path(1).exists() and config.RUNTIME_DIR.exists()  # die Dateien der Kreise liegen darin
+    assert f"{config.failsafe_path(1).name} nicht geloescht ({art})" in caplog.text
     assert "Anlagengebundener Zustand geloescht" not in caplog.text
     monkeypatch.setattr(Path, "unlink", echt)
     main_module.aufraeumen(DeletingHa())
@@ -586,27 +621,29 @@ def test_a_state_file_that_cannot_be_deleted_keeps_the_marker_and_the_backup_and
 def test_a_backup_that_cannot_be_deleted_keeps_the_marker(geraet_env, monkeypatch, caplog):
     """Scheitert nur das Loeschen von backup.json, ist der uebrige Zustand weg und die Markierung bleibt."""
     _entfernt_vorbereiten()
-    _unlink_scheitert_fuer(monkeypatch, config.BACKUP_PATH, errno.EIO)
+    _unlink_scheitert_fuer(monkeypatch, config.backup_path(1), errno.EIO)
     main_module.aufraeumen(DeletingHa())
-    assert config.BACKUP_PATH.exists() and config.AUFRAEUMEN_PATH.exists()
-    assert not config.FAILSAFE_PATH.exists() and not config.ENTITLEMENT_PATH.exists() and not config.RUNTIME_DIR.exists()
-    assert f"{config.BACKUP_PATH.name} nicht geloescht (OSError)" in caplog.text
+    assert config.backup_path(1).exists() and config.AUFRAEUMEN_PATH.exists()
+    assert not config.failsafe_path(1).exists() and not config.entitlement_path(1).exists()
+    assert config.RUNTIME_DIR.exists()  # die Sicherung des Kreises liegt darin
+    assert f"{config.backup_path(1).name} nicht geloescht (OSError)" in caplog.text
 
 
 def test_a_runtime_folder_that_cannot_be_removed_keeps_the_marker_and_the_backup(geraet_env, monkeypatch, caplog):
-    """Laesst sich der Laufzeit-Ordner nicht ganz entfernen (EACCES), bleiben Markierung und backup.json: der naechste
-    Start versucht es erneut, statt den Rest des Ordners fuer immer liegen zu lassen."""
+    """Laesst sich ein Eintrag des Laufzeit-Ordners nicht entfernen (EACCES), bleiben Markierung und backup.json: der
+    naechste Start versucht es erneut, statt den Rest des Ordners fuer immer liegen zu lassen."""
     _entfernt_vorbereiten()
-    (config.RUNTIME_DIR / "soll.json").write_text("{}")
+    (config.RUNTIME_DIR / "reste").mkdir()
+    (config.RUNTIME_DIR / "reste" / "soll.json").write_text("{}")
 
     def rmtree(path, *args, **kwargs):
         raise PermissionError(errno.EACCES, "verweigert")
 
     monkeypatch.setattr(main_module.shutil, "rmtree", rmtree)
     main_module.aufraeumen(DeletingHa())
-    assert (config.RUNTIME_DIR / "soll.json").exists() and config.AUFRAEUMEN_PATH.exists()
-    assert config.BACKUP_PATH.exists()
-    assert f"{config.RUNTIME_DIR.name} nicht geloescht (PermissionError)" in caplog.text
+    assert (config.RUNTIME_DIR / "reste" / "soll.json").exists() and config.AUFRAEUMEN_PATH.exists()
+    assert config.backup_path(1).exists()
+    assert "reste nicht geloescht (PermissionError)" in caplog.text
 
 
 def test_leftover_state_of_a_partial_cleanup_is_discarded_when_another_plant_is_set_up(geraet_env, monkeypatch):
@@ -614,19 +651,19 @@ def test_leftover_state_of_a_partial_cleanup_is_discarded_when_another_plant_is_
     Datenfehler), steht auch backup.json mit der Bindung der alten Anlage noch da: richtet der Nutzer danach eine andere
     Anlage ein, verwirft bind_to_tenant den Zustand der alten (Zustellung und anlagengebundene Felder)."""
     _entfernt_vorbereiten()
-    save_backup(config.BACKUP_PATH, {"tenant_id": "s-alt", "plant_id": "anlage-alt", "lifetime_writes": 7})
+    save_backup(config.backup_path(1), {"tenant_id": "s-alt", "plant_id": "anlage-alt", "lifetime_writes": 7})
     alt = DeliveryState(notbetrieb=True, server_failures=3, pending=PendingTick("seq-1", "daily", stage=2),
                         datenfehler=DataFault(SOURCE_LOCAL, ("room_actual",)))
-    StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH).set_delivery(alt)
-    _unlink_scheitert_fuer(monkeypatch, config.FAILSAFE_PATH, errno.EACCES)
+    StateStore(config.backup_path(1), config.failsafe_path(1)).set_delivery(alt)
+    _unlink_scheitert_fuer(monkeypatch, config.failsafe_path(1), errno.EACCES)
     main_module.aufraeumen(DeletingHa())
-    store = StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH)
+    store = StateStore(config.backup_path(1), config.failsafe_path(1))
     liegt = store.state.delivery  # vorher: fremder Zustand liegt da (gespeichert ohne Stufe und Fehlerzaehler)
     assert liegt.notbetrieb and liegt.pending is not None and liegt.datenfehler == alt.datenfehler
     assert store.state.plant_id == "anlage-alt"
     assert bind_to_tenant(store, "s-neu", "anlage-neu") == "andere_anlage"
     assert store.state.delivery == DeliveryState() and store.state.lifetime_writes == 0
-    assert StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH).state.delivery == DeliveryState()
+    assert StateStore(config.backup_path(1), config.failsafe_path(1)).state.delivery == DeliveryState()
 
 
 def test_cleanup_waits_a_limited_time_for_home_assistant(geraet_env, monkeypatch):
@@ -673,7 +710,7 @@ def test_cleanup_waits_while_the_reset_is_pending(geraet_env):
     aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, ALTE)
     ha = DeletingHa()
     main_module.aufraeumen(ha)
-    assert ha.deleted == [] and config.BACKUP_PATH.exists() and config.RUNTIME_DIR.exists()
+    assert ha.deleted == [] and config.backup_path(1).exists() and config.RUNTIME_DIR.exists()
     assert config.DERIVED_SENSORS_PATH.exists() and config.AUFRAEUMEN_PATH.exists()
 
 
@@ -695,7 +732,7 @@ def test_a_new_setup_before_the_reset_discards_the_marker_and_keeps_the_state(ge
                            {"version": 2, "inhalt": ALTE, "dirty": False}, modus=dateien.PRIVAT)
     ha = DeletingHa()
     main_module.aufraeumen(ha)
-    assert ha.deleted == [] and config.BACKUP_PATH.exists() and config.RUNTIME_DIR.exists()
+    assert ha.deleted == [] and config.backup_path(1).exists() and config.RUNTIME_DIR.exists()
     assert not config.AUFRAEUMEN_PATH.exists()
 
 
@@ -710,9 +747,10 @@ def test_an_empty_configuration_resets_then_restarts_and_the_next_start_cleans_u
     ha = DeletingHa()
 
     markierung = main_module.aufraeumen(ha)
-    assert config.BACKUP_PATH.exists() and ha.deleted == []
+    assert config.backup_path(1).exists() and ha.deleted == []
     geraet, status = _verdrahtet(geraet_env, device, markierung=markierung)
-    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    laufzeit, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    result = laufzeit.kreise()[1]
     assert isinstance(result, app.IdleBridge) and result.reason == "abgemeldet"
     assert geraet_env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
     with pytest.raises(prozess.Neustart):
@@ -721,7 +759,8 @@ def test_an_empty_configuration_resets_then_restarts_and_the_next_start_cleans_u
     main_module.aufraeumen(ha)
     assert _anlage_geloescht() and not config.AUFRAEUMEN_PATH.exists() and len(ha.deleted) == 2
     geraet, status = _verdrahtet(geraet_env, device)
-    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    laufzeit, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    result = laufzeit.kreise()[1]
     assert isinstance(result, app.IdleBridge) and result.reason == app.IDLE_NOT_CONFIGURED
 
 
@@ -739,7 +778,7 @@ def test_a_marker_that_does_not_fit_the_lock_stays_on_reset_and_nothing_is_delet
     if rastung_datei == "kaputt":
         config.RASTUNG_PATH.write_text("{kaputt")
     else:
-        rastung.schreiben(config.RASTUNG_PATH, rastung.Rastung("vaillant_vrc720", "Fussbodenheizung"),
+        rastung.schreiben(config.RASTUNG_PATH, rastung_aus(konfiguration, verteilsystem="Fussbodenheizung"),
                           "2026-10-18T00:00:00+02:00")
     device = FakeDevice({**konfiguration, "anlage": None})
     ha = DeletingHa()
@@ -747,7 +786,8 @@ def test_a_marker_that_does_not_fit_the_lock_stays_on_reset_and_nothing_is_delet
     for _ in range(2):  # zweiter Durchgang: Neustart des Add-ons mit demselben Stand
         markierung = main_module.aufraeumen(ha)
         geraet, status = _verdrahtet(geraet_env, device, markierung=markierung)
-        result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+        laufzeit, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+        result = laufzeit.kreise()[1]
         assert isinstance(result, app.IdleBridge) and result.reason == "abgemeldet"
         geraet_env.clock.advance(3 * 300)
         result.worker.run_pending()  # ein Neustart wuerde hier prozess.Neustart werfen
@@ -756,12 +796,12 @@ def test_a_marker_that_does_not_fit_the_lock_stays_on_reset_and_nothing_is_delet
         assert geraet_env.ha.writes == [] and ha.deleted == []
         gelesen = aufraeumen_markierung.lesen(config.AUFRAEUMEN_PATH)
         assert gelesen is not None and gelesen.zurueckgesetzt is False
-        assert config.BACKUP_PATH.exists() and config.DERIVED_SENSORS_PATH.exists()
-        assert json.loads(config.BACKUP_PATH.read_text())["boost_active"] is True
+        assert config.backup_path(1).exists() and config.DERIVED_SENSORS_PATH.exists()
+        assert json.loads(config.backup_path(1).read_text())["boost_active"] is True
 
 
 def _dokument(inhalt: dict, version: int) -> dict:
-    return {"schema": 1, "version": version, **inhalt}
+    return {"schema": 2, "version": version, **inhalt}
 
 
 @pytest.mark.parametrize("anders", [{"verteilsystem": "Fussbodenheizung"}, {"hebelsatz": "viessmann_vicare"}])
@@ -770,8 +810,8 @@ def test_the_cleanup_keeps_the_lever_set_lock(geraet_env, anders):
     anlagengebundenen Zustand, aber nicht device/sicherheitssatz.json; ein neuer Dokumentspeicher lehnt ein anderes Paar
     weiter ab, dasselbe Paar nimmt er an."""
     konfiguration = konfiguration_aus_optionen(OPTIONS)  # vaillant_vrc720 x Heizkoerper
-    leer = {**konfiguration, "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None, "bindung": None,
-            "raumfuehler": [], "tagestick": None, "abo": None, "bindungsparameter": None}
+    leer = konfig_form.nach_form({"anlage": None, "mindest_software": konfiguration["mindest_software"],
+                                  "software": konfiguration["software"]})
     device_dir = config.DEVICE_DATA_DIR / "device"
     store = DocumentStore(device_dir, host="ha", software_version=ADDON_VERSION)
     assert store.empfangen("konfiguration", _dokument(konfiguration, 1)).uebernommen
@@ -784,12 +824,14 @@ def test_the_cleanup_keeps_the_lever_set_lock(geraet_env, anders):
     assert _anlage_geloescht() and not config.AUFRAEUMEN_PATH.exists()  # das Aufraeumen lief
 
     store = DocumentStore(device_dir, host="ha", software_version=ADDON_VERSION)
-    ergebnis = store.empfangen("konfiguration", _dokument({**konfiguration, **anders}, 3))
+    abweichend = {**konfiguration, "kreise": [{**konfiguration["kreise"][0], **anders}]}
+    ergebnis = store.empfangen("konfiguration", _dokument(abweichend, 3))
     assert (ergebnis.ok, ergebnis.grund) == (False, "hebelsatz_eingerastet")
     assert store.empfangen("konfiguration", _dokument(konfiguration, 4)).uebernommen
 
 
 def test_no_marker_no_cleanup(geraet_env):
-    config.BACKUP_PATH.write_text("{}")
+    config.kreis_dir(1).mkdir(parents=True)
+    config.backup_path(1).write_text("{}")
     main_module.aufraeumen(DeletingHa())
-    assert config.BACKUP_PATH.exists()
+    assert config.backup_path(1).exists()

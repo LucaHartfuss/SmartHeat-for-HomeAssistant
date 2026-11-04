@@ -1,14 +1,16 @@
-"""G-9: Endzustaende. Wird die Regelung beendet (Abmelden, Abo-Ende), stehen danach die zuletzt gelernten Regelwerte
-und die Heizgrenze, die vor dem ersten Schreiben stand; schlaegt das Zuruecksetzen fehl, versucht das Add-on es weiter."""
+"""G-9: Endzustaende. Wird die Regelung beendet (Abmelden, Abo-Ende), stehen danach Heizkurve, Zonensollwert,
+Heizgrenze und Mindestvorlauf wieder so, wie sie vor dem ersten Schreiben standen; schlaegt das Zuruecksetzen fehl,
+versucht das Add-on es weiter."""
 import pytest
 from anlagen import LEERE_KONFIGURATION, konfiguration, schreibziel
-from beobachtung import COMFORT_BOOST, REGELWERTE, SATZ, boost_anlage, boost_starts, stand
+from beobachtung import COMFORT_BOOST, SATZ, boost_anlage, boost_starts, stand
 
 from smartheat_device.prozess import Neustart
 
 URSPRUNG_HEIZGRENZE = 17.0  # nicht der Regelwert (16): so zeigt sich, welcher Wert zurueckkommt
-ENDZUSTAND = {"curve": REGELWERTE["curve"], "room_setpoint": REGELWERTE["room_setpoint"],
-              "heat_limit": URSPRUNG_HEIZGRENZE}
+#: Ursprung vor dem ersten Schreiben: Startwerte der Anlage (Kurve 0,9, Zonensollwert 21) und die Heizgrenze oben;
+#: die gelernten Werte (Kurve 0,9, Zone 22) sind es nicht mehr
+ENDZUSTAND = {"curve": 0.9, "room_setpoint": 21.0, "heat_limit": URSPRUNG_HEIZGRENZE}
 DREISSIG_TAGE = 30 * 86400
 
 
@@ -25,7 +27,7 @@ def _abmelden(anlage, version: int = 2) -> None:
 
 
 def _abo_ende(anlage) -> None:
-    anlage.konfiguration_senden(2, {**konfiguration(SATZ, "Heizkoerper"), "abo": "inaktiv"})
+    anlage.konfiguration_senden(2, konfiguration(SATZ, "Heizkoerper", abo="inaktiv"))
     anlage.laufen_ueber_neustarts(600)
     assert stand(anlage) == COMFORT_BOOST  # die Karenzzeit: das Add-on regelt im Notbetrieb weiter
     assert any("Notbetrieb" in text for text in anlage.meldetexte())
@@ -60,9 +62,10 @@ def test_ak_g9_02_abgelehnte_rueckstellung_wird_weiter_versucht(welt):
     _abmelden(anlage)
     anlage.laufen_ueber_neustarts(3600)
     assert stand(anlage) == COMFORT_BOOST  # nichts ist zurueckgestellt
-    texte = [t for t in anlage.meldetexte() if "nicht auf die zuletzt gelernten Werte" in t]
-    assert texte and all(wert in texte[0] for wert in ("Heizkurve 0,9", "Zone 22", "Heizgrenze 17"))
-    assert any(m[0] == "dauerhaft" and "nicht auf die zuletzt gelernten Werte" in m[2] for m in anlage.ha.meldungen)  # kritisch
+    texte = [t for t in anlage.meldetexte() if "nicht auf die ursprünglichen Werte" in t]
+    assert texte and all(wert in texte[0] for wert in ("Heizkurve 0,9", "Zone 21", "Heizgrenze 17",
+                                                       "Mindestvorlauftemperatur 21"))
+    assert any(m[0] == "dauerhaft" and "nicht auf die ursprünglichen Werte" in m[2] for m in anlage.ha.meldungen)  # kritisch
     assert "smartheat_wiederherstellung" not in anlage.zurueckgenommen()
     anlage.laufen_ueber_neustarts(2 * 3600)
     versuche = sorted({zeit for _, _, zeit in anlage.ha.abgelehnt})
@@ -76,10 +79,10 @@ def test_ak_g9_02_abgelehnte_rueckstellung_wird_weiter_versucht(welt):
 
 
 #: lokale Mindestliste der Rueckstellung je Hebelsatz (woertlich, nie aus dem Produktcode)
-MINDESTLISTE = {"vaillant_vrc720": ("heat_limit",), "weishaupt_wwp": ("curve", "room_setpoint", "heat_limit"),
+MINDESTLISTE = {"vaillant_vrc720": ("curve", "room_setpoint", "heat_limit", "min_flow"), "weishaupt_wwp": ("curve", "room_setpoint", "heat_limit"),
                 "weishaupt_wwp_basis": ("room_setpoint",), "viessmann_vicare": ("curve", "level", "room_setpoint")}
 #: Werte des Servers, die von den Startwerten der Anlage verschieden sind
-GELERNT = {"vaillant_vrc720": {"curve": 0.8, "room_setpoint": 21.5, "heat_limit": 17.0},
+GELERNT = {"vaillant_vrc720": {"curve": 0.8, "room_setpoint": 21.5, "heat_limit": 17.0, "min_flow": 22.0},
            "weishaupt_wwp": {"curve": 0.8, "room_setpoint": 21.5, "heat_limit": 17.0},
            "weishaupt_wwp_basis": {"room_setpoint": 21.5},
            "viessmann_vicare": {"curve": 0.8, "level": -2.0, "room_setpoint": 21.5}}
