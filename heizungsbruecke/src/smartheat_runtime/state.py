@@ -403,10 +403,17 @@ _PLANT_BOUND = (
     "lifetime_writes", "last_room_target",
 )
 _SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")
-#: Die Schluessel des Schreibbudgets, die der ganzen Anlage gehoeren (alle Kreise teilen sie); jeder andere gehoert dem Kreis.
+#: Die festen Schluessel des Schreibbudgets, die der ganzen Anlage gehoeren (alle Kreise teilen sie).
 ANLAGE_SCHLUESSEL = frozenset({
     write_budget.TOTAL, write_budget.ZONE_PREPARE, write_budget.BOOST_START, write_budget.EMERGENCY_START,
 })
+
+
+def gehoert_der_anlage(schluessel: str) -> bool:
+    """True fuer einen Schluessel des Schreibbudgets, den alle Kreise der Anlage teilen: die festen Schluessel
+    (`ANLAGE_SCHLUESSEL`) und die Durchsetzung je Hebel (`enforce:<hebel>`), deren Tageslimit das Kontingent der Cloud
+    der Anlage abbildet. Jeder andere Schluessel gehoert dem Kreis."""
+    return schluessel in ANLAGE_SCHLUESSEL or schluessel.startswith(write_budget.ENFORCE_PREFIX)
 
 
 #: INFO der einmaligen Uebernahme, woertlich im Ablaufbuch FB-Kennung-Live.
@@ -437,7 +444,7 @@ def bind_to_tenant(store: "ZustandsSpeicher", tenant_id: str | None, plant_id: s
         zurueck = {key: getattr(defaults, key) for key in _PLANT_BOUND + _SETUP_BOUND}
         if zaehler_der_anlage_behalten:
             zurueck["write_budget"] = {key: entry for key, entry in state.write_budget.items()
-                                       if key in ANLAGE_SCHLUESSEL}
+                                       if gehoert_der_anlage(key)}
             del zurueck["lifetime_writes"]
         store.update(**zurueck, tenant_id=tenant_id, plant_id=plant_id)
         return "andere_anlage"

@@ -22,9 +22,9 @@ def test_die_laufzeit_verteilt_die_zaehler_auf_anlage_und_kreis(env):
     bridge.store.update(write_budget={write_budget.TOTAL: EINTRAG, "enforce:curve": EINTRAG}, lifetime_writes=7)
 
     anlage = _lesen(env.paths["RUNTIME_DIR"] / "anlage_budget.json")
-    assert anlage == {"write_budget": {write_budget.TOTAL: EINTRAG}, "lifetime_writes": 7}
+    assert anlage == {"write_budget": {write_budget.TOTAL: EINTRAG, "enforce:curve": EINTRAG}, "lifetime_writes": 7}
     kreis = _lesen(env.paths["BACKUP_PATH"])
-    assert kreis["write_budget"] == {"enforce:curve": EINTRAG}
+    assert kreis.get("write_budget", {}) == {}
     assert "lifetime_writes" not in kreis or kreis["lifetime_writes"] == 0
 
 
