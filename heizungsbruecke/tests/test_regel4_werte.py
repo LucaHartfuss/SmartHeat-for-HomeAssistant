@@ -55,6 +55,17 @@ KONSTANTEN = {
     "Comfort-Boost hoechstens": (boost.COMFORT_BOOST_MAX_SECONDS, 4 * 3600),
     "Comfort-Boost unlesbar": (boost.UNREADABLE_ROOM_CHECKS, 3),
     "Notfall-Boost ab": (emergency_boost.EMERGENCY_TRIGGER_K, 1.0),
+    "Kaelteschutz Soll-Ausloeser": (
+        (emergency_boost.KAELTESCHUTZ_SOLL_DELTA_K, emergency_boost.KAELTESCHUTZ_SOLL_DAUER),
+        (2.0, timedelta(hours=3))),
+    "Kaelteschutz Frostnaehe-Ausloeser": (
+        (emergency_boost.KAELTESCHUTZ_FROST_C, emergency_boost.KAELTESCHUTZ_FROST_DAUER),
+        (5.0, timedelta(minutes=15))),
+    "Kaelteschutz Ende ohne Soll": (emergency_boost.KAELTESCHUTZ_ENDE_OHNE_SOLL_C, 7.0),
+    "Kaelteschutz gueltiges Ist": (emergency_boost.KAELTESCHUTZ_IST_BEREICH, (-10.0, 35.0)),
+    "Kaelteschutz Luecke": (emergency_boost.KAELTESCHUTZ_LUECKE_MAX, timedelta(minutes=15)),
+    "Kaelteschutz hoechstens": (emergency_boost.KAELTESCHUTZ_HOECHSTDAUER, timedelta(hours=4)),
+    "Kaelteschutz Ist gleich Plausibilitaet": (emergency_boost.KAELTESCHUTZ_IST_BEREICH, plausibility.ROOM_ACTUAL_RANGE),
     "Notbetrieb": ((delivery.NOTBETRIEB_AFTER_SERVER_FAILURES, delivery.ACK_TIMEOUT_SECONDS), (2, 30)),
     "Abo-Frist": (entitlement.GRACE_PERIOD, timedelta(days=30)),
 }
