@@ -43,7 +43,7 @@ REGISTER_FIELDS = (
 REGISTER_OPTIONAL = ("werks_nachweis",)  # fehlt = kein Nachweis (Pruefung: eigene Spec vor der Freischaltung)
 CERTIFICATE_FIELDS = ("csr",)
 CAPABILITY_FIELDS = ("drivers", "zigbee")
-CAPABILITY_OPTIONAL = ("updater", "programm")  # fehlt = false
+CAPABILITY_OPTIONAL = ("updater", "programm", "testphase", "kaelteschutz")  # fehlt = false
 BOOTSTRAP_RESPONSE = ("device_state", "certificate", "mqtt_endpoint", "mqtt_port", "mqtt_ca")
 BOOTSTRAP_OPTIONAL = ("mqtt_alpn",)  # fehlt = kein Rueckfall auf Port 443 (AN-3)
 DEVICE_STATES = ("nicht_uebernommen", "uebernommen", "gesperrt")
@@ -115,7 +115,9 @@ KONFIGURATION_FIELDS = (
     "mindest_integration", "software", "bindungsparameter",
 )
 KONFIGURATION_KREIS_FIELDS = ("kreis", "name", "bindung", "raeume", "hebelsatz", "verteilsystem", "abo")
-KONFIGURATION_KREIS_OPTIONAL = ("ursprungswerte",)  # fehlt = keine Ursprungswerte auf dem Server
+#: ursprungswerte: fehlt = keine Ursprungswerte auf dem Server; zustand: fehlt = in_betrieb (der Server sendet ihn nur an ein
+#: Geraet mit der Faehigkeit des Zustands, sonst lehnte dessen strenge Pruefung das Feld ab).
+KONFIGURATION_KREIS_OPTIONAL = ("ursprungswerte", "zustand")
 KONFIGURATION_RAUM_FIELDS = ("raum", "name", "rolle", "fuehler", "soll_quelle", "versatz_k", "ziel_fest")
 RAUM_ROLLEN = ("referenz", "kontroll")
 #: Hoechstens so viele Kreise je Geraet (Nachrichten und Konfiguration), Nutzer-Entscheidung.
@@ -152,6 +154,7 @@ HA_HINWEISE = ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", 
 TREIBER_FIELDS = ("id", "parameter")
 SOFTWARE_FIELDS = ("version", "manifest_url", "manifest_sha256", "signature")
 ABO = ("aktiv", "inaktiv")
+KREIS_ZUSTAENDE = ("in_betrieb", "ausser_betrieb", "testphase_ohne")
 BEDIENUNG_FIELDS = ("schema", "version", "kreise", "quelle", "ts")
 BEDIENUNG_KREIS_FIELDS = ("kreis", "modus", "raum_soll")  # ein Eintrag je Kreis, Nummern aufsteigend und einmalig
 MODI = ("manuell",)

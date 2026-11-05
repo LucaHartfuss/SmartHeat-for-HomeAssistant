@@ -48,7 +48,7 @@ def test_host_identity():
 
 def test_capabilities_and_clock(tmp_path, monkeypatch):
     host, _, clock = _host(tmp_path, monkeypatch)
-    assert host.faehigkeiten() == {"drivers": [], "zigbee": False}  # kein updater: Updates macht der Supervisor
+    assert host.faehigkeiten() == {"drivers": [], "zigbee": False, "kaelteschutz": True}  # kein updater: Updates macht der Supervisor
     assert host.uhr_synchron() is True
     host, _, _ = _host(tmp_path, monkeypatch, Supervisor(error=OSError("weg")))
     assert host.uhr_synchron() is None

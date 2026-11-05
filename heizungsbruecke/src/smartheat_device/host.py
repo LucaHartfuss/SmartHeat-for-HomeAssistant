@@ -67,7 +67,7 @@ class DeviceHost(Protocol):
     version: str  # Software-Version (hello, register, Mindestversion)
 
     def faehigkeiten(self) -> dict:
-        """hello.faehigkeiten bzw. register.capabilities: drivers, zigbee, optional updater, programm."""
+        """hello.faehigkeiten bzw. register.capabilities: drivers, zigbee, optional updater, programm, testphase, kaelteschutz."""
         ...
 
     def wege(self) -> list[str]:

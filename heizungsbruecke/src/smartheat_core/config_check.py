@@ -47,6 +47,7 @@ GRUENDE = (UNGUELTIG, HEBELSATZ_EINGERASTET, SICHERHEITSWERTE_FEHLEN, ROLLE_UNZU
 HOST_GATEWAY = "gateway"
 HOST_HA = "ha"
 ABO_WERTE = ("aktiv", "inaktiv")  # Kopie aus wire.ABO (test_core_vertrag_pin.py)
+KREIS_ZUSTAENDE = kreisansicht.ZUSTAENDE  # Kopie aus wire.KREIS_ZUSTAENDE (test_core_vertrag_pin.py)
 #: Gateway: Raumfuehler aus Zigbee (Temperatur bzw. Isttemperatur eines Thermostats) oder vom Treiber.
 GATEWAY_RAUMFUEHLER = re.compile(r"zigbee:0x[0-9a-f]{16}:(temperature|local_temperature)|treiber:room_temperature")
 IEEE = re.compile(r"0x[0-9a-f]{16}")
@@ -72,7 +73,7 @@ RAUM_VERSATZ_MAX = 3.0
 KREIS_NUMMER_MAX = 2**31 - 1  # Kreis- und Raumnummern (wire.KREIS_MAX)
 RAUM_ROLLEN = ("referenz", "kontroll")
 KONFIG_KREIS_FELDER = ("kreis", "name", "bindung", "raeume", "hebelsatz", "verteilsystem", "abo")
-KONFIG_KREIS_OPTIONAL = ("ursprungswerte",)
+KONFIG_KREIS_OPTIONAL = ("ursprungswerte", "zustand")
 RAUM_FELDER = ("raum", "name", "rolle", "fuehler", "soll_quelle", "versatz_k", "ziel_fest")
 #: Anbindungswege, die ein Geraet heute ausfuehrt (`simulation`: Testweg), und ihre Abbildung aus der Bindung.
 WEGE = ("vaillant_myvaillant", "viessmann_vicare", "weishaupt_modbus", "simulation")
@@ -213,6 +214,8 @@ def _kreis_aufbau(eintrag, vorige: int) -> dict | None:
         return befund("bindung", "fehlt")
     if eintrag["abo"] not in ABO_WERTE:
         return befund("abo", "unbekannt")
+    if "zustand" in eintrag and eintrag["zustand"] not in KREIS_ZUSTAENDE:
+        return befund("zustand", "unbekannt")  # fehlt der Wert, gilt in_betrieb (kreisansicht.zustand)
     abfrage = eintrag["bindung"].get("abfrage_s")
     if abfrage is not None and not (isinstance(abfrage, int) and not isinstance(abfrage, bool)
                                     and ABFRAGE_S[0] <= abfrage <= ABFRAGE_S[1]):

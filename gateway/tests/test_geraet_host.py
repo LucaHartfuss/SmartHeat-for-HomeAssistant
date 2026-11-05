@@ -49,7 +49,8 @@ def _anzeige(zustand="regelt", **changes):
 
 def test_capabilities_and_version(welt):
     assert (welt.host.host, welt.host.version) == ("gateway", GATEWAY_VERSION)
-    assert welt.host.faehigkeiten() == {"drivers": ["simulation", "vicare_cloud"], "zigbee": True, "updater": True}
+    assert welt.host.faehigkeiten() == {"drivers": ["simulation", "vicare_cloud"], "zigbee": True, "updater": True,
+                                         "kaelteschutz": True}
 
 
 def test_capabilities_are_built_against_the_contract(welt, monkeypatch):

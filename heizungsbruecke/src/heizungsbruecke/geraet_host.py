@@ -78,7 +78,8 @@ class HaDeviceHost(GeraetHostBasis):
     # --- DeviceHost ---
 
     def faehigkeiten(self) -> dict:
-        return nachrichten.pruefen("faehigkeiten", {"drivers": [], "zigbee": False}, wire.CAPABILITY_FIELDS,
+        return nachrichten.pruefen("faehigkeiten", {"drivers": [], "zigbee": False, "kaelteschutz": True},
+                                   wire.CAPABILITY_FIELDS,
                                    wire.CAPABILITY_OPTIONAL)
 
     def wege(self) -> list[str]:

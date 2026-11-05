@@ -9,6 +9,9 @@ liefern dann leere Werte, die Pruefung lehnt den Aufbau davor ab."""
 from collections.abc import Mapping
 
 ROLLE_REFERENZ = "referenz"
+#: Zustand eines Kreises (Kopie aus smartheat_device.wire.KREIS_ZUSTAENDE); fehlt das Feld, gilt der erste.
+ZUSTAENDE = ("in_betrieb", "ausser_betrieb", "testphase_ohne")
+IN_BETRIEB = ZUSTAENDE[0]
 #: Felder, die die Sicht aus dem Kreiseintrag unveraendert uebernimmt.
 KREIS_FELDER = ("kreis", "name", "bindung", "hebelsatz", "verteilsystem", "abo")
 #: Anlagenweite Felder der Sicht.
@@ -70,6 +73,19 @@ def fuer(konfiguration, nummer: int) -> dict:
         if eintrag.get("kreis") == nummer and not isinstance(eintrag.get("kreis"), bool):
             return ansicht(konfiguration, eintrag)
     return ansicht(konfiguration, {})
+
+
+def zustand(konfiguration, kreis: int | None = None) -> str:
+    """Zustand des Kreises (`kreise[n].zustand`; ohne Nummer der erste Kreis). Ein fehlendes oder fremdes Feld, ein
+    unbekannter Kreis und Fremdinhalt lesen sich als `in_betrieb`; die Pruefung lehnt ein fremdes Feld davor ab. Der
+    Zustand steht bereit, hat aber noch keine Wirkung."""
+    if not isinstance(konfiguration, Mapping):
+        return IN_BETRIEB
+    eintraege = kreise(konfiguration)
+    if kreis is not None:
+        eintraege = [e for e in eintraege if e.get("kreis") == kreis and not isinstance(e.get("kreis"), bool)]
+    wert = eintraege[0].get("zustand") if eintraege else None
+    return wert if isinstance(wert, str) and wert in ZUSTAENDE else IN_BETRIEB
 
 
 def sicht(konfiguration, kreis: int | None = None) -> dict:

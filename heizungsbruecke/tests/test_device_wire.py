@@ -87,6 +87,7 @@ NUR_SERVER: set[str] = {
 }
 NUR_GEPINNT_GERAET: set[str] = {  # Kopien im Kern (smartheat_core darf nichts importieren), nur gepinnt (P4)
     "ABO",  # config_check.ABO_WERTE
+    "KREIS_ZUSTAENDE",  # config_check.KREIS_ZUSTAENDE
     "BINDUNGSPARAMETER_FIELDS",  # bindungsparameter.FELDER
     "BINDUNG_GATEWAY_FIELDS",  # config_check.GATEWAY_BINDUNG_FELDER
     "BINDUNG_HA_FIELDS",  # config_check.HA_BINDUNG_FELDER

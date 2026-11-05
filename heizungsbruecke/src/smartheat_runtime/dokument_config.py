@@ -204,8 +204,9 @@ def laufzeit_relevant_kreis(alt, neu, kreis: int) -> bool:
 
 
 def _kreis_wert(konfiguration: Mapping, kreis: int, *, ohne_abo: bool):
-    """Eintrag des Kreises ohne Ursprungswerte (und ohne Abo, wenn gewuenscht); None, wenn es ihn nicht gibt."""
-    weg = ("ursprungswerte", "abo") if ohne_abo else ("ursprungswerte",)
+    """Eintrag des Kreises ohne Ursprungswerte und Zustand (und ohne Abo, wenn gewuenscht); None, wenn es ihn nicht
+    gibt."""
+    weg = ("ursprungswerte", "zustand", "abo") if ohne_abo else ("ursprungswerte", "zustand")
     for eintrag in kreisansicht.kreise(konfiguration):
         if eintrag.get("kreis") == kreis:
             return {k: v for k, v in eintrag.items() if k not in weg}
@@ -219,10 +220,12 @@ def abo_wiederaufnahme(alt, neu, kreis: int) -> bool:
 
 
 def _laufzeit_wert(konfiguration: Mapping, feld: str):
-    """Wert eines Laufzeitfeldes; die Kreise ohne die gespiegelten Ursprungswerte (ihr Eintreffen startet nichts neu)."""
+    """Wert eines Laufzeitfeldes; die Kreise ohne die gespiegelten Ursprungswerte (ihr Eintreffen startet nichts neu) und
+    ohne den Zustand (er wirkt noch nicht)."""
     wert = konfiguration.get(feld)
     if feld == "kreise" and isinstance(wert, list):
-        return [{k: v for k, v in kreis.items() if k != "ursprungswerte"} if isinstance(kreis, Mapping) else kreis
+        return [{k: v for k, v in kreis.items() if k not in ("ursprungswerte", "zustand")}
+                if isinstance(kreis, Mapping) else kreis
                 for kreis in wert]
     return wert
 
