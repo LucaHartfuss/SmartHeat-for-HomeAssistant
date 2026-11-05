@@ -84,8 +84,8 @@ def test_ak_g1_03_notbetrieb_und_notfall_boost(welt):
     assert len(anlage.ha.schreibvorgaenge) == geschrieben
 
 
-@pytest.mark.akzeptanz("AK-G1-04")
-def test_ak_g1_04_frostnaehe_hebt_an_ohne_notbetrieb_und_endet_bei_ankunft(welt):
+@pytest.mark.akzeptanz("AK-G1-07")
+def test_ak_g1_07_frostnaehe_hebt_an_ohne_notbetrieb_und_endet_bei_ankunft(welt):
     satz = "vaillant_vrc720"
     anlage: Anlage = welt(satz, "Heizkoerper")
     anlage.ha.states[RAUMFUEHLER] = 21.0

@@ -345,6 +345,46 @@ def test_ohne_soll_loest_nur_die_frostnaehe_aus(make_store, wall, uhr, caplog):
     assert not _lauft(rt) and _writes(rt) == []
 
 
+def test_ohne_raumliste_gilt_der_kreissensor_ohne_versatz_gegen_die_schwelle(make_store, wall, uhr):
+    rt = _neu(make_store, wall, uhr, {}, referenz=())
+    rt.werte["sensor.mittel"] = 19.1  # 1,9 K unter dem Soll
+    _pruefen(rt)
+
+    _lauf(rt, 4 * STUNDE)
+
+    assert not _lauft(rt) and _writes(rt) == []
+
+    rt.werte["sensor.mittel"] = 19.0  # genau 2,0 K
+    _lauf(rt, 3 * STUNDE + 5 * MINUTE)
+
+    assert _lauft(rt) and rt.store.state.kaelteschutz_art == "soll"
+
+
+def test_eine_art_ohne_beginn_im_speicher_gilt_nicht_als_lauf(make_store, wall, uhr):
+    rt = _neu(make_store, wall, uhr, {1: 21.0})
+    rt.store.update(kaelteschutz_art="soll")
+
+    _pruefen(rt)
+
+    assert rt.store.state.kaelteschutz_art is None and _writes(rt) == [] and not _lauft(rt)
+
+
+def test_das_ende_wird_einmal_gemeldet_und_ein_ruhiger_check_meldet_nichts(make_store, wall, uhr, caplog):
+    rt = _neu(make_store, wall, uhr, {1: 4.0}, soll=None)
+
+    with caplog.at_level(logging.INFO):
+        _pruefen(rt)
+        assert "Kaelteschutz endet" not in caplog.text
+        _lauf(rt, 15 * MINUTE, schritt=MINUTE)
+        assert _lauft(rt) and "Kaelteschutz endet" not in caplog.text
+        _ist(rt, r1=21.0)
+        _lauf(rt, 5 * MINUTE)
+        assert caplog.text.count("Kaelteschutz endet") == 1
+        _lauf(rt, 5 * MINUTE)
+
+    assert caplog.text.count("Kaelteschutz endet") == 1
+
+
 # --- Start-Zaehler -----------------------------------------------------------------------------------------------
 
 def test_der_siebte_start_am_tag_wird_abgelehnt_und_am_naechsten_tag_nachgeholt(make_store, wall, uhr):

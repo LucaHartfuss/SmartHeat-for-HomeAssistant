@@ -47,8 +47,8 @@ def test_ak_g4_02_boost_endet_beim_dritten_unlesbaren_raumwert(welt):
     assert len(boost_starts(anlage)) == 1
 
 
-@pytest.mark.akzeptanz("AK-G4-03")
-def test_ak_g4_03_kaelteschutz_loest_den_boost_nach_vier_stunden_ab(welt):
+@pytest.mark.akzeptanz("AK-G4-05")
+def test_ak_g4_05_kaelteschutz_loest_den_boost_nach_vier_stunden_ab(welt):
     anlage = boost_anlage(welt)  # der Raum steht bei 19,0: 3 K unter Soll 22
     beginn = boost_starts(anlage)[0]
     anlage.vergehen(VIER_STUNDEN + 300 - (anlage.uhr() - beginn), REGELWERTE, fuehler=19.0)
