@@ -143,6 +143,24 @@ def test_der_notfall_boost_rechnet_mit_dem_delta(make_store):
     assert _writes(rt) == EMERGENCY and rt.store.state.emergency_boost_active is True
 
 
+@pytest.mark.parametrize("ist", [4.9, 0.0, -10.0])
+def test_ein_ist_unter_5_grad_loest_im_notbetrieb_den_notfall_boost_aus(make_store, ist):
+    rt = _rt(make_store, {1: ist}, soll=21.0, failsafe={"failsafe_active": True})
+
+    regulation.run_local_check(rt)
+
+    assert _writes(rt) == EMERGENCY and rt.store.state.emergency_boost_active is True
+
+
+def test_ein_ist_unter_minus_10_grad_ist_ungueltig_und_loest_nichts_aus(make_store):
+    rt = _rt(make_store, {1: -10.1}, soll=21.0, failsafe={"failsafe_active": True})
+
+    with pytest.raises(SignalUngueltig):
+        regulation.run_local_check(rt)
+
+    assert _writes(rt) == [] and rt.store.state.emergency_boost_active is False
+
+
 def test_ein_ungueltiger_referenzraum_faellt_aus_dem_mittel(make_store):
     # Raum 2 liefert Unsinn (ausserhalb des Bereichs): nur Raum 1 zaehlt, Delta 1.0 -> Boost
     rt = _rt(make_store, {1: 20.0, 2: 99.0}, referenz=((1, 0.0), (2, 0.0)))

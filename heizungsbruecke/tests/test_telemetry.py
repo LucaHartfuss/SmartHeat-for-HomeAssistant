@@ -436,7 +436,7 @@ def test_die_telemetrie_traegt_den_ist_wert_je_raum_nach_raumnummer_sortiert():
 
 
 @pytest.mark.parametrize("schlecht", [
-    RuntimeError("unavailable"), SignalUngueltig("kein Fuehler"), 99.0, 4.99, 35.01, float("nan"), float("inf"),
+    RuntimeError("unavailable"), SignalUngueltig("kein Fuehler"), 99.0, -10.01, 35.01, float("nan"), float("inf"),
     "kalt", None, True,
 ])
 def test_ein_raum_ohne_gueltigen_wert_fehlt_in_der_liste_die_uebrigen_bleiben(schlecht):
@@ -453,7 +453,7 @@ def test_ein_raum_ohne_gueltigen_wert_fehlt_in_der_liste_die_uebrigen_bleiben(sc
     assert telemetry.read_regulation_fields(manifest, signals, None)["raeume"] == [{"raum": 1, "ist": 20.5}]
 
 
-@pytest.mark.parametrize("wert", [5.0, 35.0])
+@pytest.mark.parametrize("wert", [-10.0, 4.9, 35.0])
 def test_die_randwerte_des_raumbereichs_gelten_als_gueltig(wert):
     manifest = _raeume_manifest({1: "sensor.a"})
     signals = MagicMock(spec=SignalSource)

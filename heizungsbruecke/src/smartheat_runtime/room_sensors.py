@@ -1,7 +1,7 @@
 """Einzelfuehler-Ueberwachung. Faellt ein Raumfuehler aus, rechnet das
 Raumtemperatur-Template mit den uebrigen weiter; der Kunde bekommt einen Hinweis. Mit nur einem
 Fuehler ist dessen Ausfall der lokale Datenfehler auf room_actual (kritisch, delivery) und wird
-hier nicht doppelt gemeldet. Gueltig heisst wie im Template: Zahl im Bereich ROOM_TEMP_RANGE.
+hier nicht doppelt gemeldet. Gueltig heisst wie im Template: Zahl im Bereich ROOM_ACTUAL_RANGE.
 
 Ein Fuehler gilt erst nach FAILED_ROUNDS aufeinanderfolgenden Runden ohne gueltigen Wert als
 ausgefallen (nach einem Host-Neustart laedt z.B. Zigbee noch, Funkstoerungen sind kurz); die
@@ -11,7 +11,7 @@ import logging
 
 from smartheat_core.logtext import lesbar
 from smartheat_runtime.notifier import STATE_OK
-from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
+from smartheat_runtime.plausibility import ROOM_ACTUAL_RANGE, is_plausible
 from smartheat_runtime.ports import SignalNotFound, SourceUnavailable
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def check_room_sensors(rt) -> None:
             return
         except (ValueError, KeyError, TypeError):
             value = None
-        valid[ref] = is_plausible(value, ROOM_TEMP_RANGE)
+        valid[ref] = is_plausible(value, ROOM_ACTUAL_RANGE)
     ok_count = sum(valid.values())
     previous_misses = rt.store.state.room_sensor_misses
     misses = {}

@@ -13,7 +13,7 @@ from smartheat_core.bindungsparameter import ENERGIE_KANAELE
 from smartheat_core.logtext import lesbar
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime.delivery import DataFault
-from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
+from smartheat_runtime.plausibility import ROOM_ACTUAL_RANGE, is_plausible
 from smartheat_runtime.ports import SignalUngueltig, SourceUnavailable
 
 logger = logging.getLogger(__name__)
@@ -146,13 +146,13 @@ def read_regulation_fields(manifest, signals, room_target: float | None) -> dict
 
 def read_raeume(manifest, signals) -> list[dict]:
     """Ist je Raum aus `manifest.raum_refs`, aufsteigend nach Raumnummer. Ein Raum ohne lesbaren Wert im Raumbereich
-    (ROOM_TEMP_RANGE) fehlt mit einer Warnung je Ausfall und Raum; die uebrigen bleiben."""
+    (ROOM_ACTUAL_RANGE) fehlt mit einer Warnung je Ausfall und Raum; die uebrigen bleiben."""
     raeume = []
     for raum, ref in sorted(manifest.raum_refs.items()):
         schluessel = f"raum:{raum}"
         try:
             ist = signals.get_state(ref)
-            if not is_plausible(ist, ROOM_TEMP_RANGE):
+            if not is_plausible(ist, ROOM_ACTUAL_RANGE):
                 raise ValueError("kein Wert im Raumbereich")
         except Exception as exc:
             if schluessel not in _AUSFALL_GEWARNT:

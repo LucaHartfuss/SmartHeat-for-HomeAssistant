@@ -3,11 +3,11 @@ heizungsbruecke.helper_templates.room_temperature_template: ungueltige und unpla
 gueltigen auf 2 Nachkommastellen, ohne gueltigen Wert None. Aequivalenztest: tests/test_room_mean.py."""
 from collections.abc import Iterable
 
-from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
+from smartheat_runtime.plausibility import ROOM_ACTUAL_RANGE, is_plausible
 
 
 def room_mean(values: Iterable[object]) -> float | None:
-    valid = [float(value) for value in values if is_plausible(value, ROOM_TEMP_RANGE)]
+    valid = [float(value) for value in values if is_plausible(value, ROOM_ACTUAL_RANGE)]
     if not valid:
         return None
     return round(sum(valid) / len(valid), 2)

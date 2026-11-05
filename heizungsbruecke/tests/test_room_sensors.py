@@ -56,7 +56,7 @@ def test_single_failed_sensor_is_reported_with_remaining_count(make_store):
 
 
 def test_implausible_value_counts_as_failed_and_recovery_is_reported(make_store):
-    values = {"sensor.a": 21.0, "sensor.b": 0.0}
+    values = {"sensor.a": 21.0, "sensor.b": -10.1}
     rt = _rt(make_store, values, values.keys())
     check_room_sensors(rt)
     check_room_sensors(rt)
@@ -65,6 +65,16 @@ def test_implausible_value_counts_as_failed_and_recovery_is_reported(make_store)
     check_room_sensors(rt)
 
     assert _texts(rt)[-1] == "SmartHeat: Raumfühler sensor.b liefert wieder Werte."
+
+
+def test_a_cold_sensor_down_to_minus_10_is_valid_and_not_reported(make_store):
+    values = {"sensor.a": 21.0, "sensor.b": 3.0, "sensor.c": -10.0}
+    rt = _rt(make_store, values, values.keys())
+
+    for _ in range(3):
+        check_room_sensors(rt)
+
+    assert _texts(rt) == []
 
 
 def test_all_failed_says_so_instead_of_mean_of_zero(make_store):

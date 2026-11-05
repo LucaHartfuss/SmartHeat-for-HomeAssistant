@@ -47,6 +47,7 @@ TABELLE = {
 
 KONSTANTEN = {
     "Plausibilitaet Raum": (plausibility.ROOM_TEMP_RANGE, (5.0, 35.0)),
+    "Plausibilitaet Raum Ist": (plausibility.ROOM_ACTUAL_RANGE, (-10.0, 35.0)),
     "Plausibilitaet aussen": (plausibility.OUTDOOR_TEMP_RANGE, (-40.0, 45.0)),
     "Bedienwunsch": ((wire.RAUM_SOLL_MIN, wire.RAUM_SOLL_MAX, wire.RAUM_SOLL_STEP), (15.0, 25.0, 0.5)),
     "Lesebereich Raum-Soll": ((ha_binding.ROOM_SETPOINT_READ_MIN, ha_binding.ROOM_SETPOINT_READ_MAX), (5.0, 35.0)),

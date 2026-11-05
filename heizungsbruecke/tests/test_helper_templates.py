@@ -27,9 +27,16 @@ def test_room_template_averages_valid_sensors_to_two_decimals():
 def test_room_template_ignores_dead_and_implausible_sensors():
     template = room_temperature_template(["sensor.a", "sensor.b", "sensor.c"])
 
-    result = _render(template, {"sensor.a": "unavailable", "sensor.b": "0.0", "sensor.c": "22.4"})
+    result = _render(template, {"sensor.a": "unavailable", "sensor.b": "-10.1", "sensor.c": "22.4"})
 
     assert result == "22.4"
+
+
+def test_room_template_counts_values_below_five_degrees_up_to_the_actual_range_limits():
+    template = room_temperature_template(["sensor.a", "sensor.b"])
+
+    assert _render(template, {"sensor.a": "-10.0", "sensor.b": "35.0"}) == "12.5"
+    assert _render(template, {"sensor.a": "-10.1", "sensor.b": "35.1"}) == "None"
 
 
 def test_room_template_is_none_when_no_sensor_is_valid():

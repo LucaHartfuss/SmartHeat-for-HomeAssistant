@@ -8,11 +8,14 @@ jinja2 = pytest.importorskip("jinja2")
 
 CASES = [
     (["20.0", "21.0", "21.5"], 20.83),
-    (["unavailable", "0.0", "22.4"], 22.4),       # tot und unplausibel fallen weg
+    (["unavailable", "-10.1", "22.4"], 22.4),     # tot und unplausibel fallen weg
+    (["unavailable", "0.0", "22.4"], 11.2),       # unter 5 Grad ist ein gueltiger Ist-Wert
     (["unknown", "99"], None),                     # kein gueltiger Wert
     (["21.0"], 21.0),
-    (["5.0", "35.0"], 20.0),                       # Grenzen gehoeren dazu
-    (["4.99", "35.01", "20"], 20.0),
+    (["-10.0", "35.0"], 12.5),                     # Grenzen gehoeren dazu
+    (["4.9", "35.0"], 19.95),
+    (["-10.01", "35.01", "20"], 20.0),
+    (["-10.1", "35.1"], None),
     (["nan", "inf", "-inf", "19.5"], 19.5),
     (["20.004", "20.005"], 20.0),                  # Rundung wie Jinja round(2) (Python round)
     (["", "abc", "21.333"], 21.33),

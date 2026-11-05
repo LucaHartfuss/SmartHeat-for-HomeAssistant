@@ -8,7 +8,7 @@ from smartheat_core import raum_delta, wallclock
 from smartheat_core.boost import UNREADABLE_ROOM_CHECKS, comfort_boost_expired, decide_boost
 from smartheat_core.emergency_boost import decide_emergency_boost
 from smartheat_core.logtext import lesbar
-from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
+from smartheat_runtime.plausibility import ROOM_ACTUAL_RANGE, is_plausible
 from smartheat_runtime.ports import SignalUngueltig
 from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.state import parse_since
@@ -59,7 +59,7 @@ def wirksames_raum_ist(rt: Runtime, room_target: float) -> float:
             logger.debug("Referenzraum %d nicht lesbar: %s", raum, lesbar(str(error)))
             grund = str(error)
             continue
-        if is_plausible(wert, ROOM_TEMP_RANGE):
+        if is_plausible(wert, ROOM_ACTUAL_RANGE):
             ist[raum] = wert
     wirksam = raum_delta.wirksames_ist(room_target, ist, referenz)
     if wirksam is None:

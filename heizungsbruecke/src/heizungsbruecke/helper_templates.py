@@ -2,7 +2,7 @@
 oder `entity::attribut` (Add-on-Konvention, siehe ha_api.get_state). Ungueltige oder
 unplausible Werte zaehlen nicht; ohne gueltigen Wert rendert das Template `none`, der Sensor
 steht dann auf `unknown` und der Tick meldet einen lokalen Datenfehler."""
-from smartheat_runtime.plausibility import ROOM_TEMP_RANGE
+from smartheat_runtime.plausibility import ROOM_ACTUAL_RANGE
 
 
 def _source_expression(ref: str) -> str:
@@ -16,7 +16,7 @@ def room_temperature_template(room_sensors: list[str]) -> str:
     """Ungewichtetes Mittel aller gueltigen Raumfuehler, 2 Nachkommastellen."""
     if not room_sensors:
         raise ValueError("room_temperature_template braucht mindestens einen Raumfuehler")
-    low, high = ROOM_TEMP_RANGE
+    low, high = ROOM_ACTUAL_RANGE
     sources = ", ".join(_source_expression(ref) for ref in room_sensors)
     return (
         "{% set ns = namespace(values=[]) %}"
