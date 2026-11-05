@@ -1,6 +1,12 @@
-"""Hilfs-Entities der Bruecke. Der Raumtemperatur-Template-Sensor ist die Rolle room_actual (Mittel
-aller gueltigen Raumfuehler). Die Aussentemperatur kommt aus einem Sensor und braucht keine Hilfs-Entity.
-Der Server bildet alle Mittelwerte aus der Telemetrie.
+"""Hilfs-Entities der Bruecke. Der Raumtemperatur-Template-Sensor eines Kreises ist die Rolle room_actual (Mittel
+aller gueltigen Fuehler der Referenzraeume). Dazu gibt es je Kreis und Raum mit Fuehlern einen Template-Sensor mit dem
+Mittel der Fuehler dieses Raums (nur Fuehler aus dem Dokument). Die Aussentemperatur kommt aus einem Sensor und braucht
+keine Hilfs-Entity. Der Server bildet alle Mittelwerte aus der Telemetrie.
+
+Namen und Tracking-Schluessel: Kreis 1 behaelt `SmartHeat <anlage> Raumtemperatur` und `room_temperature` (die Entity-ID
+einer bestehenden Anlage bleibt); jeder weitere Kreis n heisst `SmartHeat <anlage> K<n> Raumtemperatur` mit dem
+Schluessel `room_temperature:<n>`; der Sensor des Raums m im Kreis n `SmartHeat <anlage> K<n> R<m> Raumtemperatur` mit
+`room_temperature:<n>:<m>`. Kein Kundenname steht in einem Entity-Namen.
 
 Jeder Helfer merkt sich die Quelle, auf der er angelegt wurde (derived_sensors.json). Fehlt sie oder
 weicht sie ab, wird er geloescht und neu angelegt; die Entity-ID bleibt dabei gleich (slugify(name),
@@ -8,7 +14,8 @@ gegen echtes HA geprueft)."""
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from heizungsbruecke.helper_templates import room_temperature_template
@@ -19,7 +26,19 @@ logger = logging.getLogger(__name__)
 
 # Tracking-Schluessel der Helfer, die dieses Add-on anlegt oder frueher angelegt hat (outdoor_temperature: nur noch zum
 # Entfernen der Anlage, ensure_all legt ihn nicht mehr an); jeder andere Eintrag ist ein Altrest.
-TRACKING_KEYS = ("room_temperature", "outdoor_temperature")
+_RAUM_KEY = re.compile(r"room_temperature(:[1-9][0-9]*(:[0-9]+)?)?")
+
+
+def kreis_key(kreis: int) -> str:
+    return "room_temperature" if kreis == 1 else f"room_temperature:{kreis}"
+
+
+def raum_key(kreis: int, raum: int) -> str:
+    return f"room_temperature:{kreis}:{raum}"
+
+
+def _eigener_key(key: str) -> bool:
+    return key == "outdoor_temperature" or _RAUM_KEY.fullmatch(key) is not None
 
 
 @dataclass(frozen=True)
@@ -29,9 +48,14 @@ class DerivedSensors:
     replaced: tuple[str, ...]
     # Fingerabdruck aller Quellen, Zustand der Meldung "quellwechsel" (notifier).
     sources_fingerprint: str
+    # Entity-ID des Mittelwert-Sensors je Raumnummer (nur Raeume mit Fuehlern)
+    raeume: dict[int, str] = field(default_factory=dict)
 
 
-def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], state_path: Path) -> DerivedSensors:
+def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], state_path: Path, *, kreis: int = 1,
+               raeume: tuple[tuple[int, tuple[str, ...]], ...] = ()) -> DerivedSensors:
+    """Sensor des Kreises `kreis` (Mittel von `room_sensors`) und je Raum in `raeume` ((Nummer, Fuehler), nur Raeume mit
+    Fuehlern) der Mittelwert-Sensor. Raum-Sensoren des Kreises, die das Dokument nicht mehr nennt, werden entfernt."""
     tracking = load_backup(state_path)
     replaced: list[str] = []
     sources: dict[str, str] = {}
@@ -47,14 +71,30 @@ def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], state_path: Path
         return entity_id
 
     room_template = room_temperature_template(room_sensors)
+    kreis_name = "" if kreis == 1 else f"K{kreis} "
     room_actual = ensure(
-        "room_temperature", room_template,
-        lambda: ha_api.create_template_sensor(name=f"SmartHeat {tenant_id} Raumtemperatur", template=room_template),
+        kreis_key(kreis), room_template,
+        lambda: ha_api.create_template_sensor(name=f"SmartHeat {tenant_id} {kreis_name}Raumtemperatur",
+                                              template=room_template),
     )
     result = {"room_actual": room_actual}
+    je_raum: dict[int, str] = {}
+    for nummer, fuehler in raeume:
+        vorlage = room_temperature_template(list(fuehler))
+        je_raum[nummer] = ensure(
+            raum_key(kreis, nummer), vorlage,
+            lambda vorlage=vorlage, nummer=nummer: ha_api.create_template_sensor(
+                name=f"SmartHeat {tenant_id} K{kreis} R{nummer} Raumtemperatur", template=vorlage),
+        )
+    vorsatz = f"room_temperature:{kreis}:"
+    for key in [k for k in tracking if k.startswith(vorsatz) and k not in {raum_key(kreis, n) for n, _ in raeume}]:
+        try:
+            _drop_unused(ha_api, tracking, key, state_path, tenant_id)
+        except Exception as error:  # der Rest bleibt im Tracking, der naechste Start versucht es erneut
+            logger.warning("Hilfssensor (%s) nicht geloescht (%s)", key, type(error).__name__)
 
     fingerprint = hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()[:12]
-    return DerivedSensors(entity_ids=result, replaced=tuple(replaced), sources_fingerprint=fingerprint)
+    return DerivedSensors(entity_ids=result, replaced=tuple(replaced), sources_fingerprint=fingerprint, raeume=je_raum)
 
 
 def _ensure_entity(
@@ -110,7 +150,7 @@ def entfernen(ha_api, tenant_id: str, state_path: Path) -> bool:
         tracking = {}
     for key in list(tracking):
         entry = tracking[key]
-        if key not in TRACKING_KEYS or not isinstance(entry, dict) or not isinstance(entry.get("entity_id"), str):
+        if not _eigener_key(key) or not isinstance(entry, dict) or not isinstance(entry.get("entity_id"), str):
             del tracking[key]
             continue
         try:

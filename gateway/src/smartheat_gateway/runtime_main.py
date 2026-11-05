@@ -4,8 +4,10 @@ und Telemetrie laufen ueber den Link des Geraets (mqtt_factory).
 
 Neustart und Ende teilen sich beide Hosts in smartheat_device.prozess: eine laufzeitrelevante neue Konfiguration oder
 sign_off fordert den Neustart an (EV_RELOAD), ebenso die Neustarts der Laufzeit selbst (Rueckruf
-prozess.neustart_der_laufzeit aus app.start: Neupruefung im Ruhezustand Konfigurationsfehler, Abo am Fristende wieder
-aktiv, Neustart nach dem Zuruecksetzen). Der Worker endet mit prozess.Neustart, beenden trennt zuerst den Link sauber
+prozess.neustart_der_laufzeit aus app.start: Neustart nach dem Zuruecksetzen aller Kreise). Die Laufzeit
+(smartheat_runtime.kreise) fuehrt je Heizkreis eine Instanz mit eigenem Worker; der GatewayAnlagenHost liefert je Kreis
+Treiber, Zigbee-Fuehler und Thermostat. Neupruefung im Ruhezustand Konfigurationsfehler und Abo am Fristende wieder
+aktiv nehmen nur den betroffenen Kreis wieder auf (Laufzeit.wiederaufnehmen), ohne Prozessneustart. Der Worker endet mit prozess.Neustart, beenden trennt zuerst den Link sauber
 (MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der neue Prozess verbindet, und der Dienst saehe nach
 drei Aenderungen eine Kopie), laesst den Geraete-Thread sein laufendes Ereignis abschliessen, und main kehrt
 zurueck: Exit 0, Compose startet neu.
@@ -37,11 +39,11 @@ from smartheat_gateway import geraet_host as geraet_host_module
 from smartheat_gateway.anmeldung import WERK_DATEI, Zugang
 from smartheat_gateway.bus import BUS_PORT, LocalBus, credentials_from_env
 from smartheat_gateway.geraet_host import GatewayDeviceHost
-from smartheat_gateway.host import GatewayHost
+from smartheat_gateway.host import GatewayAnlagenHost, GatewayHost
 from smartheat_gateway.paths import Paths, from_env
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
-from smartheat_runtime import app
+from smartheat_runtime import app, kreise
 from smartheat_runtime.aufraeumen import Markierung
 from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.status import STATUS_STARTET
@@ -103,23 +105,33 @@ def software_soll_nachholen(geraet: GatewayDeviceHost, device: Device) -> None:
 
 
 def start(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, device: Device, clock=time.monotonic,
-          *, driver_threads: bool = True) -> tuple[Runtime | app.IdleBridge, GatewayHost]:
-    host = GatewayHost(paths, bus, mirror, geraet, clock=clock, driver_threads=driver_threads)
-    result = app.start(host, clock, mqtt_factory=device.laufzeit_kanal, neustart=prozess.neustart_der_laufzeit)
-    attach(result, host, geraet)
-    return result, host
+          *, driver_threads: bool = True) -> tuple[kreise.Laufzeit, GatewayAnlagenHost]:
+    """Laufzeit der Anlage auf dem Link des Geraets starten (mqtt_factory): ein Worker je Kreis. Alle Neustarts des
+    Prozesses gehen ueber prozess.Neustart (der Rueckruf neustart der Laufzeit und EV_RELOAD des Geraete-Hosts); ein
+    Kreis mit wieder aktivem Abo oder geaenderter Konfiguration startet allein neu (Laufzeit.konfiguration_geaendert,
+    vom Geraete-Host nach jedem Konfigurationsdokument gefragt)."""
+    anlage = GatewayAnlagenHost(paths, bus, mirror, geraet, clock=clock, driver_threads=driver_threads)
+
+    def gestartet(kreis: int, ergebnis: Runtime | app.IdleBridge) -> None:
+        attach(ergebnis, anlage.hosts[kreis], geraet, kreis)
+
+    laufzeit = kreise.start(anlage, clock, mqtt_factory=device.laufzeit_kanal, neustart=prozess.neustart_der_laufzeit,
+                            gestartet=gestartet)
+    prozess.reload_anhaengen(laufzeit)
+    geraet.laufzeit_binden(laufzeit)
+    return laufzeit, anlage
 
 
-def attach(result: Runtime | app.IdleBridge, host: GatewayHost, geraet: GatewayDeviceHost) -> None:
-    """Haengt die Gateway-Ereignisse (Lebenszeichen, Raum) an den Worker; EV_RELOAD geht ueber
-    prozess.reload_anhaengen, die Neustarts der Laufzeit selbst ueber den Rueckruf aus start."""
+def attach(result: Runtime | app.IdleBridge, host: GatewayHost, geraet: GatewayDeviceHost, kreis: int = 1) -> None:
+    """Haengt die Gateway-Ereignisse (Lebenszeichen, Raum) an den Worker des Kreises und bindet ihn an den Geraetekern;
+    EV_RELOAD geht ueber prozess.reload_anhaengen, die Neustarts der Laufzeit selbst ueber den Rueckruf aus start.
+    Laeuft nach jedem Start und jeder Wiederaufnahme des Kreises mit dessen neuem Worker."""
     worker = result.worker
 
     def _watch(event: Event) -> None:
         worker.schedule(CONFIG_WATCH_SECONDS, Event(EV_CONFIG_WATCH))  # zuerst: die Wache darf nie abreissen
         _touch_alive()
 
-    prozess.reload_anhaengen(result)
     worker.register(EV_CONFIG_WATCH, _watch)
     worker.schedule(CONFIG_WATCH_SECONDS, Event(EV_CONFIG_WATCH))
     _touch_alive()
@@ -133,10 +145,10 @@ def attach(result: Runtime | app.IdleBridge, host: GatewayHost, geraet: GatewayD
         worker.register(EV_RAUM, _raum)
         worker.schedule(0, Event(EV_RAUM))
     elif isinstance(result, app.IdleBridge):
-        geraet.zustand.raum = None  # Ruhezustand: kein Raum der vorigen Einrichtung
+        geraet.raum_merken(kreis, None)  # Ruhezustand: kein Raum der vorigen Einrichtung
         if result.reason == app.IDLE_NOT_CONFIGURED:
             geraet.zustand.status = None
-    geraet.worker_binden(worker, soll_eingang=isinstance(result, Runtime))  # Ruhezustand: kein Soll-Eingang
+    geraet.worker_binden(worker, kreis=kreis, soll_eingang=isinstance(result, Runtime))  # Ruhezustand: kein Soll-Eingang
 
 
 def _starten(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, device: Device):

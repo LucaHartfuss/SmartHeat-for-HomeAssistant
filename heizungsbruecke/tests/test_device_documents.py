@@ -5,6 +5,7 @@ import math
 import os
 import stat
 
+import konfig_form
 import pytest
 from bindung_beispiele import parameter
 from device_helpers import SENSOR, _anzeige, _bedienung, _konfiguration, _leer, _store
@@ -64,6 +65,43 @@ def test_a_lock_in_the_old_format_rejects_every_set_up_configuration_and_stays_u
     assert store.empfangen("konfiguration", _konfiguration()).grund == "hebelsatz_eingerastet"
     assert store.empfangen("konfiguration", _leer(version=2)).ok
     assert (tmp_path / "sicherheitssatz.json").read_text() == alt
+
+
+def _kreis_gateway(nummer):
+    bindung = {"treiber": {"id": "simulation", "parameter": {"heizkreis": nummer}}, "thermostat": None}
+    return konfig_form.kreis({"bindung": bindung, "raumfuehler": [f"zigbee:0x{nummer:016x}:temperature"],
+                              "hebelsatz": "viessmann_vicare", "verteilsystem": "Heizkoerper", "abo": "aktiv"},
+                             nummer=nummer)
+
+
+def _kreise(version, *nummern, **changes):
+    return _konfiguration(version=version, kreise=[_kreis_gateway(n) for n in nummern], **changes)
+
+
+def test_a_configuration_without_an_existing_circuit_is_rejected_and_the_stored_one_stays(tmp_path):
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _kreise(1, 1, 2)).uebernommen
+
+    ergebnis = store.empfangen("konfiguration", _kreise(2, 1))
+
+    assert (ergebnis.ok, ergebnis.grund, ergebnis.details) == (False, "ungueltig", {"feld": "kreise", "regel": "nicht_erlaubt"})
+    assert store.version("konfiguration") == 1
+    assert [k["kreis"] for k in store.inhalt("konfiguration")["kreise"]] == [1, 2]
+    assert _store(tmp_path).empfangen("konfiguration", _kreise(3, 1, 2, tagestick="13:00")).uebernommen  # derselbe Satz geht
+
+
+def test_a_second_circuit_missing_in_the_middle_of_the_set_is_rejected_too(tmp_path):
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _kreise(1, 1, 2, 3)).uebernommen
+    assert store.empfangen("konfiguration", _kreise(2, 1, 3)).grund == "ungueltig"
+    assert store.empfangen("konfiguration", _kreise(3, 2, 3)).grund == "ungueltig"
+
+
+def test_an_empty_configuration_and_a_new_plant_are_not_a_removal_of_circuits(tmp_path):
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _kreise(1, 1, 2)).uebernommen
+    assert store.empfangen("konfiguration", _leer(version=2)).uebernommen  # leer ist das Abmelden, kein Entfernen
+    assert store.empfangen("konfiguration", _kreise(3, 1, 2)).uebernommen  # danach eine Einrichtung wie jede
 
 
 def _scheitert_fuer(monkeypatch, name: str) -> None:
@@ -951,3 +989,11 @@ def test_eine_anzeige_mit_falschem_typ_im_kreis_wird_abgelehnt(tmp_path, feld, w
 def test_eine_anzeige_mit_doppelter_oder_absteigender_kreisnummer_wird_abgelehnt(tmp_path):
     assert _store(tmp_path).empfangen("anzeige", _anzeige(kreise=(1, 1))).grund == "ungueltig"
     assert _store(tmp_path).empfangen("anzeige", _anzeige(kreise=(2, 1))).grund == "ungueltig"
+
+
+def test_a_document_of_another_plant_with_fewer_circuits_is_no_removal_of_circuits(tmp_path):
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _kreise(1, 1, 2)).uebernommen
+    anderes = {**_kreise(2, 1), "anlage": "andere-anlage"}
+    assert store._kreis_entfernt(anderes) is None  # eine neue Einrichtung entfernt keinen Kreis der alten
+    assert store._kreis_entfernt(_kreise(2, 1)).grund == "ungueltig"  # dieselbe Anlage: Kreis 2 fehlt

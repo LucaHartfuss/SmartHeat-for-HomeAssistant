@@ -31,7 +31,7 @@ def logzeilen(caplog) -> list[str]:
 def runtime_config(**overrides) -> RuntimeConfig:
     """Gueltige RuntimeConfig fuer Tests, die einen Laufzeit-Kontext von Hand bauen."""
     values = {
-        "tenant_id": "test_tenant", "lever_set_id": "vaillant_vrc720",
+        "tenant_id": "test_tenant", "kreis": 1, "lever_set_id": "vaillant_vrc720",
         "local_safety": resolve_local_safety("vaillant_vrc720", "Heizkoerper"),
         "daily_trigger_time": "12:00", "local_check_interval": 300, "telemetry_interval": 300,
         "notify_hints_off": (), "room_sensor_refs": ("sensor.room_actual",), "battery_refs": (),
@@ -55,7 +55,7 @@ VIESSMANN_ZUSTAND = {
 
 class HaEventSink:
     """StatusSink der Laufzeit-Tests (StatusReporter): das Ereignis unveraendert an fire_event. Produktiv sendet
-    geraet_status.GeraetStatus (Schema 3); dies ist der Ersatz fuer den entfallenen HaStatusSink."""
+    geraet_status.GeraetStatus (Schema 4); dies ist der Ersatz fuer den entfallenen HaStatusSink."""
 
     def __init__(self, ha_api) -> None:
         self._ha_api = ha_api

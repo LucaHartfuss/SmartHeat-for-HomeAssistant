@@ -1,0 +1,82 @@
+{
+ "dirty": false,
+ "inhalt": {
+  "abo": "aktiv",
+  "anlage": "zuhause",
+  "bindung": {
+   "abfrage_s": 1800,
+   "batterien": [
+    "sensor.wohnzimmer_thermostat_batterie"
+   ],
+   "benachrichtigung": [
+    "notify.mobile_app_handy"
+   ],
+   "hinweise_aus": [],
+   "kreis": {
+    "anlage": "Zuhause",
+    "config_entry": "01HEXAMPLEENTRY",
+    "nummer": "0",
+    "plattform": "mypyllant"
+   },
+   "rollen": {
+    "curve": "number.zuhause_circuit_0_heating_curve",
+    "outdoor_temp": "sensor.zuhause_outdoor_temperature",
+    "room_setpoint": "climate.zuhause_zone_1_circuit_0_climate",
+    "room_target": "climate.wohnzimmer_thermostat::temperature"
+   }
+  },
+  "bindungsparameter": {
+   "energie": {
+    "electrical_dhw": "kWh",
+    "electrical_heating": "kWh",
+    "electrical_total": "kWh",
+    "primary_dhw": "kWh",
+    "primary_heating": "kWh",
+    "thermal_dhw": "kWh",
+    "thermal_heating": "kWh"
+   },
+   "nur_lesen": [],
+   "schemata": {},
+   "schreibgruppen": [],
+   "schreibschutz": {
+    "durchsetzen_tag": 6,
+    "lebensdauer_hinweis": null,
+    "tag": null
+   },
+   "schritte": {
+    "curve": 0.05,
+    "heat_limit": 0.1,
+    "min_flow": 0.1,
+    "room_setpoint": 0.5
+   },
+   "toleranzen": {
+    "curve": 0.025,
+    "heat_limit": 0.05,
+    "min_flow": 0.05,
+    "room_setpoint": 0.25
+   },
+   "wartezeit_s": 2100,
+   "zaehler": "daily",
+   "zurueck": [
+    "heat_limit"
+   ],
+   "zurueck_optional": [
+    "heat_limit"
+   ]
+  },
+  "hebelsatz": "vaillant_vrc720",
+  "mindest_software": "1.1.0",
+  "profil": "vaillant_gastherme_heizkoerper",
+  "raumfuehler": [
+   "sensor.wohnzimmer_thermostat_temperatur"
+  ],
+  "software": null,
+  "tagestick": "12:07",
+  "ursprungswerte": {
+   "curve": 0.9,
+   "room_setpoint": 21.0
+  },
+  "verteilsystem": "Heizkoerper"
+ },
+ "version": 3
+}

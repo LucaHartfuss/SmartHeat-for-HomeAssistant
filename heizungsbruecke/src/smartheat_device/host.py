@@ -111,7 +111,9 @@ class DeviceHost(Protocol):
 
     def runtime_status(self) -> dict | None: ...
 
-    def raum(self) -> dict | None: ...
+    def raum(self, kreis: int = 1) -> dict | None:
+        """{ist, soll, soll_quelle, ts} des Kreises `kreis` fuer up/status; None, solange er noch nichts veroeffentlicht hat."""
+        ...
 
     def anzeigen(self, anzeige: Anzeige) -> None:
         """Jeden Takt; der Host drosselt selbst (LED-Datei, Seite)."""

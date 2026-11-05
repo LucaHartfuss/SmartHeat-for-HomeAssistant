@@ -355,3 +355,11 @@ def test_ein_unbrauchbarer_vermerk_hebt_nichts_auf_und_wird_entfernt(welt, neust
     welt.paths.werksreset_abmeldung.write_text("[]")
     _takt(welt.host)
     assert welt.paths.abgemeldet.exists() and _vermerk(welt) is None and neustarts == []
+
+
+def test_die_statussenke_haelt_das_flache_laufzeit_ereignis_ohne_kreisliste(welt):
+    """Server und Abmelden lesen das flache Laufzeit-Ereignis; die Kreisliste der Zusammenfassung gehoert nur ins
+    Ereignis der Integration."""
+    welt.host.status_sink.publish({"status": "regelt", "tenant_id": ANLAGE, "boost": "keiner",
+                                   "kreise": [{"kreis": 1, "boost": "keiner"}]})
+    assert welt.host.zustand.status == {"status": "regelt", "tenant_id": ANLAGE, "boost": "keiner"}

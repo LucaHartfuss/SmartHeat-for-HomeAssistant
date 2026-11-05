@@ -1,4 +1,4 @@
-"""Snapshot fuer den Server (Schema 4, Hersteller-Abstraktion): Raum-Soll und die Hebel des
+"""Snapshot fuer den Server (Schema 5, Hersteller-Abstraktion): Raum-Soll und die Hebel des
 Hebelsatzes lesen, pruefen und als eine Nachricht publizieren."""
 import logging
 from collections.abc import Mapping
@@ -11,7 +11,7 @@ from smartheat_runtime.roles import ChannelManifest
 
 logger = logging.getLogger(__name__)
 
-SNAPSHOT_SCHEMA_VERSION = 4
+SNAPSHOT_SCHEMA_VERSION = 5
 
 # Durchsetzen (smartheat_core.enforce): zurueckgesetzter Eingriff, nur KPI. Muss zu messages.MANUAL_OVERRIDE_* auf dem
 # Server passen (Contract-Check (Vertrag V1b)); der Server liest die Felder ueber seine MANUAL_OVERRIDE_FIELDS.
@@ -101,12 +101,13 @@ def read_snapshot(manifest: ChannelManifest, signals, binding, known: Mapping[st
 
 def publish_snapshot(
     mqtt_client, seq: str, trigger: str | None, room_target: float, levers: dict[str, float],
-    manual_override: dict | None = None, readonly: tuple[str, ...] = (),
+    manual_override: dict | None = None, readonly: tuple[str, ...] = (), *, kreis: int,
 ) -> None:
-    """Eine Nachricht auf up/snapshot (Schema 4); manual_override nur, wenn einer ansteht. `readonly` nennt die nur
-    gelesenen Hebel (Weishaupt-Basis: Steigung), sonst leer."""
+    """Eine Nachricht auf up/snapshot (Schema 5) fuer den Kreis `kreis`; manual_override nur, wenn einer ansteht.
+    `readonly` nennt die nur gelesenen Hebel (Weishaupt-Basis: Steigung), sonst leer."""
     payload = {
         "schema": SNAPSHOT_SCHEMA_VERSION,
+        "kreis": kreis,
         "seq": seq,
         "trigger": trigger,
         "ts": wallclock.now().isoformat(timespec="seconds"),

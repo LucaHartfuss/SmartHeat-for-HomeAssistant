@@ -94,8 +94,8 @@ def test_the_target_signal_is_unavailable_until_the_store_is_loaded(env):
 
 
 def test_the_stored_target_wins_over_the_server_start_value_while_a_local_wish_is_open(env):
-    config.ROOM_TARGET_PATH.parent.mkdir(parents=True, exist_ok=True)
-    config.ROOM_TARGET_PATH.write_text('{"value": 19.5, "source": "lokal", "ts": "x"}')
+    config.room_target_path(1).parent.mkdir(parents=True, exist_ok=True)
+    config.room_target_path(1).write_text('{"value": 19.5, "source": "lokal", "ts": "x"}')
     host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung=bedienung_inhalt(22.0), dirty=True), env.ha,
                   clock=env.clock)
     host.load()
@@ -130,8 +130,8 @@ CLIMATE_SOLL = f"{CLIMATE}::temperature"
 def _climate_start(env, *, angezeigt, bedienung, dirty=False, modus="heat", gespeichert=None):
     env.ha.states.update({CLIMATE: modus, CLIMATE_SOLL: angezeigt})
     if gespeichert is not None:
-        config.ROOM_TARGET_PATH.parent.mkdir(parents=True, exist_ok=True)
-        config.ROOM_TARGET_PATH.write_text(json.dumps(gespeichert))
+        config.room_target_path(1).parent.mkdir(parents=True, exist_ok=True)
+        config.room_target_path(1).write_text(json.dumps(gespeichert))
     geraet = FakeGeraet(konfiguration_aus_optionen({**OPTIONS, "entity_room_target": CLIMATE_SOLL}),
                         bedienung=bedienung, dirty=dirty)
     host = HaHost(geraet, env.ha, clock=env.clock)
@@ -287,7 +287,7 @@ def test_trigger_source_is_built_on_the_real_entity_and_wishes_reach_the_device(
     assert {"platform": "state", "entity_id": OPTIONS["entity_room_target"],
             "for": {"seconds": 10}} in client.kwargs["triggers"]
     client.kwargs["on_trigger_event"]({"platform": "event", "event": {
-        "event_type": "smartheat_wunsch", "data": {"raum_soll": 22.0}, "context": {"parent_id": "p"}}})
+        "event_type": "smartheat_wunsch", "data": {"raum_soll": 22.0, "kreis": 1}, "context": {"parent_id": "p"}}})
     worker.run_pending()
     assert geraet.wuensche == [(22.0, "ha", "automation")]
 

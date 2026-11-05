@@ -72,7 +72,8 @@ class Anlage:
         self.geraet = main_module.HaDeviceHost(env.ha, supervisor, clock=env.clock)
         self.world = World(daten, self.geraet)
         status = main_module.verdrahten(self.geraet, self.world.device, env.ha, supervisor)
-        self.bridge, _ = main_module.start(self.geraet, self.world.device, env.ha, status, clock=env.clock)
+        laufzeit, _ = main_module.start(self.geraet, self.world.device, env.ha, status, clock=env.clock)
+        self.bridge = laufzeit.kreise()[1]  # die Laufzeit des einen Kreises
         self.bridge.worker.run_pending()
         self.world.verbinden()
         env.trigger_clients[-1].kwargs["on_connected"]()
@@ -106,7 +107,7 @@ class Anlage:
     def antwort(self, **hebel) -> None:
         """Gueltige Serverantwort auf den letzten Tick."""
         werte = {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0, "min_flow": 20.5, **hebel}
-        self.senden("down/setpoints", {"schema": 4, "seq": self.snapshots()[-1]["seq"], "ts": "x", "status": "ok",
+        self.senden("down/setpoints", {"schema": 5, "kreis": 1, "seq": self.snapshots()[-1]["seq"], "ts": "x", "status": "ok",
                                        "reason": None, "levers": werte, "learned": None})
 
     def stand(self) -> dict:
@@ -349,7 +350,7 @@ def _kaputte_bedienungen() -> list:
 def _kaputte_antworten(seq: str) -> list:
     """Kaputte down/setpoints zum offenen Tick seq."""
     def mit(**aenderung):
-        return {"schema": 4, "seq": seq, "ts": "x", "status": "ok", "reason": None,
+        return {"schema": 5, "kreis": 1, "seq": seq, "ts": "x", "status": "ok", "reason": None,
                 "levers": {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0}, "learned": None, **aenderung}
 
     return [
@@ -359,6 +360,8 @@ def _kaputte_antworten(seq: str) -> list:
         ("Hebel fehlt", mit(levers={"curve": 0.95})),
         ("fremder Hebel", mit(levers={"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0, "gift": 1.0})),
         ("falsches Schema", mit(schema=3)),
+        ("fremder Kreis", mit(kreis=2)),
+        ("Kreis als Text", mit(kreis="1")),
         ("Surrogat im Grund", mit(reason="a\ud800b")),
         ("Uebergroesse", mit(reason=_grosser_text())),
         ("Riesenzahl", mit(levers={"curve": 10**400, "room_setpoint": 23.0, "heat_limit": 16.0})),

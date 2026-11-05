@@ -4,6 +4,7 @@ ihren Optionen weiter, nur der Weg der Einstellungen ist neu. Dazu (gemeinsam fu
 test_main_geraet.py, test_geraet_host.py und test_core_config_check*.py): die Attrappen des Geraete-Hosts im
 Add-on-Prozess (FakeDevice, FakeSupervisor, Device, _host) und Beispieldokumente der Konfigurationspruefung
 (gateway_konfiguration, ha_konfiguration)."""
+import copy
 import json
 from types import SimpleNamespace
 
@@ -14,7 +15,7 @@ from device_helpers import SENSOR
 from fakes import KONFIG_EINTRAG, FakeClock, FakeHa
 
 from heizungsbruecke import config, geraet_host
-from heizungsbruecke.geraet_status import GeraetStatus
+from heizungsbruecke.geraet_status import GeraetStatus, lokale_sicht
 from heizungsbruecke.ha_sinks import HaNotifySink
 from heizungsbruecke.host import HaHost
 from smartheat_device.commands import CommandRegister
@@ -22,6 +23,7 @@ from smartheat_device.geraet_host_basis import GeraetHostBasis
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import app, aufraeumen, dokument_config, entitlement
 from smartheat_runtime.roles import LEVER_ROLES
+from smartheat_runtime.status import Statussammler
 
 _HEBEL = {f"entity_{role}": lever for lever, role in LEVER_ROLES.items()}
 #: Plattform des Kreises je Hebelsatz in den Test-Dokumenten (als Literal, test_dokument haelt
@@ -114,23 +116,31 @@ class FakeGeraet:
         self._konfiguration, self._bedienung, self._dirty, self._abo = konfiguration, bedienung, dirty, abo
         self.start_markierung = start_markierung  # die beim Start gelesene Aufraeum-Markierung (aufraeumen.entscheiden)
         self.wuensche, self.aus, self.status = [], [], []
+        self.wunsch_kreise: list[int] = []  # der Kreis jedes Wunschs, parallel zu wuensche
         self.gemeldet: list[dict] = []  # Ursprungswerte, die die Laufzeit dem Host gab
-        self.raum = None
+        self.gemeldet_kreise: list[int] = []
+        self.raum = None  # der Raum des Kreises 1
+        self.raeume: dict[int, dict | None] = {}  # je Kreis der zuletzt gemeldete Raum
         self.sent = Sent(log)
         self.channel = None
         self.channels = []
         self.neustarts: list[int] = []
         self.host = None
         self._ha = ha
-        self.status_sink = self if ha is None else GeraetStatus(ha, GERAET_ID, self._raum_soll,
-                                                                laufzeit_merken=self.status.append)
+        self.status_sink = self if ha is None else GeraetStatus(
+            ha, GERAET_ID, lokale_sicht(self.konfiguration, self._raum_soll, self._raum_ist, lambda: None),
+            laufzeit_merken=self.status.append)
 
     def neustart(self):
         self.neustarts.append(1)
 
-    def _raum_soll(self):
-        store = self.host.store if self.host is not None else None
+    def _raum_soll(self, kreis):
+        kreis_host = self.host.hosts.get(kreis) if hasattr(self.host, "hosts") else self.host if kreis == 1 else None
+        store = kreis_host.store if kreis_host is not None else None
         return store.value if store is not None else None
+
+    def _raum_ist(self, kreis):
+        return (self.raeume.get(kreis) or {}).get("ist")
 
     # Geraete-Host-Sicht fuer HaHost
     def konfiguration(self):
@@ -139,29 +149,33 @@ class FakeGeraet:
     def bedienung(self):
         return self._bedienung, self._dirty
 
-    def abo_status(self):
+    def abo_status(self, kreis=None):
         return self._abo() if callable(self._abo) else self._abo
 
     def notify_sink_fuer(self, services):
         return HaNotifySink(self._ha, services) if self._ha is not None else _NullSink()
 
-    def wunsch(self, wert, herkunft=None, durch=None):
+    def wunsch(self, wert, herkunft=None, durch=None, kreis=1):
         self.wuensche.append((wert, herkunft, durch))
+        self.wunsch_kreise.append(kreis)
         return min(max(float(wert), 15.0), 25.0)
 
     def soll_quelle_aus(self, aus, wirksam):
         self.aus.append((aus, wirksam))
 
-    def ursprungswerte_merken(self, werte):
+    def ursprungswerte_merken(self, werte, kreis=1):
         self.gemeldet.append(werte)
+        self.gemeldet_kreise.append(kreis)
 
-    def raum_merken(self, raum):
-        self.raum = raum
+    def raum_merken(self, kreis, raum):
+        self.raeume[kreis] = raum
+        if kreis == 1:
+            self.raum = raum
 
     def publish(self, event):
         self.status.append(event)
 
-    def kanal(self, worker):
+    def kanal(self, worker, kreis):
         self.channel = RuntimeChannel(self.sent.publish, lambda: self.sent.connected, lambda: self.sent.failures)
         self.channels.append(self.channel)
         return self.channel.binden(worker)
@@ -200,8 +214,10 @@ def start_bridge(env, *, options, abo=entitlement.ACTIVE, abgemeldet=False, bedi
                         start_markierung=start_markierung)
     geraet.sent.connected = verbunden
     geraet.host = HaHost(geraet, env.ha, clock=env.clock)
+    # wie die Laufzeit der Kreise: ein Statussammler fasst das Ereignis des einen Kreises fuer die Statussenke zusammen
+    sammler = Statussammler(geraet.host.status_sink)
     bridge = app.start(geraet.host, env.clock, mqtt_factory=geraet.kanal,
-                       neustart=geraet.neustart if neustart is None else neustart)
+                       neustart=geraet.neustart if neustart is None else neustart, status_sink=sammler.senke(1))
     return bridge, geraet
 
 
@@ -240,8 +256,8 @@ class FakeDevice:
     def bedienung(self):
         return self.bed
 
-    def abo_status(self):
-        return dokument_config.abo_status(self.konf)
+    def abo_status(self, kreis=None):
+        return dokument_config.abo_status(self.konf, kreis)
 
     def start(self):
         self.order.append("start")
@@ -250,7 +266,7 @@ class FakeDevice:
     def stop(self):
         self.order.append("stop")
 
-    def laufzeit_kanal(self, worker):
+    def laufzeit_kanal(self, worker, kreis):
         return RuntimeChannel(lambda name, payload: self.sent.append(name) or len(self.sent), lambda: True,
                               lambda: 0).binden(worker)
 
@@ -299,11 +315,13 @@ class Doc:
 class Device:
     def __init__(self, konf=None, bed=None, dirty=False):
         self.wuensche, self.aus, self.konf, self.bed, self.dirty = [], [], konf, bed, dirty
+        self.wunsch_kreise = []
         self.meldungen = []
         self.documents = self
 
     def wunsch(self, wert, *, herkunft, durch=None, kreis=1):
         self.wuensche.append((wert, herkunft, durch))
+        self.wunsch_kreise.append(kreis)
         return min(max(float(wert), 15.0), 25.0)
 
     def soll_quelle_aus(self, aus, wirksam=None):
@@ -318,7 +336,7 @@ class Device:
     def aktuell(self, art):
         return Doc(self.dirty) if art == "bedienung" and self.bed is not None else None
 
-    def abo_status(self):
+    def abo_status(self, kreis=None):
         return "aktiv"
 
     def meldung(self, key, text, *, offen, stufe):
@@ -326,7 +344,7 @@ class Device:
 
 
 def _paths(tmp_path, monkeypatch):
-    for name in ("RUNTIME_DIR", "ABGEMELDET_PATH", "AUFRAEUMEN_PATH", "ROOM_TARGET_PATH", "BACKUP_PATH",
+    for name in ("RUNTIME_DIR", "ABGEMELDET_PATH", "AUFRAEUMEN_PATH", "ALTER_BACKUP_PATH",
                  "RASTUNG_PATH"):
         monkeypatch.setattr(config, name, tmp_path / getattr(config, name).name)
 
@@ -377,3 +395,24 @@ def ha_konfiguration(**changes) -> dict:
     }
     bindung = {**base["bindung"], **changes.pop("bindung", {})}
     return konfig_form.nach_form({**base, **changes, "bindung": bindung})
+
+
+def ha_kreis(nummer: int, **bindung) -> dict:
+    """Ein weiterer HA-Kreis mit eigenen Entities (Rollen und Fuehler mit der Kreisnummer als Suffix)."""
+    basis = ha_konfiguration()["kreise"][0]
+    neu = copy.deepcopy(basis)
+    neu["kreis"] = nummer
+    neu["bindung"]["kreis"]["nummer"] = str(nummer)
+    neu["bindung"]["rollen"] = {rolle: f"{ref.split('.')[0]}.{ref.split('.')[1].split('::')[0]}_{nummer}"
+                                + ("::" + ref.split("::")[1] if "::" in ref else "")
+                                for rolle, ref in neu["bindung"]["rollen"].items()}
+    neu["bindung"].update(bindung)
+    neu["raeume"][0]["fuehler"] = [f"sensor.raum_{nummer}_temperatur"]
+    return neu
+
+
+def ha_zwei_kreise(**changes) -> dict:
+    """Konfigurationsdokument der HA-Anlage mit zwei Kreisen: Kreis 1 aus ha_konfiguration, Kreis 2 aus ha_kreis."""
+    dokument = ha_konfiguration(**changes)
+    dokument["kreise"] = [dokument["kreise"][0], ha_kreis(2)]
+    return dokument

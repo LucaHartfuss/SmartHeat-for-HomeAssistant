@@ -410,7 +410,8 @@ def test_the_ha_check_gets_the_accepted_configuration(tmp_path, monkeypatch):
 def test_sign_off_marks_restarts_and_reports_the_restore_point(tmp_path, monkeypatch):
     konf = konfiguration_aus_optionen(OPTIONS)
     host, _, clock = _host(tmp_path, monkeypatch, device=Device(konf))
-    config.BACKUP_PATH.write_text(json.dumps({"restore_point": {"curve": 1.1}}))
+    config.kreis_dir(1).mkdir(parents=True)
+    config.backup_path(1).write_text(json.dumps({"restore_point": {"curve": 1.1}}))
     register = _register(host, tmp_path)
     outcome = register._handlers["sign_off"]({})
     assert isinstance(outcome, Waiting) and host._neustart
@@ -613,8 +614,17 @@ def test_runtime_status_and_room(tmp_path, monkeypatch):
     host, _, _ = _host(tmp_path, monkeypatch)
     assert host.runtime_status() is None and host.raum() is None
     host.runtime_status_event = {"status": "regelt"}
-    host.raum_merken({"ist": 20.0, "soll": 21.0, "soll_quelle": "portal", "ts": "t"})
+    host.raum_merken(1, {"ist": 20.0, "soll": 21.0, "soll_quelle": "portal", "ts": "t"})
     assert host.runtime_status() == {"status": "regelt"} and host.raum()["ist"] == 20.0
+
+
+def test_der_raum_wird_je_kreis_gemerkt(tmp_path, monkeypatch):
+    host, _, _ = _host(tmp_path, monkeypatch)
+    host.raum_merken(1, {"ist": 20.0})
+    host.raum_merken(2, {"ist": 17.5})
+    assert host.raum(1)["ist"] == 20.0 and host.raum(2)["ist"] == 17.5 and host.raum(3) is None
+    host.raum_merken(2, None)
+    assert host.raum(2) is None and host.raum(1)["ist"] == 20.0
 
 
 def test_notify_sink_sends_to_the_given_services(tmp_path, monkeypatch):

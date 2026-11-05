@@ -32,6 +32,13 @@ class _CoalescedMarker:
 Handler = Callable[[Event], None]
 
 
+class WorkerBeendet(BaseException):
+    """`run` endet, weil `beenden` gerufen wurde (die Laufzeit nimmt einen Kreis neu auf)."""
+
+
+_ENDE = object()
+
+
 class RegulationWorker:
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
@@ -54,6 +61,11 @@ class RegulationWorker:
     def post(self, event: Event) -> None:
         """Threadsicher: stellt ein Ereignis zur sofortigen Verarbeitung ein."""
         self._queue.put(event)
+
+    def beenden(self) -> None:
+        """Threadsicher: `run` (und `run_pending`) wirft WorkerBeendet, sobald es dieses Zeichen erreicht; was davor
+        in der Queue liegt, wird noch verarbeitet."""
+        self._queue.put(_ENDE)
 
     def post_coalesced(self, kind: str, **flags: bool) -> None:
         """Threadsicher. Liegt `kind` noch unverarbeitet in der Queue, entsteht kein
@@ -127,6 +139,8 @@ class RegulationWorker:
         return max(self._schedule[0][0] - self._clock(), 0.0)
 
     def _resolve(self, item) -> Event:
+        if item is _ENDE:
+            raise WorkerBeendet()
         if isinstance(item, _CoalescedMarker):
             with self._coalesce_lock:
                 flags = self._coalesced.pop(item.kind, {})

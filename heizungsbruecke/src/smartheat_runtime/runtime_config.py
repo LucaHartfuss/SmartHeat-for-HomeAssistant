@@ -32,14 +32,26 @@ class BootInfo:
     local_check_interval: float
     backup_path: Path
     failsafe_path: Path
+    # Nummer des Heizkreises, den diese Laufzeit fuehrt (V1b: `kreis` auf dem Draht).
+    kreis: int
     # Aufraeum-Markierung des Hosts; nach gelungenem Zuruecksetzen erledigt die Laufzeit
     # sie und startet neu (None: der Host hat keine).
     aufraeumen_path: Path | None = None
+    # Pfad der Sicherung im Format vor der Kreisordnung; sie wird nie gelesen, nur ihr Vorhandensein stoppt den Start
+    # (None: der Host hat keinen alten Pfad).
+    alter_zustand: Path | None = None
+    # Datei der Zaehler der ganzen Anlage (Schreibbudget der Anlage, Lebensdauer) neben den Kreisordnern; None: die Zaehler
+    # liegen im Zustand des Kreises (nur Tests).
+    anlage_budget_path: Path | None = None
+    # Zahl der Heizkreise des Dokuments; sie teilen die Zaehler der Anlage (bei mehr als einem Kreis setzt eine andere
+    # Anlage eines Kreises diese Zaehler nicht zurueck).
+    kreise_der_anlage: int = 1
 
 
 @dataclass(frozen=True)
 class RuntimeConfig:
     tenant_id: str
+    kreis: int
     lever_set_id: str
     local_safety: LocalSafety
     daily_trigger_time: str | None
@@ -54,3 +66,6 @@ class RuntimeConfig:
     # Abo-Status aus dem Konfigurationsdokument (entitlement.ACTIVE/INACTIVE/UNKNOWN). Die MQTT-
     # Verbindung haelt smartheat_device (app.start mqtt_factory), die Laufzeit fragt keinen Server selbst.
     abo_source: Callable[[], str]
+    # Referenzraeume des Kreises mit Fuehlern als (Raumnummer, Versatz in Kelvin); die Regelung rechnet ihr Delta nur
+    # ueber diese (leer: der Host kennt keine Raeume, dann gilt der Kreissensor room_actual).
+    referenzraeume: tuple[tuple[int, float], ...] = ()

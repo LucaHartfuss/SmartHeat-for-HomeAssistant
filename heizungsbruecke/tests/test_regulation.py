@@ -62,6 +62,11 @@ def _runtime(
     )
 
 
+#: Ursprungswerte der Vaillant-Rueckstellung, schon gemerkt: ein Check im Beharrungszustand liest und schreibt dann nur
+#: noch, was er braucht (der erste Check merkt sie einmalig).
+URSPRUENGE = {"originals": {"curve": 1.0, "room_setpoint": 20.0}, "aux_originals": {"mode_select": "keine_betriebsart"}}
+
+
 def _writes(rt):
     return [call.args for call in rt.ha_api.set_number_value.call_args_list]
 
@@ -69,7 +74,7 @@ def _writes(rt):
 # --- run_local_check ---
 
 def test_check_reads_only_room_actual_and_uses_cached_target(make_store):
-    rt = _runtime(make_store(), room_actual=19.0)
+    rt = _runtime(make_store(backup=dict(URSPRUENGE)), room_actual=19.0)
 
     regulation.run_local_check(rt)
 
@@ -202,7 +207,7 @@ def test_ein_neuer_boost_zaehlt_die_4h_ab_seinem_eigenen_start(make_store, clock
 def test_steady_state_check_does_not_write_backup(make_store, tmp_path):
     # Datentraeger: ein Check ohne Aenderung schreibt nichts (Inode und Aenderungszeit von backup.json bleiben).
     store = make_store(backup={
-        "last_room_target": 20.0, "boost_active": False, "last_published_target_rt": 20.0,
+        "last_room_target": 20.0, "boost_active": False, "last_published_target_rt": 20.0, **URSPRUENGE,
     })
     rt = _runtime(store, room_actual=20.0, room_target=20.0)
     vorher = datei_stand(tmp_path / "backup.json")

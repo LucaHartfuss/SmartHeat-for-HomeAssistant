@@ -55,7 +55,7 @@ def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.mo
 def test_inactive_message_contains_grace_end_date():
     assert abo.inactive_message(ABO_NOW) == (
         "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 25.10.2026 im Notbetrieb weiter, "
-        "danach bleiben die zuletzt gelernten Werte fest eingestellt."
+        "danach stellt es die ursprünglichen Werte wieder ein und beendet die Steuerung."
     )
 
 

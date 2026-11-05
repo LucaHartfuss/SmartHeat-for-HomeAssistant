@@ -130,7 +130,8 @@ def test_boost_since_stays_in_memory_when_the_backup_cannot_be_written(tmp_path,
     # Endpruefung: voller/schreibgeschuetzter Datentraeger darf die 4-h-Grenze nicht aushebeln
     values = {"sensor.room_actual": 19.0, "number.curve": 1.5, "number.shift": 25.0, "number.heat_limit": 23.0}
     rt = _rt(tmp_path, values, {"last_room_target": 21.0, "boost_active": True,
-                                "restore_point": {"curve": 1.0, "room_setpoint": 20.0, "heat_limit": 16.0}})
+                                "restore_point": {"curve": 1.0, "room_setpoint": 20.0, "heat_limit": 16.0},
+                                "aux_originals": {"mode_select": "keine_betriebsart"}})
 
     def _failing_save(path, content):
         raise StorageError("Datentraeger voll")

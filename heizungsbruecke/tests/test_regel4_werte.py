@@ -265,8 +265,10 @@ def test_schreibgruppen_lokale_positivliste():
 
 #: Lokale Mindestliste der Rueckstellung je Hebelsatz: diese Hebel stellt der Client beim Abmelden und Abo-Ende immer
 #: zurueck; eine Konfiguration, deren `zurueck` einen davon auslaesst, weist er ab (Gefaehrdung G-9).
+#: Vaillant (Nutzer-Entscheidung 2026-10-23, Rueckstellung "alles wie vor SmartHeat"): alle vier Hebel kehren auf ihren
+#: Ursprungswert zurueck, nicht mehr nur die Heizgrenze.
 RUECKSTELLUNG_PFLICHT = {
-    "vaillant_vrc720": ("heat_limit",),
+    "vaillant_vrc720": ("curve", "room_setpoint", "heat_limit", "min_flow"),
     "weishaupt_wwp": ("curve", "room_setpoint", "heat_limit"),
     "weishaupt_wwp_basis": ("room_setpoint",),
     "viessmann_vicare": ("curve", "level", "room_setpoint"),
@@ -277,6 +279,22 @@ def test_rueckstellung_pflicht_lokale_mindestliste():
     from smartheat_core.verfahren import VERFAHREN
 
     assert {k: v.rueckstellung_pflicht for k, v in VERFAHREN.items()} == je_kombination(RUECKSTELLUNG_PFLICHT), R4
+
+
+#: Hilfs-Ursprungswerte je Hebelsatz, die vor dem ersten Schreiben gemerkt und beim Zurueckstellen wiederhergestellt
+#: werden. Vaillant: die Betriebsart der Zone, die danach auf das Zeitprogramm zurueckgeht.
+AUX_URSPRUENGE = {
+    "vaillant_vrc720": ("mode_select",),
+    "weishaupt_wwp": ("mode_select", "setpoint_comfort", "setpoint_setback"),
+    "weishaupt_wwp_basis": ("mode_select", "setpoint_comfort", "setpoint_setback"),
+    "viessmann_vicare": ("mode_select",),
+}
+
+
+def test_aux_ursprungswerte_lokale_tabelle():
+    from smartheat_core.verfahren import VERFAHREN
+
+    assert {k: v.aux_originals for k, v in VERFAHREN.items()} == je_kombination(AUX_URSPRUENGE), R4
 
 
 #: Spec Fixrunde A Schreibschutz 3.1/3.2 (A6-01, A6-34): Boost-Starts je Art (Schluessel -> (jeder Versuch zaehlt,

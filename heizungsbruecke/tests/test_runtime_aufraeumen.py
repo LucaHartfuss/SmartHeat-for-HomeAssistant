@@ -1,4 +1,5 @@
 """Leer heisst abmelden."""
+import contextlib
 import errno
 import json
 import os
@@ -44,6 +45,29 @@ def test_after_the_reset_the_state_is_deleted(tmp_path):
     assert aufraeumen.zurueckgesetzt(pfad, "kunde1") is False  # nur einmal
     assert aufraeumen.entscheiden(pfad, LEER) == (aufraeumen.LOESCHEN, None)
     assert _laufzeit(LEER, None) == (LEER, False)
+
+
+def test_the_marker_closes_only_after_every_circuit_has_reset(tmp_path):
+    """Mit mehreren Kreisen erledigt erst der letzte fertige Kreis die Markierung: der Neustart danach loescht den
+    Zustand aller Kreise, also muss jeder zurueckgesetzt sein."""
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    assert aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=2, kreise_der_anlage=2) is False
+    assert aufraeumen.entscheiden(pfad, LEER)[0] == aufraeumen.ZURUECKSETZEN
+    assert aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=2, kreise_der_anlage=2) is False  # derselbe Kreis zaehlt einmal
+    assert aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=1, kreise_der_anlage=2) is True
+    assert aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=1, kreise_der_anlage=2) is False
+    assert aufraeumen.entscheiden(pfad, LEER) == (aufraeumen.LOESCHEN, None)
+
+
+def test_an_unfinished_circuit_keeps_the_marker_open_for_the_next_start(tmp_path):
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=1, kreise_der_anlage=3)
+    aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=2, kreise_der_anlage=3)
+    entscheidung, gelesen = aufraeumen.entscheiden(pfad, LEER)
+    assert entscheidung == aufraeumen.ZURUECKSETZEN and gelesen is not None and gelesen.konfiguration == ALT
+    assert aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=3, kreise_der_anlage=3) is True
 
 
 def test_reset_of_another_plant_does_not_count(tmp_path):
@@ -267,4 +291,34 @@ def test_nur_zuruecksetzen_gibt_die_markierung_weiter(tmp_path):
     aufraeumen.markieren(pfad, ALT)
     assert aufraeumen.entscheiden(pfad, ALT) == (aufraeumen.VERWERFEN, None)
     aufraeumen.zurueckgesetzt(pfad, "kunde1")
+    assert aufraeumen.entscheiden(pfad, LEER) == (aufraeumen.LOESCHEN, None)
+
+
+def test_two_circuits_resetting_at_once_do_not_lose_each_other(tmp_path, monkeypatch):
+    """Die Kreise setzen auf eigenen Faeden zurueck: Lesen, Ergaenzen und Schreiben von `kreise_fertig` ist ein Zug,
+    sonst ueberschreibt der eine das Ergebnis des anderen und die Markierung wird nie erledigt."""
+    import threading
+
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    treffpunkt = threading.Barrier(2)
+    echt = aufraeumen._fertige
+
+    def _fertige_mit_treffpunkt(p):
+        gelesen = echt(p)
+        # Ohne Sperre lesen beide den alten Stand, bevor einer schreibt; mit Sperre kommt der zweite Faden nie hierher.
+        with contextlib.suppress(threading.BrokenBarrierError):
+            treffpunkt.wait(timeout=0.5)
+        return gelesen
+
+    monkeypatch.setattr(aufraeumen, "_fertige", _fertige_mit_treffpunkt)
+    ergebnisse: dict[int, bool] = {}
+    faeden = [threading.Thread(target=lambda k=k: ergebnisse.__setitem__(
+        k, aufraeumen.zurueckgesetzt(pfad, "kunde1", kreis=k, kreise_der_anlage=2))) for k in (1, 2)]
+    for faden in faeden:
+        faden.start()
+    for faden in faeden:
+        faden.join()
+    assert sorted(ergebnisse.values()) == [False, True]
+    assert sorted(json.loads(pfad.read_text())["kreise_fertig"]) == [1, 2]
     assert aufraeumen.entscheiden(pfad, LEER) == (aufraeumen.LOESCHEN, None)

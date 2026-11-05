@@ -42,7 +42,7 @@ def _thermostat_writes(world):
 def test_not_configured_is_idle_without_status_and_room(world):
     result = world.start_runtime()
     assert isinstance(result, IdleBridge) and result.reason == IDLE_NOT_CONFIGURED
-    assert world.status() is None and world.geraet.zustand.raum is None
+    assert world.status() is None and world.geraet.raum() is None
 
 
 def test_an_operation_while_not_configured_is_not_posted_to_the_idle_worker(world, caplog):
@@ -115,7 +115,7 @@ def test_abo_reactivation_restarts_through_the_reload_path(world, monkeypatch):
     world.start_runtime()
     world.connect()
     first = world.link
-    monkeypatch.setattr(world.device, "abo_status", lambda: "active")
+    monkeypatch.setattr(world.device, "abo_status", lambda kreis=None: "active")
     world.wall.advance(31 * 86400)
     world.clock.advance(31 * 86400)
     with pytest.raises(prozess.Neustart):
@@ -135,12 +135,12 @@ def test_a_software_only_configuration_does_not_restart(world):
 
 
 def test_the_cleanup_runs_at_the_next_start_after_an_empty_configuration(world):
-    for path in (world.paths.backup, world.paths.abgemeldet, world.paths.inventur,
+    for path in (world.paths.backup(1), world.paths.abgemeldet, world.paths.inventur,
                  world.paths.driver_secrets_dir / "vicare.json"):
         dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
     dateien.schreiben_json(world.paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
     world.start_runtime()
-    assert not world.paths.backup.exists() and not world.paths.abgemeldet.exists()
+    assert not world.paths.backup(1).exists() and not world.paths.abgemeldet.exists()
     assert not world.paths.inventur.exists() and not (world.paths.driver_secrets_dir / "vicare.json").exists()
     assert not world.paths.aufraeumen.exists()
 
@@ -166,7 +166,7 @@ def test_a_marker_from_before_a_new_setup_deletes_nothing(world):
 
 def _offenes_zuruecksetzen(world):
     """Zustand und Treiber-Anmeldung der eingerichteten Anlage, gespeichert ist schon die leere Konfiguration."""
-    for path in (world.paths.backup, world.paths.inventur, world.paths.driver_secrets_dir / "vicare.json"):
+    for path in (world.paths.backup(1), world.paths.inventur, world.paths.driver_secrets_dir / "vicare.json"):
         dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
     aufraeumen.markieren(world.paths.aufraeumen, konfiguration())
     dokumente_schreiben(world.paths, {**konfiguration(), "anlage": None})
@@ -177,7 +177,7 @@ def test_the_cleanup_waits_while_the_reset_is_pending(world):
     braucht sie) und Markierung."""
     _offenes_zuruecksetzen(world)
     runtime_main.aufraeumen(world.paths)
-    assert world.paths.runtime_dir.exists() and world.paths.backup.exists()
+    assert world.paths.runtime_dir.exists() and world.paths.backup(1).exists()
     assert (world.paths.driver_secrets_dir / "vicare.json").exists() and world.paths.inventur.exists()
     assert world.paths.aufraeumen.exists()
 
@@ -344,7 +344,7 @@ def test_room_is_kept_in_the_process_on_a_new_operation(world):
     world.start_runtime()
     world.connect()
     world.bedienung_senden(bedienung(21.5), 1)
-    raum = world.geraet.zustand.raum
+    raum = world.geraet.raum()
     assert (raum["soll"], raum["soll_quelle"], raum["ist"]) == (21.5, "portal", 20.0)
     assert 21.5 in _thermostat_writes(world)
 
@@ -353,10 +353,10 @@ def test_room_is_refreshed_every_tick(world):
     dokumente_schreiben(world.paths, konfiguration())
     world.start_runtime()
     world.connect()
-    first = world.geraet.zustand.raum["ts"]
+    first = world.geraet.raum()["ts"]
     world.wall.advance(1)
     world.advance(runtime_main.RAUM_SECONDS)
-    assert world.geraet.zustand.raum["ts"] != first
+    assert world.geraet.raum()["ts"] != first
 
 
 def test_the_operation_is_applied_and_the_thermostat_aligned_at_start(world):
@@ -385,7 +385,7 @@ def test_a_newer_operation_replaces_the_stored_target_at_start(world, erste):
     """Gespeichert 20, Bedienung 22,5 (kam waehrend des Neustarts, nicht dirty): sie gilt sofort im Soll-Speicher.
     Ohne bekannten Zustand des Thermostats geht sie erst mit seiner ersten Live-Meldung hinaus, wie das Angleichen;
     meldet es aus, erst mit "wieder an"."""
-    dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"},
+    dateien.schreiben_json(world.paths.room_target(1), {"value": 20.0, "source": "portal", "ts": "t"},
                            modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.5))
     world.start_runtime()

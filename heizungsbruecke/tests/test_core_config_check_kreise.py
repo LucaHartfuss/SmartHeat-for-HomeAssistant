@@ -4,7 +4,7 @@ import copy
 import konfig_form
 import pytest
 from bindung_beispiele import parameter
-from geraet_helpers import gateway_konfiguration, ha_konfiguration
+from geraet_helpers import gateway_konfiguration, ha_konfiguration, ha_kreis
 from rastung_beispiele import fuer
 
 from smartheat_core import config_check as cc
@@ -50,16 +50,7 @@ def _kreis_ohne_raum(kreis: dict, **raum) -> dict:
 
 
 def _ha_kreis(nummer: int, **bindung) -> dict:
-    basis = ha_konfiguration()["kreise"][0]
-    neu = copy.deepcopy(basis)
-    neu["kreis"] = nummer
-    neu["bindung"]["kreis"]["nummer"] = str(nummer)
-    neu["bindung"]["rollen"] = {rolle: f"{ref.split('.')[0]}.{ref.split('.')[1].split('::')[0]}_{nummer}"
-                                + ("::" + ref.split("::")[1] if "::" in ref else "")
-                                for rolle, ref in neu["bindung"]["rollen"].items()}
-    neu["bindung"].update(bindung)
-    neu["raeume"][0]["fuehler"] = [f"sensor.raum_{nummer}_temperatur"]
-    return neu
+    return ha_kreis(nummer, **bindung)
 
 
 # --- Anzahl der Kreise -------------------------------------------------------------------------------------------
@@ -147,6 +138,13 @@ def test_zwei_ha_kreise_mit_getrennten_entities_sind_zulaessig_und_der_host_sieh
     assert [s["bindung"]["kreis"]["nummer"] for s in sichten] == ["0", "2"]
     # der Host prueft die Entities aller Raeume des Kreises (auch der Kontrollraeume)
     assert sichten[0]["raumfuehler"] == ["sensor.wohnzimmer_thermostat_temperatur", "sensor.bad_temperatur"]
+
+
+def test_zwei_ha_kreise_duerfen_dieselbe_lesende_rollen_entity_haben():
+    # Die Aussentemperatur der Anlage hat der Hersteller nur einmal; geschrieben wird dort nicht
+    erster, kreis2 = ha_konfiguration()["kreise"][0], _ha_kreis(2)
+    erster["bindung"]["rollen"]["outdoor_temp"] = kreis2["bindung"]["rollen"]["outdoor_temp"] = "sensor.aussentemperatur"
+    assert _geprueft(ha_konfiguration(kreise=[erster, kreis2]), host=cc.HOST_HA) is None
 
 
 def test_derselbe_ha_fuehler_in_zwei_kreisen_wird_abgelehnt():
@@ -385,12 +383,38 @@ def test_raeume_eines_kreises_grenzen_und_befunde():
     kreis["raeume"] = "keine Liste"
     assert _geprueft(_gw(kreis), LOCK) == _ungueltig("raeume", "ungueltig")
     kreis["raeume"] = []
-    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("raeume", "anzahl", min=1, max=16, anzahl=0)
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("raeume", "anzahl", min=1, max=8, anzahl=0)
     kreis["raeume"] = [konfig_form.raum([_sensor(1)])] + [
-        konfig_form.raum([], nummer=n, name=f"R{n}", rolle="kontroll") for n in range(2, 17)]
-    assert _geprueft(_gw(kreis), LOCK) is None  # sechzehn Raeume
-    kreis["raeume"].append(konfig_form.raum([], nummer=17, name="R17", rolle="kontroll"))
-    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("raeume", "anzahl", min=1, max=16, anzahl=17)
+        konfig_form.raum([], nummer=n, name=f"R{n}", rolle="kontroll") for n in range(2, 9)]
+    assert _geprueft(_gw(kreis), LOCK) is None  # acht Raeume
+    kreis["raeume"].append(konfig_form.raum([], nummer=9, name="R9", rolle="kontroll"))
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("raeume", "anzahl", min=1, max=8, anzahl=9)
+
+
+@pytest.mark.parametrize("versatz", [-3.0, -2.5, 0, 2.5, 3.0, 3])
+def test_der_versatz_eines_referenzraums_ist_bis_drei_kelvin_zulaessig(versatz):
+    kreis = _kreis_ohne_raum(_gw_kreis(1), versatz_k=versatz)
+    assert _geprueft(_gw(kreis), LOCK) is None
+
+
+@pytest.mark.parametrize("versatz", [-3.01, 3.01, -4, 10])
+def test_ein_versatz_ausserhalb_von_drei_kelvin_nennt_den_bereich(versatz):
+    kreis = _kreis_ohne_raum(_gw_kreis(1), versatz_k=versatz)
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("versatz_k", "bereich", min=-3.0, max=3.0)
+
+
+@pytest.mark.parametrize("ziel", [15.0, 20.5, 25.0, 15, 25])
+def test_ziel_fest_eines_kontrollraums_ist_von_15_bis_25_zulaessig(ziel):
+    kreis = _gw_kreis(1)
+    kreis["raeume"].append(konfig_form.raum([_sensor(50)], nummer=2, name="Bad", rolle="kontroll", ziel_fest=ziel))
+    assert _geprueft(_gw(kreis), LOCK) is None
+
+
+@pytest.mark.parametrize("ziel", [14.99, 25.01, 0.0, 30.0, -5.0])
+def test_ein_ziel_fest_ausserhalb_von_15_bis_25_nennt_den_bereich(ziel):
+    kreis = _gw_kreis(1)
+    kreis["raeume"].append(konfig_form.raum([_sensor(50)], nummer=2, name="Bad", rolle="kontroll", ziel_fest=ziel))
+    assert _geprueft(_gw(kreis), LOCK) == _ungueltig("ziel_fest", "bereich", min=15.0, max=25.0)
 
 
 def test_acht_referenzfuehler_sind_zulaessig_gegenprobe():

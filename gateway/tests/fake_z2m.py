@@ -148,12 +148,17 @@ def main() -> None:  # laeuft im Container (E2E gateway2), getestet in test_fake
     sensor = os.environ.get("FAKE_Z2M_SENSOR", "0x00124b0000000001")
     z2m.add_sensor(sensor)
     temperature = float(os.environ.get("FAKE_Z2M_TEMPERATURE", "20.0"))
-    thermostat = os.environ.get("FAKE_Z2M_THERMOSTAT")  # E2E gateway2: Bedienwunsch am Thermostat
-    if thermostat:
+    # E2E gateway2: Bedienwunsch am Thermostat; kommagetrennt auch mehrere (zweiter Heizkreis)
+    thermostate = [t for t in os.environ.get("FAKE_Z2M_THERMOSTAT", "").split(",") if t]
+    for thermostat in thermostate:
         z2m.add_thermostat(thermostat)
         z2m.report(thermostat, occupied_heating_setpoint=20.0, local_temperature=temperature, battery_low=False)
+    sensoren = [sensor] + [s for s in os.environ.get("FAKE_Z2M_WEITERE_SENSOREN", "").split(",") if s]
+    for weiterer in sensoren[1:]:
+        z2m.add_sensor(weiterer)
     while True:
-        z2m.report(sensor, temperature=temperature, battery=90, linkquality=120)
+        for gemeldet in sensoren:
+            z2m.report(gemeldet, temperature=temperature, battery=90, linkquality=120)
         time.sleep(10)
 
 

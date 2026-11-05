@@ -27,7 +27,7 @@ from smartheat_core import kreisansicht
 from smartheat_core.bindungsparameter import Fehler as BindungsparameterFehler
 from smartheat_core.bindungsparameter import beschreibung
 from smartheat_core.levers import LEVER_SETS
-from smartheat_core.rastung import Rastung, hebel_passt, passt
+from smartheat_core.rastung import SCHREIBROLLEN_HA, Rastung, hebel_passt, passt
 from smartheat_core.safety import resolve_local_safety
 from smartheat_core.verfahren import WegUnbekannt, verfahren_fuer
 from smartheat_core.zahlen import ist_endliche_zahl
@@ -64,7 +64,11 @@ RAUMFUEHLER_MAX = 8  # Fuehler der Referenzraeume je Kreis
 #: KONFIGURATION_KREIS_OPTIONAL, KONFIGURATION_RAUM_FIELDS, WEGE, WEG_DER_PLATTFORM, WEG_DES_TREIBERS), ebenfalls in
 #: test_core_vertrag_pin.py gehalten. Hoechstens vier Kreise je Geraet (Nutzer-Entscheidung, Regel 4).
 KREISE_MAX = 4
-RAEUME_MAX, RAUM_FUEHLER_MAX = 16, 8
+RAEUME_MAX, RAUM_FUEHLER_MAX = 8, 8
+#: Kopie aus smartheat_device.wire (RAUM_SOLL_MIN/MAX und RAUM_VERSATZ_MAX), ebenfalls in test_core_vertrag_pin.py
+#: gehalten: festes Ziel eines Kontrollraums 15 bis 25 Grad, Versatz eines Referenzraums -3 bis +3 K (Regel 4).
+RAUM_ZIEL_MIN, RAUM_ZIEL_MAX = 15.0, 25.0
+RAUM_VERSATZ_MAX = 3.0
 KREIS_NUMMER_MAX = 2**31 - 1  # Kreis- und Raumnummern (wire.KREIS_MAX)
 RAUM_ROLLEN = ("referenz", "kontroll")
 KONFIG_KREIS_FELDER = ("kreis", "name", "bindung", "raeume", "hebelsatz", "verteilsystem", "abo")
@@ -175,10 +179,14 @@ def _raum_aufbau(raum, gesehen: set[int]) -> dict | None:
         return befund("soll_quelle", "nicht_erlaubt")
     if not _zahl(raum["versatz_k"]):
         return befund("versatz_k", "ungueltig")
+    if not -RAUM_VERSATZ_MAX <= raum["versatz_k"] <= RAUM_VERSATZ_MAX:
+        return befund("versatz_k", "bereich", min=-RAUM_VERSATZ_MAX, max=RAUM_VERSATZ_MAX)
     if raum["versatz_k"] != 0 and (not referenz or raum["soll_quelle"]):
         return befund("versatz_k", "nicht_erlaubt")
     if raum["ziel_fest"] is not None and not _zahl(raum["ziel_fest"]):
         return befund("ziel_fest", "ungueltig")
+    if raum["ziel_fest"] is not None and not RAUM_ZIEL_MIN <= raum["ziel_fest"] <= RAUM_ZIEL_MAX:
+        return befund("ziel_fest", "bereich", min=RAUM_ZIEL_MIN, max=RAUM_ZIEL_MAX)
     if raum["ziel_fest"] is not None and referenz:
         return befund("ziel_fest", "nicht_erlaubt")
     return None
@@ -358,12 +366,13 @@ def _ref(wert: str) -> str:
 
 
 def _ziele(sicht: Mapping, host: str) -> set:
-    """Die Schreibziele eines Kreises: bei HA die Entities der Rollen und der Herstellerkreis, beim Gateway der Treiber
+    """Die Schreibziele eines Kreises: bei HA die Entities der Schreibrollen und der Herstellerkreis, beim Gateway der Treiber
     mit seinen Parametern und das Thermostat."""
     bindung = sicht["bindung"]
     if host == HOST_HA:
         kreis = bindung["kreis"]
-        return {*(("entity", _ref(ref)) for ref in bindung["rollen"].values()),
+        schreibend = {*SCHREIBROLLEN_HA, "room_target"}  # lesende Rollen (Aussentemperatur, Zaehler) teilen sich die Kreise
+        return {*(("entity", _ref(ref)) for rolle, ref in bindung["rollen"].items() if rolle in schreibend),
                 ("kreis", *(kreis.get(key) for key in (*KREIS_FELDER, *KREIS_OPTIONAL)))}
     ziele: set[tuple] = {("treiber", bindung["treiber"]["id"],
                           json.dumps(bindung["treiber"]["parameter"], sort_keys=True))}

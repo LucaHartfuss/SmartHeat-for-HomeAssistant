@@ -128,7 +128,7 @@ def test_ak_g10_01_feindliche_antworten_bleiben_in_den_grenzen(welt, satz, verte
         seq = anlage.link.of("up/snapshot")[-1]["seq"]
         assert seq not in beantwortet, f"Antwort {nr}: kein offener Tick"  # ein Tick, auf den noch nichts kam
         beantwortet.add(seq)
-        anlage.link.empfangen("down/setpoints", {"schema": 4, "seq": seq, "ts": "x", **antwort})
+        anlage.link.empfangen("down/setpoints", {"schema": 5, "kreis": 1, "seq": seq, "ts": "x", **antwort})
         anlage.runde(2)
         anlage.raum(22.0)
         anlage.runde(TAG)  # ein neuer Tag: das Tagesbudget der Weishaupt-Regler und die Abstaende gelten wieder

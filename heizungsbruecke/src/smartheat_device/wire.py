@@ -120,7 +120,7 @@ KONFIGURATION_RAUM_FIELDS = ("raum", "name", "rolle", "fuehler", "soll_quelle", 
 RAUM_ROLLEN = ("referenz", "kontroll")
 #: Hoechstens so viele Kreise je Geraet (Nachrichten und Konfiguration), Nutzer-Entscheidung.
 KREISE_MAX = 4
-RAEUME_MAX, RAUM_FUEHLER_MAX = 16, 8  # Raeume je Kreis, Fuehler je Raum
+RAEUME_MAX, RAUM_FUEHLER_MAX = 8, 8  # Raeume je Kreis, Fuehler je Raum
 #: Anbindungswege, die ein Geraet heute ausfuehrt, und ihre Abbildung aus der Bindung (HA: Plattform der Integration,
 #: Gateway: Treiber-ID); `simulation` ist der Testweg (nur Labor). Ein anderer Weg ist `weg_unbekannt`.
 WEGE = ("vaillant_myvaillant", "viessmann_vicare", "weishaupt_modbus", "simulation")
@@ -166,6 +166,7 @@ KREIS_MIN = 1  # kleinste Kreisnummer in Nachrichten und Dokumenten
 KREIS_MAX = 2**31 - 1  # groesste: die Nummer passt in eine Datenbankspalte vom Typ integer
 QUELLEN = ("portal", "geraet", "auftrag")
 RAUM_SOLL_MIN, RAUM_SOLL_MAX, RAUM_SOLL_STEP = 15.0, 25.0, 0.5
+RAUM_VERSATZ_MAX = 3.0  # Betrag des Versatzes eines zusaetzlichen Referenzraums (K); das feste Ziel nutzt RAUM_SOLL_MIN/MAX
 URSPRUNG_MAX_HEBEL, URSPRUNG_HEBEL_MAX_CHARS = 16, 64  # Ursprungswerte: hoechstens so viele Hebel, Namen so lang
 URSPRUNG_WERT_MAX = 1e12  # groesster Betrag einer Zahl in ursprungswerte
 DOKUMENT_ERRORS = (

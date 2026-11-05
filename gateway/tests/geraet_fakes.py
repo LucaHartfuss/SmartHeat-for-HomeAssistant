@@ -92,10 +92,10 @@ class FakeDeviceSicht:
     def bedienung(self):
         return self.bed
 
-    def abo_status(self):
+    def abo_status(self, kreis=None):
         return dokument_config.abo_status(self.konf)
 
-    def wunsch(self, wert, *, herkunft, durch=None):
+    def wunsch(self, wert, *, herkunft, durch=None, kreis=1):
         self.wuensche.append(wert)
         return wert
 

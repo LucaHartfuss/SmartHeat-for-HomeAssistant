@@ -64,7 +64,8 @@ _PARAMETER = {
     "vaillant_vrc720": {
         "schritte": {"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.1, "min_flow": 0.1},
         "toleranzen": {"curve": 0.025, "room_setpoint": 0.25, "heat_limit": 0.05, "min_flow": 0.05},
-        "wartezeit_s": 2100, "schreibgruppen": [], "zurueck": ["heat_limit"], "zurueck_optional": ["heat_limit"],
+        "wartezeit_s": 2100, "schreibgruppen": [], "zurueck": ["curve", "room_setpoint", "heat_limit", "min_flow"],
+        "zurueck_optional": ["heat_limit"],
         "nur_lesen": [], "zaehler": "daily", "schreibschutz": _SCHUTZ_FREI, "schemata": {},
     },
     "weishaupt_wwp": {

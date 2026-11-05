@@ -271,6 +271,61 @@ def test_the_command_line_prints_one_code_without_names_and_sets_the_exit_code(t
 def test_every_code_is_a_plain_lowercase_word_and_only_success_codes_exit_zero():
     codes = [wert for name, wert in vars(migration).items()
              if name.isupper() and not name.startswith("_") and isinstance(wert, str)]
-    assert len(codes) == 13 and all(code.replace("_", "").isalpha() and code == code.lower() for code in codes)
+    assert len(codes) == 14 and all(code.replace("_", "").isalpha() and code == code.lower() for code in codes)
     assert set(migration.ERFOLG) == {migration.AUS_KONFIGURATION, migration.ALTES_FORMAT, migration.BEREITS_AKTUELL}
     assert config_check.HOST_GATEWAY in migration.HOSTS and config_check.HOST_HA in migration.HOSTS
+
+
+# --- Aktiver Boost --------------------------------------------------------------------------------------------------
+
+def _boost_anlage(tmp_path, host, boost, *, ort="alt"):
+    """Ein Geraet mit bestaetigter Konfiguration, ohne Rastung; der Zustand der Anlage (backup.json) liegt am alten Ort des
+    Hosts oder im Kreisordner. Rueckgabe: der Geraeteordner."""
+    ordner = tmp_path / "device"
+    ordner.mkdir()
+    _konfiguration_ablegen(ordner, ha_konfiguration() if host == "ha" else gateway_konfiguration())
+    if ort == "alt":
+        backup = tmp_path / "backup.json" if host == "ha" else tmp_path / "runtime" / "backup.json"
+    else:
+        backup = tmp_path / "runtime" / "kreis-2" / "backup.json"
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    backup.write_text(json.dumps({"tenant_id": "kunde3", "lifetime_writes": 5, **boost}))
+    return ordner
+
+
+def _stand(daten):
+    return {str(pfad.relative_to(daten)): pfad.read_bytes() for pfad in sorted(daten.rglob("*")) if pfad.is_file()}
+
+
+@pytest.mark.parametrize("host", ["gateway", "ha"])
+@pytest.mark.parametrize("ort", ["alt", "kreisordner"])
+@pytest.mark.parametrize("boost", [{"boost_active": True}, {"emergency_boost_active": True}],
+                         ids=["komfort-boost", "notfall-boost"])
+def test_an_active_boost_refuses_the_migration_before_any_change(tmp_path, host, ort, boost):
+    """Danach wartet das Geraet still auf das Dokument des Servers, ohne lokale Sicherheit: lief ein Boost, bliebe die
+    Anlage darauf stehen. Die Migration verweigert, bevor sie etwas aendert."""
+    ordner = _boost_anlage(tmp_path, host, boost, ort=ort)
+    vorher = _stand(tmp_path)
+
+    assert _lauf(ordner, host=host) == migration.BOOST_AKTIV
+    assert _stand(tmp_path) == vorher and not (ordner / rastung.DATEI).exists()
+
+
+def test_an_active_boost_ends_the_run_with_a_failure_code(tmp_path, capsys):
+    ordner = _boost_anlage(tmp_path, "gateway", {"boost_active": True})
+    assert migration.main(["--device-dir", str(ordner), "--host", "gateway", "--release", RELEASE]) == 1
+    assert capsys.readouterr().out.strip() == "boost_aktiv"
+
+
+@pytest.mark.parametrize("host", ["gateway", "ha"])
+def test_without_an_active_boost_the_migration_runs_through(tmp_path, host):
+    ordner = _boost_anlage(tmp_path, host, {"boost_active": False, "emergency_boost_active": False})
+    assert _lauf(ordner, host=host) == migration.AUS_KONFIGURATION
+    assert (ordner / rastung.DATEI).exists()
+
+
+def test_the_boost_check_answers_with_a_plain_bool(tmp_path):
+    assert migration.boost_aktiv(tmp_path, "gateway") is False   # ohne Datei kein Boost
+    (tmp_path / "runtime").mkdir()
+    (tmp_path / "runtime" / "backup.json").write_text(json.dumps({"boost_active": True}))
+    assert migration.boost_aktiv(tmp_path, "gateway") is True

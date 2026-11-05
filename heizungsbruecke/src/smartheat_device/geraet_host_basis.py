@@ -10,6 +10,7 @@ Geraetekerns laufen im Geraete-Thread, worker_binden im Hauptthread; die Sperre 
 Konformitaetssuite testhilfen/host_konformitaet.py) ausser konfiguration_vorbereiten: scheitert dort das Schreiben der
 Markierung (vor dem Speichern), geht der OSError an den Dokumentspeicher, und das Geraet haelt das Dokument zurueck
 (Nr. 38)."""
+import logging
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -20,9 +21,11 @@ from smartheat_device.hintergrund import Hintergrund
 from smartheat_device.host import Anzeige, MeldungSink
 from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
-from smartheat_runtime.soll_speicher import SOURCE_PORTAL, raum_soll_von
+from smartheat_runtime.soll_speicher import KREIS, SOURCE_PORTAL, raum_soll_von
 from smartheat_runtime.status import STATUS_ABGEMELDET
 from smartheat_runtime.worker import Event, RegulationWorker
+
+logger = logging.getLogger(__name__)
 
 #: Neustart der Laufzeit (neue laufzeitrelevante Konfiguration, sign_off); prozess.reload_anhaengen haengt ihn an.
 EV_RELOAD = "geraet_reload"
@@ -72,12 +75,18 @@ class GeraetHostBasis:
         self.hintergrund = Hintergrund()
         #: Meldungen der Laufzeit an den Geraetekern (up/notifications); einer je Prozess
         self.notify_sink = MeldungSink(self._melden)
-        self._worker: RegulationWorker | None = None
-        self._soll_eingang = True  # False im Ruhezustand (IdleBridge): der Worker hat keinen Soll-Eingang
+        self._workers: dict[int, RegulationWorker] = {}  # je Kreis der Worker seiner Laufzeit
+        #: False im Ruhezustand (IdleBridge): der Worker des Kreises hat keinen Soll-Eingang
+        self._soll_eingaenge: dict[int, bool] = {}
         self._lock = threading.Lock()  # binden (Hauptthread) gegen Rueckrufe (Geraete-Thread)
         self._neustart = False
-        self._ursprungswerte: dict = {}  # Hauptthread schreibt, Geraet liest
-        self._raum_soll: float | None = None  # letzte Bedienung, bevor der Worker gebunden ist
+        self._ursprungswerte: dict[int, dict] = {}  # je Kreis; Hauptthread schreibt, Geraet liest
+        self._raum_soll: dict[int, float] = {}  # je Kreis die letzte Bedienung, bevor sein Worker gebunden ist
+        #: Die Laufzeit der Anlage (kreise.Laufzeit): entscheidet je Konfigurationsaenderung, ob einzelne Kreise
+        #: wieder anlaufen oder der Prozess neu startet. Ihre blockierende Wiederaufnahme laeuft in diesem eigenen
+        #: Thread, nie im Geraete-Thread und nie hinter den Befehlen.
+        self._laufzeit = None
+        self._konfig_hintergrund = Hintergrund()
 
     def aufraeumen_pfad(self) -> Path:
         """Wohin konfiguration_vorbereiten die Markierung aufraeumen.json schreibt (Host)."""
@@ -93,32 +102,41 @@ class GeraetHostBasis:
     def verbinden(self, device) -> None:
         self.device = device
 
-    def worker_binden(self, worker: RegulationWorker, *, soll_eingang: bool = True) -> None:
-        """soll_eingang=False im Ruhezustand (IdleBridge, kein Trigger-Eingang): Bedienungen gehen nicht an den Worker
+    def worker_binden(self, worker: RegulationWorker, *, kreis: int = KREIS, soll_eingang: bool = True) -> None:
+        """Bindet den Worker des Kreises `kreis` (ein neuer ersetzt den alten, so nach einer Wiederaufnahme).
+        soll_eingang=False im Ruhezustand (IdleBridge, kein Trigger-Eingang): Bedienungen gehen nicht an den Worker
         (sonst je Dokument "Kein Handler ... verworfen"); sie bleiben im Geraetekern gespeichert und gelten beim
-        naechsten Start mit Regelung. Neustart und letzte Bedienung aus der Zeit vor dem Binden werden nachgestellt."""
+        naechsten Start mit Regelung. Neustart und letzte Bedienung des Kreises aus der Zeit vor dem Binden werden
+        nachgestellt."""
         with self._lock:
-            self._worker = worker
-            self._soll_eingang = soll_eingang
-            if self._raum_soll is not None and soll_eingang:
-                worker.post(Event(EV_TARGET_INPUT, {"value": self._raum_soll, "source": SOURCE_PORTAL}))
-            self._raum_soll = None
+            self._workers[kreis] = worker
+            self._soll_eingaenge[kreis] = soll_eingang
+            gemerkt = self._raum_soll.pop(kreis, None)
+            if gemerkt is not None and soll_eingang:
+                worker.post(Event(EV_TARGET_INPUT, {"value": gemerkt, "source": SOURCE_PORTAL}))
             if self._neustart:
                 worker.post(Event(EV_RELOAD))
 
-    def ursprungswerte_merken(self, werte: dict) -> None:
+    def laufzeit_binden(self, laufzeit) -> None:
+        """Die Laufzeit der Anlage, der konfiguration_uebernommen jede neue Konfiguration vorlegt."""
+        self._laufzeit = laufzeit
+
+    def ursprungswerte_merken(self, werte: dict, kreis: int = KREIS) -> None:
         with self._lock:
-            self._ursprungswerte = dict(werte)
+            self._ursprungswerte[kreis] = dict(werte)
 
     def ursprungswerte(self) -> dict:
+        """Gemeldet wird nur Kreis 1: der Statuskoerper hat eine Ursprungswerte-Tabelle je Anlage; die Namen anderer
+        Kreise wuerden ihr sonst falsch zugeordnet."""
         with self._lock:
-            return dict(self._ursprungswerte)
+            return dict(self._ursprungswerte.get(KREIS, {}))
 
     def neustart_anfordern(self) -> None:
+        """Neustart des Prozesses: EV_RELOAD an jeden gebundenen Worker, spaeter gebundene bekommen ihn beim Binden."""
         with self._lock:
             self._neustart = True
-            if self._worker is not None:
-                self._worker.post(Event(EV_RELOAD))
+            for worker in self._workers.values():
+                worker.post(Event(EV_RELOAD))
 
     def _melden(self, key: str, text: str, *, offen: bool, stufe: str) -> None:
         if self.device is not None:
@@ -145,25 +163,25 @@ class GeraetHostBasis:
             return dict(alt), True
         return dict(gespeichert or {}), False
 
-    def ursprungswerte_server(self, konfiguration: dict, leer_abmelden: bool) -> dict:
+    def ursprungswerte_server(self, konfiguration: dict, leer_abmelden: bool, kreis: int | None = None) -> dict:
         """Die Ursprungswerte, die der Server fuer die Wiederherstellung kennt; konfiguration und leer_abmelden stammen
         aus laufzeit_konfiguration. Steht das Zuruecksetzen nach einer leeren Konfiguration aus, gelten die Werte der
         Markierung -- auch wenn inzwischen eine neue Einrichtung (womoeglich einer anderen Anlage) eingetroffen ist
         (die Markierung hat Vorrang); sonst die aktuelle Konfiguration, solange sie eingerichtet ist."""
         if leer_abmelden:
-            return dokument_config.ursprungswerte(konfiguration)
+            return dokument_config.ursprungswerte(konfiguration, kreis)
         aktuell = self.konfiguration()
-        return dokument_config.ursprungswerte(aktuell if dokument_config.eingerichtet(aktuell) else konfiguration)
+        return dokument_config.ursprungswerte(aktuell if dokument_config.eingerichtet(aktuell) else konfiguration, kreis)
 
-    def abo_status(self) -> str:
-        return self.device.abo_status() if self.device is not None else dokument_config.abo_status(None)
+    def abo_status(self, kreis: int | None = None) -> str:
+        return self.device.abo_status(kreis) if self.device is not None else dokument_config.abo_status(None)
 
-    def wunsch(self, wert: float, herkunft: str | None = None, durch: str | None = None) -> float:
-        """Bedienwunsch (HA: Soll-Entity oder smartheat_wunsch; Gateway: Thermostat): begrenzt vom Geraetekern, der ihn
-        sendet; ohne Geraet unveraendert."""
+    def wunsch(self, wert: float, herkunft: str | None = None, durch: str | None = None, kreis: int = KREIS) -> float:
+        """Bedienwunsch fuer den Kreis `kreis` (HA: Soll-Entity oder smartheat_wunsch; Gateway: Thermostat): begrenzt
+        vom Geraetekern, der ihn sendet; ohne Geraet unveraendert."""
         if self.device is None:
             return wert
-        return self.device.wunsch(wert, herkunft=herkunft or self.wunsch_herkunft, durch=durch)
+        return self.device.wunsch(wert, herkunft=herkunft or self.wunsch_herkunft, durch=durch, kreis=kreis)
 
     def soll_quelle_aus(self, aus: bool, wirksam: float | None) -> None:
         if self.device is not None:
@@ -186,15 +204,50 @@ class GeraetHostBasis:
         aufgehoben = (dokument_config.eingerichtet(neu)
                       and dokument_config.abmeldung_aufheben(self.abgemeldet_pfad(), neu["anlage"]))
         einrichtung_beteiligt = dokument_config.eingerichtet(alt) or dokument_config.eingerichtet(neu)
-        if aufgehoben or (einrichtung_beteiligt and dokument_config.laufzeit_relevant(alt, neu)):
+        if aufgehoben:
+            self.neustart_anfordern()
+        elif not einrichtung_beteiligt:
+            return
+        elif self._laufzeit is None:
+            if dokument_config.laufzeit_relevant(alt, neu):
+                self.neustart_anfordern()
+        else:
+            laufzeit = self._laufzeit
+            try:
+                sofort = laufzeit.prozessneustart_noetig(alt, neu)
+            except Exception:
+                logger.exception("Die Laufzeit konnte die neue Konfiguration nicht pruefen, Neustart")
+                sofort = True
+            if sofort:
+                self.neustart_anfordern()
+            else:
+                self._konfig_hintergrund.submit(lambda: self._laufzeit_fragen(laufzeit, alt, neu))
+
+    def _laufzeit_fragen(self, laufzeit, alt: dict | None, neu: dict) -> None:
+        """Die Laufzeit nimmt Kreise mit wieder aktivem Abo oder geaenderter Bindung allein wieder auf; verlangt sie
+        den Prozessneustart oder scheitert sie, startet der Prozess neu (sicherer Weg)."""
+        try:
+            neustart = laufzeit.konfiguration_geaendert(alt, neu)
+        except Exception:
+            logger.exception("Die Laufzeit konnte die neue Konfiguration nicht anwenden, Neustart")
+            neustart = True
+        if neustart:
             self.neustart_anfordern()
 
     def bedienung_uebernommen(self, inhalt: dict) -> None:
-        value = raum_soll_von(inhalt)
-        if not isinstance(value, int | float) or isinstance(value, bool):
-            return
+        """Je Kreis der Raum-Soll seines Eintrags: an den Worker des Kreises, vor dem Binden gemerkt. Ein Kreis, den die
+        Bedienung nicht nennt oder dessen Wert keine Zahl ist, bleibt unberuehrt."""
         with self._lock:
-            if self._worker is None:
-                self._raum_soll = float(value)  # worker_binden stellt die letzte nach
-            elif self._soll_eingang:
-                self._worker.post(Event(EV_TARGET_INPUT, {"value": float(value), "source": SOURCE_PORTAL}))
+            eintraege = inhalt.get("kreise") if isinstance(inhalt, dict) else None
+            genannt = [e["kreis"] for e in eintraege if isinstance(e, dict) and isinstance(e.get("kreis"), int)] \
+                if isinstance(eintraege, list) else []
+            kreise = {*self._workers, *self._raum_soll, *genannt}
+            for kreis in sorted(kreise):
+                value = raum_soll_von(inhalt, kreis)
+                if not isinstance(value, int | float) or isinstance(value, bool):
+                    continue
+                worker = self._workers.get(kreis)
+                if worker is None:
+                    self._raum_soll[kreis] = float(value)  # worker_binden stellt die letzte nach
+                elif self._soll_eingaenge.get(kreis, True):
+                    worker.post(Event(EV_TARGET_INPUT, {"value": float(value), "source": SOURCE_PORTAL}))

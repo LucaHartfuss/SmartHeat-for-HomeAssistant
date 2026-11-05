@@ -1,0 +1,68 @@
+{
+ "dirty": false,
+ "inhalt": {
+  "abo": "aktiv",
+  "anlage": "kunde3",
+  "bindung": {
+   "thermostat": "0x00124b0000000009",
+   "treiber": {
+    "id": "simulation",
+    "parameter": {
+     "heizkreis": 0
+    }
+   }
+  },
+  "bindungsparameter": {
+   "energie": {
+    "electrical_dhw": "kWh",
+    "electrical_heating": "kWh",
+    "electrical_total": "kWh",
+    "primary_dhw": "kWh",
+    "primary_heating": "kWh",
+    "thermal_dhw": "kWh",
+    "thermal_heating": "kWh"
+   },
+   "nur_lesen": [],
+   "schemata": {},
+   "schreibgruppen": [
+    [
+     "curve",
+     "level"
+    ]
+   ],
+   "schreibschutz": {
+    "durchsetzen_tag": 4,
+    "lebensdauer_hinweis": null,
+    "tag": null
+   },
+   "schritte": {
+    "curve": 0.1,
+    "level": 1.0,
+    "room_setpoint": 1.0
+   },
+   "toleranzen": {
+    "curve": 0.05,
+    "level": 0.5,
+    "room_setpoint": 0.5
+   },
+   "wartezeit_s": 180,
+   "zaehler": "daily",
+   "zurueck": [
+    "curve",
+    "level",
+    "room_setpoint"
+   ],
+   "zurueck_optional": []
+  },
+  "hebelsatz": "viessmann_vicare",
+  "mindest_software": "0.6.0",
+  "profil": "viessmann_gastherme_heizkoerper",
+  "raumfuehler": [
+   "zigbee:0x00124b0000000001:temperature"
+  ],
+  "software": null,
+  "tagestick": "12:12",
+  "verteilsystem": "Heizkoerper"
+ },
+ "version": 2
+}

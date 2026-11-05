@@ -239,3 +239,101 @@ def test_removing_with_a_broken_list_never_raises(tmp_path, content):
 
 def test_removing_without_a_list_is_done(tmp_path):
     assert entfernen(_ha_api(), "t1", tmp_path / "d.json") is True
+
+
+# --- Hilfssensoren je Kreis und Raum -------------------------------------------------------------------------------
+
+def _ha_api_namen(existing=()):
+    """Fake-HA, das je angelegtem Sensor eine Entity-ID aus dem Namen bildet (wie slugify in HA)."""
+    ha_api = MagicMock(spec=HomeAssistantApi)
+    vorhanden = set(existing)
+    ha_api.entity_exists.side_effect = lambda entity_id: entity_id in vorhanden
+
+    def _anlegen(name, template):
+        entity_id = "sensor." + name.lower().replace(" ", "_")
+        vorhanden.add(entity_id)
+        return entity_id
+
+    ha_api.create_template_sensor.side_effect = _anlegen
+    return ha_api
+
+
+def test_each_room_with_sensors_gets_a_mean_sensor_from_its_own_sensors(tmp_path):
+    ha_api = _ha_api_namen()
+    raeume = ((1, ("sensor.wz",)), (2, ("sensor.kz", "sensor.kz2")))
+
+    result = ensure_all(ha_api, "t1", ["sensor.wz"], tmp_path / "d.json", kreis=1, raeume=raeume)
+
+    angelegt = {c.kwargs["name"]: c.kwargs["template"] for c in ha_api.create_template_sensor.call_args_list}
+    assert angelegt == {
+        "SmartHeat t1 Raumtemperatur": room_temperature_template(["sensor.wz"]),
+        "SmartHeat t1 K1 R1 Raumtemperatur": room_temperature_template(["sensor.wz"]),
+        "SmartHeat t1 K1 R2 Raumtemperatur": room_temperature_template(["sensor.kz", "sensor.kz2"]),
+    }
+    assert "sensor.kz" not in angelegt["SmartHeat t1 K1 R1 Raumtemperatur"]  # nur die eigenen Fuehler
+    assert result.raeume == {1: "sensor.smartheat_t1_k1_r1_raumtemperatur", 2: "sensor.smartheat_t1_k1_r2_raumtemperatur"}
+    assert set(load_backup(tmp_path / "d.json")) == {"room_temperature", "room_temperature:1:1", "room_temperature:1:2"}
+    assert set(result.entity_ids) == {"room_actual"}  # das Manifest bekommt keine Raum-Sensoren
+
+
+def test_circuit_two_has_its_own_circuit_sensor_and_keys(tmp_path):
+    ha_api = _ha_api_namen()
+    state = tmp_path / "d.json"
+    ensure_all(ha_api, "t1", ["sensor.a"], state, kreis=1, raeume=((1, ("sensor.a",)),))
+
+    result = ensure_all(ha_api, "t1", ["sensor.b"], state, kreis=2, raeume=((1, ("sensor.b",)),))
+
+    assert result.entity_ids["room_actual"] == "sensor.smartheat_t1_k2_raumtemperatur"
+    assert result.raeume == {1: "sensor.smartheat_t1_k2_r1_raumtemperatur"}
+    assert set(load_backup(state)) == {"room_temperature", "room_temperature:1:1", "room_temperature:2",
+                                       "room_temperature:2:1"}
+    ha_api.delete_helper.assert_not_called()  # Kreis 2 fasst die Sensoren von Kreis 1 nicht an
+
+
+def test_a_changed_room_sensor_replaces_only_that_helper_and_reports_a_source_change(tmp_path):
+    ha_api = _ha_api_namen()
+    state = tmp_path / "d.json"
+    ensure_all(ha_api, "t1", ["sensor.a"], state, kreis=2, raeume=((1, ("sensor.b",)), (2, ("sensor.c",))))
+    ha_api.create_template_sensor.reset_mock()
+
+    result = ensure_all(ha_api, "t1", ["sensor.a"], state, kreis=2, raeume=((1, ("sensor.b",)), (2, ("sensor.neu",))))
+
+    assert result.replaced == ("room_temperature:2:2",)
+    ha_api.delete_helper.assert_called_once_with("sensor.smartheat_t1_k2_r2_raumtemperatur", tenant_id="t1")
+    assert ha_api.create_template_sensor.call_count == 1
+
+
+def test_a_room_without_sensors_gets_no_sensor_and_a_removed_room_loses_its_helper(tmp_path):
+    ha_api = _ha_api_namen()
+    state = tmp_path / "d.json"
+    ensure_all(ha_api, "t1", ["sensor.a"], state, kreis=1, raeume=((1, ("sensor.a",)), (2, ("sensor.b",))))
+
+    result = ensure_all(ha_api, "t1", ["sensor.a"], state, kreis=1, raeume=((1, ("sensor.a",)),))
+
+    assert set(result.raeume) == {1}
+    assert set(load_backup(state)) == {"room_temperature", "room_temperature:1:1"}
+    ha_api.delete_helper.assert_called_once_with("sensor.smartheat_t1_k1_r2_raumtemperatur", tenant_id="t1")
+
+
+def test_removing_the_plant_removes_the_sensors_of_all_circuits_and_rooms(tmp_path):
+    ha_api = _ha_api_namen()
+    state = tmp_path / "d.json"
+    ensure_all(ha_api, "t1", ["sensor.a"], state, kreis=1, raeume=((1, ("sensor.a",)),))
+    ensure_all(ha_api, "t1", ["sensor.b"], state, kreis=2, raeume=((1, ("sensor.b",)),))
+
+    assert entfernen(ha_api, "t1", state) is True
+
+    assert ha_api.delete_helper.call_count == 4
+    assert not state.exists()
+
+
+def test_a_foreign_tracking_key_is_dropped_without_deleting(tmp_path):
+    """Grenze der Schluessel: nur room_temperature[:n[:m]] und outdoor_temperature gehoeren dem Add-on."""
+    ha_api = _ha_api_namen({"sensor.x", "sensor.y"})
+    state = tmp_path / "d.json"
+    save_backup(state, {"room_temperature:2:3": {"entity_id": "sensor.x", "source": "s"},
+                        "room_temperature:0:1": {"entity_id": "sensor.y", "source": "s"}})
+
+    entfernen(ha_api, "t1", state)
+
+    ha_api.delete_helper.assert_called_once_with("sensor.x", tenant_id="t1")

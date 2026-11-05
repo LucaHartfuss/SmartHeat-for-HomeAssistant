@@ -375,4 +375,5 @@ def sign_off(ctx: Kontext, payload: dict) -> Outcome:
     if gateway_config.abmelden(ctx.paths, anlage):
         ctx.neustart()
 
-    return abmeldung_abwarten(anlage, ctx.runtime_status, ctx.paths.backup, ctx.clock() + SIGN_OFF_WAIT_SECONDS)
+    return abmeldung_abwarten(anlage, ctx.runtime_status, ctx.paths.backup(dokument_config.kreisnummer(konfiguration)),
+                              ctx.clock() + SIGN_OFF_WAIT_SECONDS)

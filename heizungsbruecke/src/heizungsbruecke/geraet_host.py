@@ -8,7 +8,7 @@ Konfiguration derselben Anlage, die die Abmelde-Markierung aufhebt; der Wechsel 
 markiert das Aufraeumen vor dem Speichern.
 Eine neue Bedienung geht als Soll-Eingang (portal) an den Worker, der Soll-Eingang schreibt sie in den Soll-Speicher und
 gleicht die Soll-Entity an; kommt sie vor dem Binden, stellt worker_binden die letzte nach. Status
-(runtime_status_event) und Raum (raum_merken, HaHost) legt der Worker-Thread hier ab, der Geraete-Thread liest
+(runtime_status_event) und Raum (raum_merken je Kreis, HaHost) legt der Worker-Thread hier ab, der Geraete-Thread liest
 sie fuer up/status. Meldungen der Laufzeit gehen wie beim Gateway (MeldungSink) als up/notifications an den Server und
 zusaetzlich an HA (notify_sink_fuer). anzeigen meldet Geraete-ID, Uebernahmestand und Code an die Supervisor-Discovery
 (discovery.Discovery)."""
@@ -55,7 +55,7 @@ class HaDeviceHost(GeraetHostBasis):
         self.discovery: Discovery | None = None  # Supervisor-Meldung (__main__.verdrahten)
         self.claim_code: Callable[[], str | None] = lambda: None  # Uebernahme-Code des Geraets (__main__.verdrahten)
         self.runtime_status_event: dict | None = None  # letztes Status-Ereignis der Laufzeit (laufzeit_merken)
-        self._raum: dict | None = None
+        self._raeume: dict[int, dict | None] = {}  # je Kreis der Raum des letzten Takts
         self._uhr: tuple[float, bool | None] | None = None
 
     def aufraeumen_pfad(self) -> Path:
@@ -71,9 +71,9 @@ class HaDeviceHost(GeraetHostBasis):
         Gateways) und an HA (Notify-Dienste, persistent_notification)."""
         return GeraetUndHaSink(self.notify_sink, HaNotifySink(self._ha, services))
 
-    def raum_merken(self, raum: dict | None) -> None:
-        """Worker-Thread (raum.RaumPublisher): {ist, soll, soll_quelle, ts} fuer up/status."""
-        self._raum = raum
+    def raum_merken(self, kreis: int, raum: dict | None) -> None:
+        """Worker-Thread des Kreises (raum.RaumPublisher): {ist, soll, soll_quelle, ts} fuer up/status."""
+        self._raeume[kreis] = raum
 
     # --- DeviceHost ---
 
@@ -126,8 +126,8 @@ class HaDeviceHost(GeraetHostBasis):
     def runtime_status(self) -> dict | None:
         return self.runtime_status_event
 
-    def raum(self) -> dict | None:
-        return self._raum
+    def raum(self, kreis: int = 1) -> dict | None:
+        return self._raeume.get(kreis)
 
     def anzeigen(self, anzeige: Anzeige) -> None:
         self.letzte_anzeige = anzeige
@@ -218,7 +218,7 @@ class HaDeviceHost(GeraetHostBasis):
             return Failed("nicht_eingerichtet")
         anlage = ergebnis[0]
 
-        return abmeldung_abwarten(anlage, lambda: self.runtime_status_event, config.BACKUP_PATH,
+        return abmeldung_abwarten(anlage, lambda: self.runtime_status_event, config.backup_path(dokument_config.kreisnummer(self.konfiguration())),
                                   self._clock() + SIGN_OFF_WAIT_SECONDS)
 
     def _diagnostics(self, payload: dict) -> Done:

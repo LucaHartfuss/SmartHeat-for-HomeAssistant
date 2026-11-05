@@ -34,8 +34,11 @@ def test_vaillant_beschreibung_wie_bis_1_0_0():
     assert d.enforce_tolerance == {"curve": 0.025, "room_setpoint": 0.25, "heat_limit": 0.05, "min_flow": 0.05}
     assert d.labels == {"curve": "Heizkurve", "room_setpoint": "Wunschtemperatur der Zone",
                         "heat_limit": "Heizgrenze", "min_flow": "Mindestvorlauftemperatur"}
-    assert (d.restore_originals, d.optional_restore, d.prepared_lever) == (("heat_limit",), ("heat_limit",), "room_setpoint")
-    assert (d.daily_write_limit, d.lifetime_hint_at, d.write_groups, d.aux_originals) == (None, None, (), ())
+    assert d.restore_originals == ("curve", "room_setpoint", "heat_limit", "min_flow")
+    assert (d.optional_restore, d.prepared_lever) == (("heat_limit",), "room_setpoint")
+    assert (d.daily_write_limit, d.lifetime_hint_at, d.write_groups, d.aux_originals) == (
+        None, None, (), ("mode_select",),
+    )
     assert d.preparation_resets_setpoint is True and d.preparation_label == "Betriebsart der Zone"
 
 
@@ -116,9 +119,11 @@ def test_wartezeit(wartezeit, gut):
 
 
 @pytest.mark.parametrize(("feld", "wert", "gut"), [
-    ("zurueck", ["heat_limit"], True), ("zurueck", ["min_flow"], False), ("zurueck", ["level"], False),
-    ("zurueck", ["heat_limit", "heat_limit"], False), ("zurueck", "heat_limit", False),
-    ("zurueck_optional", [], True), ("zurueck_optional", ["curve"], False), ("zurueck_optional", ["x"], False),
+    ("zurueck", ["curve", "room_setpoint", "heat_limit", "min_flow"], True),
+    ("zurueck", ["heat_limit"], False), ("zurueck", ["min_flow"], False), ("zurueck", ["level"], False),
+    ("zurueck", ["curve", "room_setpoint", "heat_limit", "min_flow", "heat_limit"], False),
+    ("zurueck", "heat_limit", False),
+    ("zurueck_optional", [], True), ("zurueck_optional", ["level"], False), ("zurueck_optional", ["x"], False),
     ("nur_lesen", ["x"], False), ("schreibgruppen", {"a": ["curve", "heat_limit"]}, False),
     ("nur_lesen", ["level"], True), ("nur_lesen", ["curve"], False),
     ("schreibgruppen", [["curve", "room_setpoint"]], False), ("schreibgruppen", [["curve"]], False),
@@ -225,7 +230,8 @@ def test_riesenzahlen_sind_ein_wertefehler():
 
 def test_zurueck_optional_nur_aus_zurueck():
     assert _try(parameter("vaillant_vrc720", zurueck=["curve"], zurueck_optional=["heat_limit"]))
-    assert _try(parameter("vaillant_vrc720", zurueck=["heat_limit"], zurueck_optional=[])) is None
+    alle = ["curve", "room_setpoint", "heat_limit", "min_flow"]
+    assert _try(parameter("vaillant_vrc720", zurueck=alle, zurueck_optional=[])) is None
 
 
 H = "hz_operationmode_"
@@ -294,7 +300,7 @@ def test_basis_lehnt_fremden_hebel_ab():
 
 def test_fehlertexte_nicht_doppelt_verpackt():
     for feld, wert in (("zurueck", ["min_flow"]), ("nur_lesen", ["curve"]), ("energie", {"gas": "kWh"}),
-                       ("schreibgruppen", [["curve"]]), ("zurueck_optional", ["curve"])):
+                       ("schreibgruppen", [["curve"]]), ("zurueck_optional", ["level"])):
         text = _try(parameter("vaillant_vrc720", **{feld: wert}))
         assert text and "ungültig (" not in text, (feld, text)
 
@@ -473,14 +479,14 @@ def test_wartezeit_fehler_nennt_min_60_und_max_7200(wartezeit):
 # Welche Hebel beim Abmelden oder Abo-Ende zurueckgestellt werden, entscheidet nicht der Server: eine leere oder
 # verkuerzte Liste `zurueck` weist der Client ab. Die Mindestlisten stehen hier als Literale, nie aus dem Produktcode.
 MINDEST_ZURUECK = {
-    "vaillant_vrc720": ("heat_limit",),
+    "vaillant_vrc720": ("curve", "room_setpoint", "heat_limit", "min_flow"),
     "weishaupt_wwp": ("curve", "room_setpoint", "heat_limit"),
     "weishaupt_wwp_basis": ("room_setpoint",),
     "viessmann_vicare": ("curve", "level", "room_setpoint"),
 }
 FEHLENDER_PFLICHT_HEBEL = [(satz, hebel) for satz, liste in MINDEST_ZURUECK.items() for hebel in liste]
 #: Erlaubte Hebel ausser der Mindestliste, die der Server zusaetzlich zurueckstellen lassen darf.
-ZUSATZ_HEBEL = {"vaillant_vrc720": ("curve", "room_setpoint"), "weishaupt_wwp": (), "weishaupt_wwp_basis": (),
+ZUSATZ_HEBEL = {"vaillant_vrc720": (), "weishaupt_wwp": (), "weishaupt_wwp_basis": (),
                 "viessmann_vicare": ()}
 
 
@@ -527,11 +533,12 @@ def test_reihenfolge_der_zurueck_liste_ist_gleichgueltig(hebelsatz):
 
 
 def test_vaillant_pflicht_hebel_darf_weiter_optional_sein():
-    """Die Mindestliste fordert die Rueckstellung von heat_limit; `zurueck_optional` (darf im Wiederherstellungspunkt
-    fehlen) bleibt wie heute erlaubt."""
-    d = beschreibung("vaillant_myvaillant", "vaillant_vrc720", parameter("vaillant_vrc720", zurueck=["heat_limit"],
+    """Die Mindestliste fordert die Rueckstellung aller vier Hebel; `zurueck_optional` (darf im Wiederherstellungspunkt
+    fehlen) bleibt fuer die Heizgrenze wie heute erlaubt."""
+    alle = ["curve", "room_setpoint", "heat_limit", "min_flow"]
+    d = beschreibung("vaillant_myvaillant", "vaillant_vrc720", parameter("vaillant_vrc720", zurueck=alle,
                                                    zurueck_optional=["heat_limit"]))
-    assert d.restore_originals == ("heat_limit",) and d.optional_restore == ("heat_limit",)
+    assert d.restore_originals == tuple(alle) and d.optional_restore == ("heat_limit",)
 
 
 def test_aussenweg_ein_dokument_mit_verkuerzter_liste_wird_von_der_konfigurationspruefung_abgewiesen():

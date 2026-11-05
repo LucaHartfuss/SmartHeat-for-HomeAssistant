@@ -32,3 +32,13 @@ _.expires_rule  # Feld von wire.Command: Server geraete/device_protocol.py werte
 _.soll_effektiv  # smartheat_core/plan.py: noch ohne Aufrufer in den Hosts (tests/test_core_plan.py)
 _.soll_art  # smartheat_core/plan.py SollErgebnis: Feld wird mit der Verdrahtung in die Telemetrie gelesen
 _.naechster_wechsel  # smartheat_core/plan.py SollErgebnis: Feld wird mit dem Wochenplan vom Wecker gelesen
+
+# --- Einstieg fuer Hosts mit mehreren Heizkreisen (sie rufen ihn bei einem neuen Konfigurationsdokument; Tests treiben ihn) ---
+_.konfiguration_geaendert  # smartheat_runtime/kreise.py Laufzeit.konfiguration_geaendert: Wiederaufnahme nach Abo-Wechsel
+
+# --- Raum-Abweichung (smartheat_core/raum_delta.py): Zwilling der Rechnung des Servers, vom Vertragscheck gegen die gemeinsamen Vektoren geprueft ---
+_.delta  # Contract-Check 89 (tools/contracts/raum_delta.json) rechnet Server und Geraet an denselben Vektoren; im Laufzeitpfad nur wirksames_ist
+
+# --- Feldlisten des Status-Ereignisses (V5) und des flachen Kreis-Ereignisses (V1): Leser auf der Gegenseite ---
+_.EVENT_FIELDS  # geraet_status/status/geraet_nachweis: Contract-Check 14 und 88 vergleichen sie mit der Integration bzw. der Fixture
+_.KREIS_EVENT_FIELDS  # geraet_status: Contract-Check 14 und 88 vergleichen die Kreisfelder mit STATUS_KREIS_FIELDS der Integration

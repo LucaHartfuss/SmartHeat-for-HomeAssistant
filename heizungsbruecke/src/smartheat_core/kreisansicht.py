@@ -54,11 +54,65 @@ def ansicht(konfiguration: Mapping, kreis: Mapping) -> dict:
 
 def erste(konfiguration) -> dict:
     """Die Sicht des ersten Kreises; ohne Kreis (leere Konfiguration, Fremdinhalt) nur die anlagenweiten Felder.
-    Die Hosts fuehren heute genau einen Kreis (die Laufzeit lehnt mehr ab)."""
+    Anlagenweite Angaben (Gesamtstatus, Ursprungswerte der Meldung) lesen den ersten Kreis; die Hosts und die Laufzeit
+    arbeiten je Kreis mit `sicht`."""
     if not isinstance(konfiguration, Mapping):
         konfiguration = {}
     eintraege = kreise(konfiguration)
     return ansicht(konfiguration, eintraege[0] if eintraege else {})
+
+
+def fuer(konfiguration, nummer: int) -> dict:
+    """Die Sicht des Kreises mit dieser Nummer; ohne ihn nur die anlagenweiten Felder (wie `erste` ohne Kreis)."""
+    if not isinstance(konfiguration, Mapping):
+        konfiguration = {}
+    for eintrag in kreise(konfiguration):
+        if eintrag.get("kreis") == nummer and not isinstance(eintrag.get("kreis"), bool):
+            return ansicht(konfiguration, eintrag)
+    return ansicht(konfiguration, {})
+
+
+def sicht(konfiguration, kreis: int | None = None) -> dict:
+    """Die Sicht des Kreises mit dieser Nummer; ohne Nummer die des ersten Kreises (`erste`)."""
+    return erste(konfiguration) if kreis is None else fuer(konfiguration, kreis)
+
+
+def raeume_fuehler(konfiguration, kreis: int | None = None) -> list[tuple[int, list[str]]]:
+    """(Raumnummer, Fuehler) der Raeume des Kreises (ohne Nummer des ersten) mit mindestens einem Fuehler, in der
+    Reihenfolge des Dokuments; Referenz- und Kontrollraeume. Ohne Kreis leer."""
+    if not isinstance(konfiguration, Mapping):
+        return []
+    eintraege = kreise(konfiguration)
+    if kreis is None:
+        gewaehlt = eintraege[0] if eintraege else None
+    else:
+        gewaehlt = next((e for e in eintraege if e.get("kreis") == kreis and not isinstance(e.get("kreis"), bool)), None)
+    if gewaehlt is None:
+        return []
+    return [(raum["raum"], fuehler) for raum in _raeume(gewaehlt)
+            if isinstance(raum.get("raum"), int) and not isinstance(raum.get("raum"), bool)
+            and (fuehler := _fuehler(raum))]
+
+
+def referenz_versatz(konfiguration, kreis: int | None = None) -> list[tuple[int, float]]:
+    """(Raumnummer, Versatz in Kelvin) der Referenzraeume des Kreises (ohne Nummer des ersten) mit mindestens einem
+    Fuehler, in der Reihenfolge des Dokuments. Kontrollraeume kommen nie vor. Ohne Kreis leer."""
+    if not isinstance(konfiguration, Mapping):
+        return []
+    eintraege = kreise(konfiguration)
+    if kreis is None:
+        gewaehlt = eintraege[0] if eintraege else None
+    else:
+        gewaehlt = next((e for e in eintraege if e.get("kreis") == kreis and not isinstance(e.get("kreis"), bool)), None)
+    if gewaehlt is None:
+        return []
+    ergebnis = []
+    for raum in _raeume(gewaehlt):
+        nummer, versatz = raum.get("raum"), raum.get("versatz_k", 0)
+        if (raum.get("rolle") == ROLLE_REFERENZ and isinstance(nummer, int) and not isinstance(nummer, bool)
+                and _fuehler(raum) and isinstance(versatz, (int, float)) and not isinstance(versatz, bool)):
+            ergebnis.append((nummer, float(versatz)))
+    return ergebnis
 
 
 def dokument_aus_sicht(sicht: Mapping) -> dict:

@@ -186,20 +186,57 @@ def test_ein_kontrollraum_neben_dem_referenzraum_fliesst_nicht_in_die_regelung(t
     assert config.room_sensor_refs == (SENSOR,)
 
 
-def test_mehr_als_ein_kreis_wird_von_der_laufzeit_abgelehnt(tmp_path):
-    """Bis die Laufzeit je Kreis regelt, fuehrt sie genau einen Heizkreis; ein Dokument mit zwei Kreisen (der Server
-    darf es senden, config_check nimmt bis zu vier) startet laut nicht, statt einen Kreis still zu ignorieren."""
-    zwei = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF), konfig_form.kreis(KONF, nummer=2)])
-    with pytest.raises(ConfigError, match="genau einen Heizkreis"):
-        dc.runtime_config(zwei, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
-                          abo_source=lambda: entitlement.ACTIVE)
-    keiner = konfig_form.nach_form(KONF, kreise=[])
-    with pytest.raises(ConfigError, match="genau einen Heizkreis"):
-        dc.runtime_config(keiner, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
-                          abo_source=lambda: entitlement.ACTIVE)
-    config = dc.runtime_config(konfig_form.nach_form(KONF), rastung_pfad=tmp_path / "keine.json",
-                               entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
-    assert config.tenant_id == "kunde3"
+SENSOR2 = "zigbee:0x00124b0000000002:temperature"
+
+
+def _zwei_kreise():
+    return konfig_form.nach_form(KONF, kreise=[
+        konfig_form.kreis(KONF), konfig_form.kreis({**KONF, "raumfuehler": [SENSOR2], "hebelsatz": "viessmann_vicare"},
+                                                   nummer=2)])
+
+
+def _config(konfiguration, tmp_path, kreis=None):
+    return dc.runtime_config(konfiguration, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                             abo_source=lambda: entitlement.ACTIVE, **({} if kreis is None else {"kreis": kreis}))
+
+
+def test_zwei_kreise_ergeben_zwei_laufzeitkonfigurationen_mit_eigenen_fuehlern(tmp_path):
+    """Jeder Kreis des Dokuments hat seine Laufzeitkonfiguration: eigene Kreisnummer, nur die eigenen Fuehler."""
+    zwei = _zwei_kreise()
+    erste = _config(zwei, tmp_path, 1)
+    zweite = _config(zwei, tmp_path, 2)
+    assert (erste.kreis, zweite.kreis) == (1, 2)
+    assert erste.room_sensor_refs == (SENSOR,)
+    assert zweite.room_sensor_refs == (SENSOR2,)
+    assert set(erste.room_sensor_refs).isdisjoint(zweite.room_sensor_refs)
+    assert erste.tenant_id == zweite.tenant_id == "kunde3"
+    assert _config(zwei, tmp_path).kreis == 1  # ohne Nummer der erste Kreis
+
+
+def test_ein_unbekannter_kreis_und_ein_dokument_ohne_kreis_scheitern_laut(tmp_path):
+    with pytest.raises(ConfigError, match="Heizkreis 3"):
+        _config(_zwei_kreise(), tmp_path, 3)
+    with pytest.raises(ConfigError, match="Heizkreis 0"):
+        _config(_zwei_kreise(), tmp_path, 0)
+    with pytest.raises(ConfigError, match="kein Heizkreis"):
+        _config(konfig_form.nach_form(KONF, kreise=[]), tmp_path)
+    assert _config(konfig_form.nach_form(KONF), tmp_path).tenant_id == "kunde3"
+
+
+def test_kreisteile_beschreibung_sicherheit_und_bootinfo_folgen_dem_kreis(tmp_path):
+    zwei = konfig_form.nach_form(KONF_MIT, kreise=[
+        konfig_form.kreis(KONF_MIT),
+        konfig_form.kreis({**KONF_MIT, "hebelsatz": "vaillant_vrc720", "verteilsystem": "Fussbodenheizung",
+                           "ursprungswerte": {"x": 1.0}}, nummer=2)])
+    assert dc.sicherheit(zwei, kreis=2) == resolve_local_safety("vaillant_vrc720", "Fussbodenheizung")
+    assert dc.sicherheit(zwei, kreis=1) == resolve_local_safety("viessmann_vicare", "Heizkoerper")
+    assert dc.ursprungswerte(zwei, kreis=2) == {"x": 1.0}
+    assert dc.ursprungswerte(zwei, kreis=1) == {}
+    assert dc.kreisnummer(zwei, 2) == 2
+    info = dc.boot_info(zwei, abgemeldet=False, client_version="0.6.0", backup_path=tmp_path / "b.json",
+                        failsafe_path=tmp_path / "f.json", kreis=2)
+    assert info.kreis == 2 and info.kreise_der_anlage == 2
+    assert info.lever_set.id == "vaillant_vrc720"
 
 
 @pytest.mark.parametrize("abo, status", [
@@ -487,3 +524,21 @@ def test_beschreibung_mit_unbekanntem_weg_ist_ein_konfigurationsfehler(weg):
     konfiguration = {"hebelsatz": "vaillant_vrc720", "weg": weg, "bindungsparameter": parameter("vaillant_vrc720")}
     with pytest.raises(ConfigError, match="Weg"):
         dc.beschreibung(konfiguration)
+
+
+def test_boot_info_zaehlt_die_kreise_des_dokuments(tmp_path):
+    zwei = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF, nummer=1), konfig_form.kreis(KONF, nummer=2)])
+    assert _boot(zwei, tmp_path).kreise_der_anlage == 2
+    assert _boot(KONF, tmp_path).kreise_der_anlage == 1
+    assert _boot({}, tmp_path).kreise_der_anlage == 1  # nicht eingerichtet: die BootInfo wirft nie
+
+
+def test_boot_info_und_runtime_config_tragen_die_kreisnummer(tmp_path):
+    """Die Nummer des Kreises kommt aus dem Dokument; sie bestimmt Pfade, Kennung und `kreis` auf dem Draht."""
+    zwei = konfig_form.nach_form(KONF, kreise=[konfig_form.kreis(KONF, nummer=2)])
+    assert _boot(zwei, tmp_path).kreis == 2
+    config = dc.runtime_config(zwei, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                               abo_source=lambda: entitlement.ACTIVE)
+    assert config.kreis == 2
+    assert dc.kreisnummer(zwei) == 2
+    assert dc.kreisnummer({}) == 1  # nicht eingerichtet: der erste Kreis, die Nummer bestimmt dann nur Pfade

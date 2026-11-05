@@ -1,24 +1,31 @@
-"""Status-Ereignis des HA-Add-ons: smartheat_status Schema 3 = der Laufzeit-Status (Schema 2,
-smartheat_runtime.status, unveraendert fuer Gateway und up/status) plus Geraet (ID, Zustand, Verbindung), wirksamer
-Raum-Soll (Soll-Speicher) und Hinweise fuer die Reparatur-Hinweise der Integration. Nie der Uebernahme-Code (der steht
-nur in der Discovery): ins Ereignis kommen nur die benannten Felder, nie ein ganzes Objekt der Quellen. Gesendet bei
-jedem Ereignis der Laufzeit (auch dem Lebenszeichen alle 300 s) und bei einer inhaltlichen Aenderung der Anzeige.
-Felder sind Cross-Repo-Vertrag mit der Integration (Contract-Check)."""
+"""Status-Ereignis des HA-Add-ons: smartheat_status Schema 4 = die Felder der Anlage aus dem Laufzeit-Status
+(Schema 2, smartheat_runtime.status, unveraendert fuer Gateway und up/status), Geraet (ID, Zustand, Verbindung),
+Anlagenname und Hinweise fuer die Reparatur-Hinweise der Integration, dazu `kreise`: je Kreis der Konfiguration
+Name, Raum (Ist, wirksamer Soll aus dem Soll-Speicher), die Kreisfelder der Laufzeit (Boost, Abo, Hebel ...) und die
+Felder des Anzeige-Dokuments. Nie der Uebernahme-Code (der steht nur in der Discovery): ins Ereignis kommen nur die
+benannten Felder, nie ein ganzes Objekt der Quellen. Der Kreisname ist ein Kundendatum: er steht nur in diesem
+lokalen Ereignis, nie in Log, Topic, Push oder Alarm. Gesendet bei jedem Ereignis der Laufzeit (auch dem
+Lebenszeichen alle 300 s) und bei einer inhaltlichen Aenderung der Anzeige. Felder sind Cross-Repo-Vertrag mit der
+Integration (Contract-Check)."""
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from heizungsbruecke.ha_sinks import EVENT_TYPE
 from heizungsbruecke.version import ADDON_VERSION
+from smartheat_core import kreisansicht
 from smartheat_device.host import Anzeige
 from smartheat_runtime import status
 
 logger = logging.getLogger(__name__)
 
-EVENT_SCHEMA = 3
-GERAET_FIELDS = ("geraet_id", "geraet_zustand", "server_verbunden", "raum_soll", "geraet_hinweise")
-EVENT_FIELDS = (*status.EVENT_FIELDS, *GERAET_FIELDS)
+EVENT_SCHEMA = 4
+GERAET_FIELDS = ("geraet_id", "geraet_zustand", "server_verbunden", "geraet_hinweise", "anlage_name")
+#: Felder der Anlage im Ereignis und Felder eines Kreises: die Kreisfelder der Laufzeit plus die lokalen.
+LOKAL_KREIS_FIELDS = ("name", "raum_soll", "raum_ist", "einlernphase_tag", "testphase_bis", "befunde")
+EVENT_FIELDS = (*status.ANLAGE_FELDER, *GERAET_FIELDS, "kreise")
+KREIS_EVENT_FIELDS = ("kreis", *LOKAL_KREIS_FIELDS, *status.KREIS_FELDER)
 HINWEIS_FIELDS = ("key", "stufe", "text")
 KONFIGURATION_ABGELEHNT = "konfiguration_abgelehnt"
 #: HA nicht erreichbar: so lange Pause bis zum naechsten Versuch des Takts (wie discovery.RETRY_SECONDS: Log nicht fuellen).
@@ -48,6 +55,37 @@ def hinweise(anzeige: Anzeige) -> list[dict]:
     return result
 
 
+def _zahl(wert) -> float | None:
+    return float(wert) if isinstance(wert, int | float) and not isinstance(wert, bool) else None
+
+
+def lokale_sicht(konfiguration: Callable[[], Mapping | None], soll: Callable[[int], float | None],
+                 raum_ist: Callable[[int], float | None], anzeige: Callable[[], Mapping | None]) -> Callable[[], dict]:
+    """Die lokale Sicht des Ereignisses: Anlagenname und je Kreis der Konfiguration Name, Soll (Soll-Speicher), Ist
+    des Raums und die Felder des Anzeige-Dokuments (heute ohne Befund: null/null/[]). Liest nur, ohne Sperre."""
+    def sicht() -> dict:
+        konf = konfiguration()
+        dokument = anzeige()
+        eintraege = dokument.get("kreise") if isinstance(dokument, Mapping) else None
+        je_kreis = {e.get("kreis"): e for e in eintraege if isinstance(e, Mapping)} if isinstance(eintraege, list) else {}
+        kreise = {}
+        for eintrag in kreisansicht.kreise(konf):
+            nummer = eintrag.get("kreis")
+            if not isinstance(nummer, int) or isinstance(nummer, bool):
+                continue
+            angezeigt = je_kreis.get(nummer, {})
+            befunde = angezeigt.get("befunde")
+            name = eintrag.get("name")
+            kreise[nummer] = {
+                "name": name if isinstance(name, str) else None, "raum_soll": _zahl(soll(nummer)),
+                "raum_ist": _zahl(raum_ist(nummer)), "einlernphase_tag": angezeigt.get("einlernphase_tag"),
+                "testphase_bis": angezeigt.get("testphase_bis"), "befunde": list(befunde) if isinstance(befunde, list) else [],
+            }
+        name = konf.get("anlage_name") if isinstance(konf, Mapping) else None
+        return {"anlage_name": name if isinstance(name, str) else None, "kreise": kreise}
+    return sicht
+
+
 class GeraetStatus:
     """Sendet nie zwei Ereignisse zugleich (_senden_lock) und ruft HA ausserhalb der Zustandssperre (_lock) auf: jedes
     Ereignis ist ein stimmiger Schnappschuss, und laufzeit_merken (sign_off) wartet nie auf HA. Ist HA nicht
@@ -56,14 +94,16 @@ class GeraetStatus:
     Ausfall (nur die Fehlerart), eine Info-Zeile bei der Erholung. Nach einem Fehler sendet der naechste erlaubte
     Versuch den aktuellen Stand, auch wenn er sich nicht geaendert hat."""
 
-    def __init__(self, ha_api, geraet_id: str, raum_soll: Callable[[], float | None], *,
+    def __init__(self, ha_api, geraet_id: str, lokal: Callable[[], Mapping], *,
                  laufzeit_merken: Callable[[dict], None], clock: Callable[[], float] = time.monotonic) -> None:
-        self._ha, self._geraet_id, self._raum_soll, self._merken = ha_api, geraet_id, raum_soll, laufzeit_merken
+        """`lokal` liefert die lokale Sicht (`lokale_sicht`); es wird ausserhalb der Zustandssperre gerufen."""
+        self._ha, self._geraet_id, self._lokal, self._merken = ha_api, geraet_id, lokal, laufzeit_merken
         self._clock = clock
         self._lock = threading.Lock()  # Zustand: Laufzeit-Ereignis und Anzeige
         self._senden_lock = threading.Lock()  # ein Sender zur Zeit; die Felder darunter nur mit ihm
-        self._laufzeit: dict = {**dict.fromkeys(status.EVENT_FIELDS), "status": status.STATUS_STARTET,
+        self._laufzeit: dict = {**dict.fromkeys(status.ANLAGE_FELDER), "status": status.STATUS_STARTET,
                                 "addon_version": ADDON_VERSION}
+        self._laufzeit_kreise: dict[int, dict] = {}
         self._anzeige: Anzeige | None = None
         self._zuletzt: dict | None = None
         self._pause_bis: float | None = None  # nach einem Fehler: vorher kein Versuch des Takts
@@ -71,11 +111,15 @@ class GeraetStatus:
 
     def publish(self, event: dict) -> None:
         """StatusSink der Laufzeit (Worker-Thread). Wirft nicht: Fehler und Wiederholung regelt GeraetStatus (der
-        Takt sendet nach der Pause den aktuellen Stand). Das unveraenderte Laufzeit-Ereignis (tenant_id, status, grund
-        fuer sign_off) geht an laufzeit_merken."""
+        Takt sendet nach der Pause den aktuellen Stand). Das flache Laufzeit-Ereignis ohne Kreisliste (tenant_id,
+        status, grund fuer sign_off) geht an laufzeit_merken."""
+        kreise = event.get("kreise")
         with self._lock:
-            self._laufzeit = {key: event.get(key) for key in status.EVENT_FIELDS}
-            self._merken(dict(event))
+            self._laufzeit = {key: event.get(key) for key in status.ANLAGE_FELDER}
+            self._laufzeit_kreise = {
+                eintrag["kreis"]: {key: eintrag.get(key) for key in status.KREIS_FELDER}
+                for eintrag in (kreise if isinstance(kreise, list) else []) if isinstance(eintrag, dict)}
+            self._merken(status.ohne_kreise(event))
         self._senden(force=True)
 
     def anzeige(self, anzeige: Anzeige) -> None:
@@ -84,17 +128,26 @@ class GeraetStatus:
             self._anzeige = anzeige
         self._senden(force=False)
 
-    def _ereignis(self) -> dict:
+    def _ereignis(self, lokal: Mapping) -> dict:
         anzeige = self._anzeige
+        lokale_kreise = lokal["kreise"]
+        kreise = [{
+            "kreis": nummer,
+            **{feld: lokale_kreise.get(nummer, {}).get(feld, [] if feld == "befunde" else None)
+               for feld in LOKAL_KREIS_FIELDS},
+            **{feld: self._laufzeit_kreise.get(nummer, {}).get(feld) for feld in status.KREIS_FELDER},
+        } for nummer in sorted({*lokale_kreise, *self._laufzeit_kreise})]
         return {**self._laufzeit, "schema": EVENT_SCHEMA, "geraet_id": self._geraet_id,
                 "geraet_zustand": anzeige.zustand if anzeige is not None else "startet",
                 "server_verbunden": anzeige.server_ok if anzeige is not None else False,
-                "raum_soll": self._raum_soll(), "geraet_hinweise": hinweise(anzeige) if anzeige is not None else []}
+                "geraet_hinweise": hinweise(anzeige) if anzeige is not None else [],
+                "anlage_name": lokal["anlage_name"], "kreise": kreise}
 
     def _senden(self, *, force: bool) -> None:
         with self._senden_lock:
+            lokal = self._lokal()  # ausserhalb der Zustandssperre: liest Konfiguration und Soll-Speicher
             with self._lock:
-                event = self._ereignis()
+                event = self._ereignis(lokal)
             if not force and event == self._zuletzt:
                 return
             now = self._clock()

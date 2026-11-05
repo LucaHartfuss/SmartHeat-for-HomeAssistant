@@ -76,7 +76,7 @@ def test_eine_abweichende_signatur_faellt_auf():
         def soll_quelle_aus(self, aus, wirksam):  # Vorgabe fehlt
             pass
 
-        def laufzeit_kanal(self, w):  # anderer Name
+        def laufzeit_kanal(self, w, kreis):  # anderer Name
             pass
 
     assert _form(Falsch.wunsch) != _form(Device.wunsch)

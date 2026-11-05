@@ -37,8 +37,8 @@ class KonformDevice:
     def bedienung(self):
         return self.bed
 
-    def abo_status(self):
-        return dokument_config.abo_status(self.konf)
+    def abo_status(self, kreis=None):
+        return dokument_config.abo_status(self.konf, kreis)
 
     def wunsch(self, wert, *, herkunft, durch=None, kreis=1):
         self.wuensche.append((wert, herkunft, durch))

@@ -23,6 +23,7 @@ from pathlib import Path
 from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_runtime import app
 from smartheat_runtime import aufraeumen as markierung
+from smartheat_runtime.kreise import Laufzeit
 from smartheat_runtime.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -87,11 +88,13 @@ def beenden(device, thread: threading.Thread | None, hintergrund, *, join_second
     _schritt("Geraetekern stoppen", device.stop)
 
 
-def laufen(device, hintergrund, starten: Callable[[], Runtime | app.IdleBridge], neustart: Callable[[], None], *,
-           vor_pause: Callable[[], None] | None = None, sleep: Callable[[float], None] | None = None) -> None:
-    """Geraete-Thread und Laufzeit bis zum Ende des Prozesses. starten() startet die Laufzeit (Runtime oder IdleBridge,
-    mit dem Rueckruf neustart_der_laufzeit und EV_RELOAD umgeleitet) und bindet den Worker; neustart() ist der Neustart
-    des Hosts; vor_pause() laeuft nach einem unerwarteten Fehler nach beenden und vor der Pause (darf scheitern, Pause
+def laufen(device, hintergrund, starten: Callable[[], Runtime | app.IdleBridge | Laufzeit],
+           neustart: Callable[[], None], *, vor_pause: Callable[[], None] | None = None,
+           sleep: Callable[[float], None] | None = None) -> None:
+    """Geraete-Thread und Laufzeit bis zum Ende des Prozesses. starten() startet die Laufzeit (Runtime oder
+    IdleBridge, bei einer Anlage die Laufzeit ihrer Kreise; mit dem Rueckruf neustart_der_laufzeit und EV_RELOAD
+    umgeleitet) und bindet die Worker; neustart() ist der Neustart des Hosts; vor_pause() laeuft nach einem
+    unerwarteten Fehler nach beenden und vor der Pause (darf scheitern, Pause
     und Neustart bleiben). Ein unerwarteter Fehler beendet den Prozess nie still."""
     thread: threading.Thread | None = None
     neu = fehler = False
