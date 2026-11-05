@@ -29,7 +29,7 @@ LOCAL_SAFETY: dict[tuple[str, str], LocalSafety] = {
     # Boost), 2026-09-30 (Heizgrenze) und 2026-10-01 (Heizgrenze bis 23 °C).
     ("vaillant_vrc720", "Heizkoerper"): LocalSafety(
         ranges={
-            "curve": (0.4, 1.5), "room_setpoint": (15.0, 25.0), "heat_limit": (5.0, 23.0), "min_flow": (20.0, 30.0),
+            "curve": (0.4, 1.5), "room_setpoint": (15.0, 25.0), "heat_limit": (10.0, 23.0), "min_flow": (20.0, 30.0),
         },
         comfort_boost={"curve": 1.5, "room_setpoint": 25.0, "heat_limit": 23.0},
         emergency_boost_levers=("curve", "room_setpoint", "heat_limit"),
@@ -38,7 +38,7 @@ LOCAL_SAFETY: dict[tuple[str, str], LocalSafety] = {
     # Regel 4 (Nutzer-Freigabe 2026-10-02): Heizkoerper fuer die neuen Hebelsaetze; Comfort-Boost auf
     # die lokalen Maxima aller gesendeten Hebel. Ankunftsschwelle 0,5 K wie Vaillant (Annahme).
     ("weishaupt_wwp", "Heizkoerper"): LocalSafety(
-        ranges={"curve": (0.30, 1.00), "room_setpoint": (16.0, 25.0), "heat_limit": (5.0, 23.0)},
+        ranges={"curve": (0.30, 1.00), "room_setpoint": (16.0, 25.0), "heat_limit": (10.0, 23.0)},
         comfort_boost={"curve": 1.00, "room_setpoint": 25.0, "heat_limit": 23.0},
         emergency_boost_levers=("curve", "room_setpoint", "heat_limit"),
         arrival_threshold_k=0.5,
@@ -60,14 +60,14 @@ LOCAL_SAFETY: dict[tuple[str, str], LocalSafety] = {
     # auf ihr lokales Maximum. Mindestvorlauf (nur Vaillant) 20-30 wie bei Heizkoerpern. Die Profile bleiben inaktiv.
     ("vaillant_vrc720", "Fussbodenheizung"): LocalSafety(
         ranges={
-            "curve": (0.10, 0.35), "room_setpoint": (15.0, 24.0), "heat_limit": (5.0, 20.0), "min_flow": (20.0, 30.0),
+            "curve": (0.10, 0.35), "room_setpoint": (15.0, 24.0), "heat_limit": (10.0, 20.0), "min_flow": (20.0, 30.0),
         },
         comfort_boost={},
         emergency_boost_levers=("curve", "room_setpoint", "heat_limit"),
         arrival_threshold_k=0.5,
     ),
     ("weishaupt_wwp", "Fussbodenheizung"): LocalSafety(
-        ranges={"curve": (0.10, 0.50), "room_setpoint": (16.0, 24.0), "heat_limit": (5.0, 20.0)},
+        ranges={"curve": (0.10, 0.50), "room_setpoint": (16.0, 24.0), "heat_limit": (10.0, 20.0)},
         comfort_boost={},
         emergency_boost_levers=("curve", "room_setpoint", "heat_limit"),
         arrival_threshold_k=0.5,

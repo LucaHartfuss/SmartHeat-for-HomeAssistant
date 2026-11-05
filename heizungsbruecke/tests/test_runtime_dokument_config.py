@@ -477,7 +477,7 @@ def test_the_document_carries_the_local_safety_values():
     assert safety.ranges["curve"] == (0.4, 1.5)
     assert safety.ranges["room_setpoint"] == (15.0, 25.0)
     assert safety.ranges["min_flow"] == (20.0, 30.0)
-    assert safety.ranges["heat_limit"] == (5.0, 23.0)
+    assert safety.ranges["heat_limit"] == (10.0, 23.0)
     assert safety.arrival_threshold_k == 0.5
     assert (safety.comfort_boost["curve"], safety.comfort_boost["room_setpoint"]) == (1.5, 25.0)
     assert safety.comfort_boost["heat_limit"] == 23.0  # Boost-Heizgrenze aus LocalSafety
@@ -486,7 +486,7 @@ def test_the_document_carries_the_local_safety_values():
 def test_weishaupt_has_its_own_safety_values():
     weishaupt = {"hebelsatz": "weishaupt_wwp", "verteilsystem": "Heizkoerper"}
     assert dc.sicherheit(weishaupt).ranges == {
-        "curve": (0.30, 1.00), "room_setpoint": (16.0, 25.0), "heat_limit": (5.0, 23.0),
+        "curve": (0.30, 1.00), "room_setpoint": (16.0, 25.0), "heat_limit": (10.0, 23.0),
     }
     assert dc.sicherheit({**weishaupt, "verteilsystem": "Fussbodenheizung"}).comfort_boost == {}
 

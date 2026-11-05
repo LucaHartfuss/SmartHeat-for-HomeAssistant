@@ -6,12 +6,12 @@ from welt import Anlage
 
 #: lokales Minimum je (Hebelsatz, Verteilsystem) und Hebel (Regel 4), woertlich
 MINIMA = {
-    ("vaillant_vrc720", "Heizkoerper"): {"curve": 0.4, "room_setpoint": 15.0, "heat_limit": 5.0},
-    ("weishaupt_wwp", "Heizkoerper"): {"curve": 0.30, "room_setpoint": 16.0, "heat_limit": 5.0},
+    ("vaillant_vrc720", "Heizkoerper"): {"curve": 0.4, "room_setpoint": 15.0, "heat_limit": 10.0},
+    ("weishaupt_wwp", "Heizkoerper"): {"curve": 0.30, "room_setpoint": 16.0, "heat_limit": 10.0},
     ("weishaupt_wwp_basis", "Heizkoerper"): {"room_setpoint": 16.0},
     ("viessmann_vicare", "Heizkoerper"): {"curve": 0.4, "level": -13.0, "room_setpoint": 15.0},
-    ("vaillant_vrc720", "Fussbodenheizung"): {"curve": 0.10, "room_setpoint": 15.0, "heat_limit": 5.0},
-    ("weishaupt_wwp", "Fussbodenheizung"): {"curve": 0.10, "room_setpoint": 16.0, "heat_limit": 5.0},
+    ("vaillant_vrc720", "Fussbodenheizung"): {"curve": 0.10, "room_setpoint": 15.0, "heat_limit": 10.0},
+    ("weishaupt_wwp", "Fussbodenheizung"): {"curve": 0.10, "room_setpoint": 16.0, "heat_limit": 10.0},
     ("weishaupt_wwp_basis", "Fussbodenheizung"): {"room_setpoint": 16.0},
     ("viessmann_vicare", "Fussbodenheizung"): {"curve": 0.2, "level": -5.0, "room_setpoint": 15.0},
 }

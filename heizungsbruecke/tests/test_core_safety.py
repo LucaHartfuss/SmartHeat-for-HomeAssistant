@@ -2,6 +2,7 @@ import dataclasses
 
 import pytest
 
+from smartheat_core.clamping import target_value
 from smartheat_core.safety import LOCAL_SAFETY, check_invariants, resolve_local_safety
 
 
@@ -102,3 +103,23 @@ def test_a_comfort_boost_value_on_the_lower_range_limit_is_valid():
     safety = LOCAL_SAFETY[("vaillant_vrc720", "Heizkoerper")]
     low = safety.ranges["curve"][0]
     check_invariants(dataclasses.replace(safety, comfort_boost={"curve": low}), "vaillant_vrc720", "Heizkoerper")
+
+
+HEIZGRENZE_PROFILE = [key for key, safety in LOCAL_SAFETY.items() if "heat_limit" in safety.ranges]
+
+
+def test_the_heat_limit_exists_in_four_profiles():
+    assert len(HEIZGRENZE_PROFILE) == 4
+
+
+@pytest.mark.parametrize("key", HEIZGRENZE_PROFILE, ids=[f"{s}-{v}" for s, v in HEIZGRENZE_PROFILE])
+def test_the_heat_limit_is_never_written_below_10_degrees_nor_above_the_profile_maximum(key):
+    low, high = LOCAL_SAFETY[key].ranges["heat_limit"]
+    assert low == 10.0
+    assert high == (23.0 if key[1] == "Heizkoerper" else 20.0)
+    step = 0.1
+    assert target_value(9.9, low, high, step) == 10.0
+    assert target_value(10.0, low, high, step) == 10.0
+    assert target_value(high, low, high, step) == high
+    assert target_value(high + 0.1, low, high, step) == high
+    assert target_value(8.0, low, high, step) == 10.0

@@ -13,15 +13,15 @@ INF = math.inf
 #: lokale Grenzen (untere, obere) je (Hebelsatz, Verteilsystem) und Hebel (Regel 4), woertlich; der Mindestvorlauf
 #: kommt wie jeder Hebel vom Server
 BEREICHE = {
-    ("vaillant_vrc720", "Heizkoerper"): {"curve": (0.4, 1.5), "room_setpoint": (15.0, 25.0), "heat_limit": (5.0, 23.0),
+    ("vaillant_vrc720", "Heizkoerper"): {"curve": (0.4, 1.5), "room_setpoint": (15.0, 25.0), "heat_limit": (10.0, 23.0),
                                          "min_flow": (20.0, 30.0)},
-    ("weishaupt_wwp", "Heizkoerper"): {"curve": (0.30, 1.00), "room_setpoint": (16.0, 25.0), "heat_limit": (5.0, 23.0)},
+    ("weishaupt_wwp", "Heizkoerper"): {"curve": (0.30, 1.00), "room_setpoint": (16.0, 25.0), "heat_limit": (10.0, 23.0)},
     ("weishaupt_wwp_basis", "Heizkoerper"): {"room_setpoint": (16.0, 25.0)},
     ("viessmann_vicare", "Heizkoerper"): {"curve": (0.4, 1.4), "level": (-13.0, 3.0), "room_setpoint": (15.0, 25.0)},
     ("vaillant_vrc720", "Fussbodenheizung"): {"curve": (0.10, 0.35), "room_setpoint": (15.0, 24.0),
-                                              "heat_limit": (5.0, 20.0), "min_flow": (20.0, 30.0)},
+                                              "heat_limit": (10.0, 20.0), "min_flow": (20.0, 30.0)},
     ("weishaupt_wwp", "Fussbodenheizung"): {"curve": (0.10, 0.50), "room_setpoint": (16.0, 24.0),
-                                            "heat_limit": (5.0, 20.0)},
+                                            "heat_limit": (10.0, 20.0)},
     ("weishaupt_wwp_basis", "Fussbodenheizung"): {"room_setpoint": (16.0, 24.0)},
     ("viessmann_vicare", "Fussbodenheizung"): {"curve": (0.2, 0.4), "level": (-5.0, 3.0), "room_setpoint": (15.0, 24.0)},
 }

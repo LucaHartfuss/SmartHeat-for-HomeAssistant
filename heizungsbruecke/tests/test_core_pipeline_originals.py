@@ -117,6 +117,17 @@ def test_restore_and_clear_returns_every_lever_and_the_aux_values(make_store, cl
     assert store.state.restore_point == {"curve": 0.75, "room_setpoint": 20.0, "heat_limit": 18.0}
 
 
+def test_an_original_heat_limit_below_10_degrees_is_restored_as_10(make_store, clock):
+    pipeline, store, ha, binding = _setup(make_store, clock)
+    ha.states["number.swu"] = 8.0
+    pipeline.capture_originals()
+    assert store.state.originals["heat_limit"] == 8.0
+    pipeline.apply_server_values({"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0})
+    assert pipeline.restore_and_clear(always_restore=False) is True
+    assert [wert for entity, wert in ha.writes if entity == "number.swu"][-1] == 10.0
+    assert store.state.restore_point["heat_limit"] == 10.0
+
+
 def test_restore_with_unknown_originals_keeps_the_learned_values_without_crashing(make_store, clock, caplog):
     pipeline, store, ha, binding = _setup(
         make_store, clock, backup={"restore_point": {"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0}},

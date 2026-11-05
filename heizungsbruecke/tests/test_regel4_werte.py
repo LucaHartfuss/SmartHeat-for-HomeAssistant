@@ -23,10 +23,10 @@ HK, FBH = "Heizkoerper", "Fussbodenheizung"
 #: (Hebelsatz, Verteilsystem) -> (Bereiche, Comfort-Boost, Notfall-Hebel, Ankunftsschwelle)
 TABELLE = {
     ("vaillant_vrc720", HK): (
-        {"curve": (0.4, 1.5), "room_setpoint": (15.0, 25.0), "heat_limit": (5.0, 23.0), "min_flow": (20.0, 30.0)},
+        {"curve": (0.4, 1.5), "room_setpoint": (15.0, 25.0), "heat_limit": (10.0, 23.0), "min_flow": (20.0, 30.0)},
         {"curve": 1.5, "room_setpoint": 25.0, "heat_limit": 23.0}, ("curve", "room_setpoint", "heat_limit"), 0.5),
     ("weishaupt_wwp", HK): (
-        {"curve": (0.30, 1.00), "room_setpoint": (16.0, 25.0), "heat_limit": (5.0, 23.0)},
+        {"curve": (0.30, 1.00), "room_setpoint": (16.0, 25.0), "heat_limit": (10.0, 23.0)},
         {"curve": 1.00, "room_setpoint": 25.0, "heat_limit": 23.0}, ("curve", "room_setpoint", "heat_limit"), 0.5),
     ("weishaupt_wwp_basis", HK): (
         {"room_setpoint": (16.0, 25.0)}, {"room_setpoint": 25.0}, ("room_setpoint",), 0.5),
@@ -34,10 +34,10 @@ TABELLE = {
         {"curve": (0.4, 1.4), "level": (-13.0, 3.0), "room_setpoint": (15.0, 25.0)},
         {"curve": 1.4, "level": 3.0, "room_setpoint": 25.0}, ("curve", "level", "room_setpoint"), 0.5),
     ("vaillant_vrc720", FBH): (
-        {"curve": (0.10, 0.35), "room_setpoint": (15.0, 24.0), "heat_limit": (5.0, 20.0), "min_flow": (20.0, 30.0)},
+        {"curve": (0.10, 0.35), "room_setpoint": (15.0, 24.0), "heat_limit": (10.0, 20.0), "min_flow": (20.0, 30.0)},
         {}, ("curve", "room_setpoint", "heat_limit"), 0.5),
     ("weishaupt_wwp", FBH): (
-        {"curve": (0.10, 0.50), "room_setpoint": (16.0, 24.0), "heat_limit": (5.0, 20.0)},
+        {"curve": (0.10, 0.50), "room_setpoint": (16.0, 24.0), "heat_limit": (10.0, 20.0)},
         {}, ("curve", "room_setpoint", "heat_limit"), 0.5),
     ("weishaupt_wwp_basis", FBH): ({"room_setpoint": (16.0, 24.0)}, {}, ("room_setpoint",), 0.5),
     ("viessmann_vicare", FBH): (
