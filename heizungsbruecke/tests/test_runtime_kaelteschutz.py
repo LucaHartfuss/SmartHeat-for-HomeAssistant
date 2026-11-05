@@ -1,6 +1,7 @@
 """Kaelteschutz im lokalen Check (regulation.py): Start nach Abweichung oder Frostnaehe, Ende bei Ankunft oder nach der
 Hoechstdauer, Start-Zaehler des Notfall-Boosts, Tageslimit, Neustart, Abo-Zustaende, Notbetrieb. Echter StateStore und
 echte Hebel-Pipeline; die Entscheidung selbst steht in test_core_kaelteschutz.py."""
+import contextlib
 import dataclasses
 import logging
 import time
@@ -101,10 +102,8 @@ def _ist(rt, **werte):
 
 
 def _pruefen(rt):
-    try:
+    with contextlib.suppress(SignalUngueltig):
         regulation.run_local_check(rt)
-    except SignalUngueltig:
-        pass
 
 
 def _lauf(rt, sekunden, schritt=5 * MINUTE):

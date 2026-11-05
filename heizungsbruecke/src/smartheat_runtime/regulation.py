@@ -188,11 +188,10 @@ def _kaelteschutz_entscheiden(rt: Runtime, now: datetime, soll: float | None) ->
     state = rt.store.state
     jetzt = now.astimezone(UTC)
     seit = parse_since(state.kaelteschutz_seit)
-    lief = state.kaelteschutz_art is not None and seit is not None
+    seit_utc = seit.astimezone(UTC) if seit is not None else None
+    lief = state.kaelteschutz_art is not None and seit_utc is not None
     vorher = state.kaelteschutz_zaehlung
-    zustand = replace(
-        vorher, lauf_art=state.kaelteschutz_art if lief else None, lauf_seit=seit.astimezone(UTC) if lief else None,
-    )
+    zustand = replace(vorher, lauf_art=state.kaelteschutz_art if lief else None, lauf_seit=seit_utc if lief else None)
     ist, referenz = _kaelteschutz_lesen(rt, jetzt)
     delta = None
     if soll is not None:
