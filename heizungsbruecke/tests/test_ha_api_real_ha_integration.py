@@ -244,7 +244,7 @@ def test_room_template_sensor_averages_valid_sources_and_is_unknown_without(real
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
     _set_state(api, "sensor.tp6_a", "20.0", {"unit_of_measurement": "°C"})
     _set_state(api, "sensor.tp6_b", "unavailable", {})
-    _set_state(api, "sensor.tp6_c", "0.0", {"unit_of_measurement": "°C"})
+    _set_state(api, "sensor.tp6_c", "-10.1", {"unit_of_measurement": "°C"})
     _set_state(api, "climate.tp6_d", "heat", {"current_temperature": 21.0, "temperature": 22.0})
 
     entity_id = api.create_template_sensor(
