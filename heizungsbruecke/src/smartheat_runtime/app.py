@@ -29,6 +29,7 @@ from smartheat_runtime import (
     roles,
     room_sensors,
     telemetry,
+    testphase,
     ticks,
 )
 from smartheat_runtime.budget_store import AnlagenBudget, BudgetStore, ZustandsSpeicher
@@ -537,8 +538,11 @@ def _on_health(rt: Runtime, event: Event) -> None:
         ticks.deliver(rt, delivery.StorageWritable())  # wartet ein Tick am Datentraeger, jetzt erneut
     if rt.store.state.abo_finished:
         return
-    for check in (battery.check_batteries, room_sensors.check_room_sensors, aussentemperatur.check,
-                  enforce.check_manual_override):
+    checks = [battery.check_batteries, room_sensors.check_room_sensors, aussentemperatur.check]
+    # Ohne Setwell (Testphase) gibt es nichts durchzusetzen: ein Eingriff von Hand ist dann der Normalfall.
+    if not testphase.aktiv(rt):
+        checks.append(enforce.check_manual_override)
+    for check in checks:
         try:
             check(rt)
         except Exception:
@@ -695,7 +699,10 @@ def _may_prepare_zone(rt: Runtime) -> bool:
 def _prepare_zone(rt: Runtime) -> None:
     """Zone vorbereiten (LeverPipeline.prepare_start); scheitert es, versucht es ein spaeterer lokaler
     Check erneut (Kontingent: _may_prepare_zone), statt dass erst die Durchsetzung nach
-    settle_seconds des Bindings umstellt. Pruefen und Zaehlen des Kontingents sind eine Einheit (`transaktion`)."""
+    settle_seconds des Bindings umstellt. Pruefen und Zaehlen des Kontingents sind eine Einheit (`transaktion`).
+    In der Testphase ohne Setwell bleibt die Zone, wie sie ist."""
+    if testphase.aktiv(rt):
+        return
     with rt.store.transaktion():
         _prepare_zone_gesperrt(rt)
 

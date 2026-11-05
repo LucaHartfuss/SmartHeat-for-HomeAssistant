@@ -336,3 +336,27 @@ def test_beim_abmelden_mit_gelingenden_kreisen_ist_die_markierung_erledigt(zwei)
     assert markierung is not None and markierung.zurueckgesetzt
     assert welt.neustart
     assert welt.laufzeit.kreise()[1].status.event()["grund"] is None
+
+
+def test_kreis_1_in_der_testphase_ohne_ruht_und_kreis_2_in_betrieb_schreibt_weiter(zwei):
+    welt = zwei(soll=(21.0, 22.0))
+    _verbinden(welt)
+    start = dict(welt.ha.states)
+
+    # Zustandswechsel zur Laufzeit: kein Neustart, der naechste Check von Kreis 1 stellt einmal zurueck.
+    welt.device.konf["kreise"][0]["zustand"] = "testphase_ohne"
+    _client(welt, 1).kwargs["on_trigger_event"]({"platform": "state", "entity_id": "sensor.room_actual",
+                                                 "to_state": {"state": str(welt.ha.states["sensor.room_actual"])}})
+    welt.laufzeit.worker.run_pending()
+    assert not welt.geraet._neustart
+    rueckstellung = dict(welt.ha.writes)
+    assert set(rueckstellung) == {"number.curve_current", "number.shift_current", "number.heat_limit",
+                                  "number.min_flow"}  # nur Kreis 1
+    nach_eintritt = len(welt.ha.writes)
+
+    # Kreis 1 bekommt Serverwerte und schreibt nichts, Kreis 2 schreibt seine.
+    _antwort(welt, 1, curve=0.7, shift=19.0)
+    _antwort(welt, 2, curve=1.1, shift=24.0)
+    assert [e for e, _ in welt.ha.writes[nach_eintritt:] if not e.endswith("_2")] == []
+    assert ("number.curve_current_2", 1.1) in welt.ha.writes[nach_eintritt:]
+    assert all(welt.ha.states[e] == start[e] for e in start if e.startswith("number.") and not e.endswith("_2"))

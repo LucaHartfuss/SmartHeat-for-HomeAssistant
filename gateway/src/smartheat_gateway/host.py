@@ -145,7 +145,8 @@ class GatewayHost:
     def load(self) -> Loaded:
         try:
             runtime, bindung = gateway_config.parse_dokument(
-                self.konfiguration, self._paths, lambda: self._geraet.abo_status(self.kreis), self.kreis)
+                self.konfiguration, self._paths, lambda: self._geraet.abo_status(self.kreis), self.kreis,
+                lambda: kreisansicht.zustand(self._geraet.konfiguration(), self.kreis))
         except (ConfigError, KeyError) as error:
             raise StartFailure(str(error), KEY_CONFIG) from error
         try:

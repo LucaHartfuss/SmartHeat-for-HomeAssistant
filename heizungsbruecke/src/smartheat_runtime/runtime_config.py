@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from smartheat_core import kreisansicht
 from smartheat_core.levers import LeverSet
 from smartheat_core.safety import LocalSafety
 
@@ -48,6 +49,10 @@ class BootInfo:
     kreise_der_anlage: int = 1
 
 
+def _in_betrieb() -> str:
+    return kreisansicht.IN_BETRIEB
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     tenant_id: str
@@ -69,3 +74,6 @@ class RuntimeConfig:
     # Referenzraeume des Kreises mit Fuehlern als (Raumnummer, Versatz in Kelvin); die Regelung rechnet ihr Delta nur
     # ueber diese (leer: der Host kennt keine Raeume, dann gilt der Kreissensor room_actual).
     referenzraeume: tuple[tuple[int, float], ...] = ()
+    # Zustand des Kreises aus dem laufenden Konfigurationsdokument (kreisansicht.ZUSTAENDE); die Laufzeit liest ihn bei
+    # jedem Check frisch, ein Wechsel loest keinen Neustart aus. Ohne Quelle gilt der Betrieb.
+    zustand_source: Callable[[], str] = _in_betrieb

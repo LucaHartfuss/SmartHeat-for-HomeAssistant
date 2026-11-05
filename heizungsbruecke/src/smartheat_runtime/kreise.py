@@ -26,7 +26,7 @@ from smartheat_core import kreisansicht
 from smartheat_runtime import app, dokument_config
 from smartheat_runtime.app import STATUS_ABO_BEENDET, Host, IdleBridge
 from smartheat_runtime.ports import StatusSink
-from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.runtime import EV_LOCAL_CHECK, Runtime
 from smartheat_runtime.status import Statussammler
 from smartheat_runtime.worker import Event, Handler, RegulationWorker, WorkerBeendet
 
@@ -287,7 +287,16 @@ class Laufzeit:
                     self.wiederaufnehmen(kreis, erzwingen=True, merken=True)
             elif relevant:
                 self.wiederaufnehmen(kreis, erzwingen=True, merken=True)
+            if kreisansicht.zustand(alt, kreis) != kreisansicht.zustand(neu, kreis):
+                self._check_anstossen(kreis)
         return False
+
+    def _check_anstossen(self, kreis: int) -> None:
+        """Ein Zustandswechsel (etwa nach oder aus der Testphase) wirkt im naechsten lokalen Check dieses Kreises, ohne
+        Neustart; der Check wird nicht erst vom naechsten Signal ausgeloest."""
+        ergebnis = self.kreise().get(kreis)
+        if isinstance(ergebnis, Runtime):
+            ergebnis.worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=False)
 
 
 def _nummern(konfiguration) -> list[int]:

@@ -1,10 +1,14 @@
 """G-9: Endzustaende. Wird die Regelung beendet (Abmelden, Abo-Ende), stehen danach Heizkurve, Zonensollwert,
 Heizgrenze und Mindestvorlauf wieder so, wie sie vor dem ersten Schreiben standen; schlaegt das Zuruecksetzen fehl,
-versucht das Add-on es weiter."""
+versucht das Add-on es weiter. Die Testphase ohne Setwell ist ein Endzustand auf Zeit: der Kreis wird einmal
+zurueckgestellt, danach schreibt das Add-on nichts mehr, und Ursprungswerte und Lernstand bleiben stehen."""
+import json
+
 import pytest
 from anlagen import LEERE_KONFIGURATION, konfiguration, schreibziel
 from beobachtung import COMFORT_BOOST, SATZ, boost_anlage, boost_starts, stand
 
+from heizungsbruecke import config
 from smartheat_device.prozess import Neustart
 
 URSPRUNG_HEIZGRENZE = 17.0  # nicht der Regelwert (16): so zeigt sich, welcher Wert zurueckkommt
@@ -109,3 +113,80 @@ def test_ak_g9_06_kuerzere_rueckstellliste_wird_abgewiesen(welt, satz, zurueck):
         (False, "ungueltig", "zurueck")]  # abgewiesen, mit Feld
     _abmelden(anlage, version=3)  # das vorige Dokument gilt noch: es stellt mindestens die Mindestliste zurueck
     assert {hebel: anlage.ha.states[schreibziel(satz, hebel)] for hebel in ursprung} == ursprung
+
+
+SERVER_ANDERS = {"curve": 1.1, "room_setpoint": 24.0, "heat_limit": 14.0}
+SERVER_NORMAL = {"curve": 0.8, "room_setpoint": 21.0, "heat_limit": 15.0}
+
+
+def _zustand_setzen(anlage, version: int, zustand: str) -> None:
+    """Der Server setzt den Zustand des Kreises (ohne Neustart); das Geraet nimmt das Dokument an, der naechste lokale
+    Check (hoechstens 300 s) wendet es an."""
+    dokument = konfiguration(SATZ, "Heizkoerper")
+    dokument["kreise"][0]["zustand"] = zustand
+    anlage.konfiguration_senden(version, dokument)
+    anlage.runde(2)
+    assert anlage.ergebnis(version)["ok"]
+    anlage.laufen(310)
+
+
+def _server_antwortet_auf_neuen_wunsch(anlage, hebel: dict) -> None:
+    """Ein neuer Wunsch (nicht hoeher, kein Boost) loest einen Snapshot aus; der Server antwortet darauf mit `hebel`."""
+    anlage.raum(21.5)
+    anlage.wunsch(21.0)
+    anlage.runde(2)
+    anlage.server_antwortet(hebel)
+    anlage.runde(2)
+
+
+def _gemerkt() -> dict:
+    """Ursprungswerte und Lernwerte, wie sie auf dem Datentraeger stehen."""
+    daten = json.loads(config.backup_path(1).read_text(encoding="utf-8"))
+    return {feld: daten.get(feld) for feld in ("originals", "learned")}
+
+
+@pytest.mark.akzeptanz("AK-G9-07")
+def test_ak_g9_07_testphase_ohne_stellt_einmal_zurueck_und_schreibt_dann_nichts(welt):
+    anlage = boost_anlage(welt, heizgrenze=URSPRUNG_HEIZGRENZE)
+    _zustand_setzen(anlage, 2, "testphase_ohne")
+    assert stand(anlage) == ENDZUSTAND  # einmal zurueckgestellt, der Boost ist beendet
+    schreibaufrufe, starts = len(anlage.ha.schreibvorgaenge), len(boost_starts(anlage))
+    anlage.wunsch(23.0)  # der Wunsch steigt bei kaltem Raum: sonst ein Comfort-Boost
+    anlage.app_verstellt(schreibziel(SATZ, "heat_limit"), 12.0)  # ein Hebel wird von aussen verstellt: kein Durchsetzen
+    anlage.vergehen(3600, SERVER_ANDERS, fuehler=20.0)  # der Server antwortet jedes Mal mit anderen Werten
+    assert len(anlage.ha.schreibvorgaenge) == schreibaufrufe
+    assert len(boost_starts(anlage)) == starts
+    assert anlage.ha.states[schreibziel(SATZ, "heat_limit")] == 12.0
+    assert any(m[0] == "ereignis" and m[1] == "smartheat_status" for m in anlage.ha.meldungen)  # die Meldungen laufen
+    assert [s for s in anlage.link.of("up/snapshot")]  # Snapshots und Telemetrie laufen weiter
+
+
+@pytest.mark.akzeptanz("AK-G9-08")
+def test_ak_g9_08_zweite_testphase_stellt_auf_die_ursprungswerte_der_ersten_zurueck(welt):
+    anlage = boost_anlage(welt, heizgrenze=URSPRUNG_HEIZGRENZE)
+    _zustand_setzen(anlage, 2, "testphase_ohne")
+    assert stand(anlage) == ENDZUSTAND
+    _zustand_setzen(anlage, 3, "in_betrieb")  # zurueck ohne Neustart: die Regelung nimmt Serverwerte wieder auf
+    _server_antwortet_auf_neuen_wunsch(anlage, SERVER_NORMAL)
+    assert stand(anlage) == SERVER_NORMAL
+    _zustand_setzen(anlage, 4, "testphase_ohne")
+    assert stand(anlage) == ENDZUSTAND  # die Werte vor dem ersten Schreiben, nicht die der Zeit dazwischen
+    schreibaufrufe = len(anlage.ha.schreibvorgaenge)
+    anlage.vergehen(1800, SERVER_ANDERS, fuehler=21.5)
+    assert len(anlage.ha.schreibvorgaenge) == schreibaufrufe
+
+
+@pytest.mark.akzeptanz("AK-G9-09")
+def test_ak_g9_09_ursprungswerte_und_lernstand_bleiben_nach_der_testphase_gleich(welt):
+    anlage = boost_anlage(welt, heizgrenze=URSPRUNG_HEIZGRENZE)
+    vorher = _gemerkt()
+    assert vorher["originals"]
+    _zustand_setzen(anlage, 2, "testphase_ohne")
+    anlage.vergehen(3600, SERVER_ANDERS, fuehler=21.5)
+    assert _gemerkt() == vorher  # nichts geleert, nichts neu gemerkt, kein neuer Lernstand
+    _zustand_setzen(anlage, 3, "in_betrieb")
+    _server_antwortet_auf_neuen_wunsch(anlage, SERVER_NORMAL)
+    assert stand(anlage) == SERVER_NORMAL  # die Regelung schreibt wieder
+    assert _gemerkt()["originals"] == vorher["originals"]
+    _abmelden(anlage, version=4)  # das Ende nach der Testphase stellt auf die Ursprungswerte von ganz am Anfang zurueck
+    assert stand(anlage) == ENDZUSTAND

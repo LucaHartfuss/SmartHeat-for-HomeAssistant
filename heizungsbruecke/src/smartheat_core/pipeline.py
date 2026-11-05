@@ -356,6 +356,19 @@ class LeverPipeline:
         versucht es erneut. Scheitert danach nur das Speichern, gilt die Wiederherstellung als erfolgt. Danach
         die Hilfs-Ursprungswerte (aux_originals), die anschliessend geleert werden. Hilfswerte des Servers
         gelten nur, wenn ohnehin zurueckgesetzt wird; ausloesen koennen sie es nicht."""
+        return self._restore(always_restore, leeren=True)
+
+    def restore_for_pause(self) -> bool:
+        """Eintritt in eine Pause ohne Setwell-Schreiben (Testphase): beide Boosts beenden und die Hebel samt
+        Hilfswerten einmal auf die gemerkten Ursprungswerte stellen, wie bei restore_and_clear, aber ohne etwas zu
+        leeren: Ursprungs- und Hilfs-Ursprungswerte bleiben fuer die Rueckkehr und eine weitere Pause stehen. Ein
+        laufender Kaelteschutz-Notfall-Boost bleibt, dann ist das Ergebnis False und der Aufrufer versucht es spaeter
+        erneut. False auch, wenn das Schreiben scheitert."""
+        if self._store.state.emergency_boost_active:
+            return False
+        return self._restore(True, leeren=False)
+
+    def _restore(self, always_restore: bool, leeren: bool) -> bool:
         state = self._store.state
         server = self._server_snapshot()
         originals: dict[str, float] = {}
@@ -402,14 +415,15 @@ class LeverPipeline:
                 "bleiben gesetzt, es wird erneut versucht"
             )
             return False
+        # Hilfswerte sind zurueckgestellt: ein weiterer Aufruf (naechster Start, Fristende) schreibt nur noch
+        # abweichende Hebel (Quota-Check) und stellt ein Binding mit Hilfswerten nicht mehr um (_write); ein
+        # neues Abo merkt sie neu. Eine Pause leert nichts: die Hilfswerte gelten fuer die naechste Pause weiter.
+        geleert = {"aux_originals": {}} if leeren else {}
         try:
             self._store.update(
                 boost_active=False, emergency_boost_active=False, kaelteschutz_art=None, kaelteschutz_seit=None,
                 restore_point={**self._store.state.restore_point, **originals},
-                # Hilfswerte sind zurueckgestellt: ein weiterer Aufruf (naechster Start, Fristende) schreibt nur noch
-                # abweichende Hebel (Quota-Check) und stellt ein Binding mit Hilfswerten nicht mehr um (_write); ein
-                # neues Abo merkt sie neu.
-                aux_originals={},
+                **geleert,
             )
         except Exception:
             logger.exception(

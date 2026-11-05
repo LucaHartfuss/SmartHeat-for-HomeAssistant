@@ -13,7 +13,7 @@ from heizungsbruecke.host import HaHost
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import app, entitlement, kreise
 from smartheat_runtime.app import EV_RECHECK, StartFailure
-from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.runtime import EV_LOCAL_CHECK, Runtime
 from smartheat_runtime.worker import Event, WorkerBeendet
 
 
@@ -757,3 +757,32 @@ def test_ein_unbekannter_kreis_wird_nicht_wiederaufgenommen(env):
     assert laufzeit.wiederaufnehmen(99) is False
     assert laufzeit.wiederaufnehmen(99, erzwingen=True, merken=True) is False
     assert 99 not in laufzeit._in_aufnahme and 99 not in laufzeit._nachholen
+
+
+def test_ein_zustandswechsel_stoesst_den_lokalen_check_nur_dieses_kreises_an(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    eins, zwei = laufzeit.kreise()[1], laufzeit.kreise()[2]
+    angestossen = []
+    for nummer, runtime in ((1, eins), (2, zwei)):
+        runtime.worker.post_coalesced = lambda art, nummer=nummer, **flags: angestossen.append((nummer, art, flags))
+    alt = _zwei_kreise_dokument()
+    neu = _zwei_kreise_dokument(zustand="testphase_ohne")
+
+    assert laufzeit.konfiguration_geaendert(alt, neu) is False  # kein Neustart
+
+    # kein Wunsch-Ereignis: der Check liest den Soll-Speicher nicht neu, er prueft nur den Zustand
+    assert angestossen == [(2, EV_LOCAL_CHECK, {"room_target_fired": False})]
+    assert laufzeit.kreise()[1] is eins and laufzeit.kreise()[2] is zwei
+
+
+def test_ohne_zustandswechsel_bleibt_der_lokale_check_ungestossen(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    angestossen = []
+    for runtime in laufzeit.kreise().values():
+        runtime.worker.post_coalesced = lambda art, **flags: angestossen.append(art)
+
+    laufzeit.konfiguration_geaendert(_zwei_kreise_dokument(), _zwei_kreise_dokument())
+
+    assert angestossen == []

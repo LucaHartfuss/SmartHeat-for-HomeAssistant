@@ -241,7 +241,7 @@ class GatewayDeviceHost(GeraetHostBasis):
 
     def faehigkeiten(self) -> dict:
         return nachrichten.pruefen("faehigkeiten", {"drivers": list(registry.driver_ids()), "zigbee": True,
-                                                    "updater": True, "kaelteschutz": True},
+                                                    "updater": True, "testphase": True, "kaelteschutz": True},
                                    wire.CAPABILITY_FIELDS, wire.CAPABILITY_OPTIONAL)
 
     def wege(self) -> list[str]:

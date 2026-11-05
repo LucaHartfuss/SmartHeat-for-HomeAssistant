@@ -74,6 +74,9 @@ class Runtime:
     # Start: Zone auf Manuell mit brauchbarer Parallelverschiebung. Bis es
     # einmal geklappt hat, versucht es jeder lokale Check erneut. Nicht persistiert.
     zone_prepared: bool = False
+    # Testphase ohne Setwell: die Rueckstellung beim Eintritt ist erledigt. Nach einem Prozessstart mitten in der Phase
+    # stellt der erste Check einmal erneut zurueck. Nicht persistiert.
+    testphase_rueckgestellt: bool = False
     # Comfort-Boost: Stand der monotonen Uhr (clock) beim Start des Boosts in diesem Prozess, None bei einem
     # Boost aus einem frueheren Lauf. Gilt nur bei aktivem Boost: ein Boost-Ende ueber die Pipeline laesst den Wert
     # stehen, jeder neue Start ueberschreibt ihn. Die 4-h-Grenze zaehlt auch hier, falls die Wanduhr zurueckspringt.

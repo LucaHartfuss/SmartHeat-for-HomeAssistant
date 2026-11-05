@@ -8,7 +8,7 @@ from smartheat_core import wallclock
 from smartheat_core.logtext import lesbar
 from smartheat_core.pipeline import DeviceWriteError
 from smartheat_core.zahlen import ist_endliche_zahl
-from smartheat_runtime import abo, delivery, entitlement
+from smartheat_runtime import abo, delivery, entitlement, testphase
 from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
 from smartheat_runtime.snapshot import SNAPSHOT_SCHEMA_VERSION, publish_snapshot, read_snapshot
@@ -307,7 +307,11 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
     status = payload.get("status")
     levers = payload.get("levers")
     expected = rt.override.binding.description.lever_set.levers
-    if status in _SETPOINT_STATUSES_WITH_VALUES and _valid_levers(levers, expected):
+    if status in _SETPOINT_STATUSES_WITH_VALUES and _valid_levers(levers, expected) and testphase.aktiv(rt):
+        # Testphase ohne Setwell: die Antwort wird quittiert, ihre Werte und ihr Lernstand gehen nicht an die Anlage.
+        logger.info("Setpoints-Antwort (seq=%s) in der Testphase ohne Setwell nur quittiert", seq)
+        deliver(rt, delivery.Ack(seq=seq, status=status))
+    elif status in _SETPOINT_STATUSES_WITH_VALUES and _valid_levers(levers, expected):
         _clear_sent_manual_override(rt)
         if status == delivery.STATUS_SKIPPED:
             logger.info(

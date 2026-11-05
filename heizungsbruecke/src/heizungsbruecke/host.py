@@ -175,7 +175,8 @@ class HaHost:
             runtime = dokument_config.runtime_config(
                 self._konfiguration, rastung_pfad=config.RASTUNG_PATH,
                 entitlement_path=config.entitlement_path(self.kreis), kreis=self.kreis,
-                abo_source=lambda: self._geraet.abo_status(self.kreis))
+                abo_source=lambda: self._geraet.abo_status(self.kreis),
+                zustand_source=lambda: kreisansicht.zustand(self._geraet.konfiguration(), self.kreis))
             # Ohne gueltige Bindungsparameter kein Start
             description = dokument_config.beschreibung(self._konfiguration, self.kreis)
             _wait_for_required_entities(self._ha_api, b)

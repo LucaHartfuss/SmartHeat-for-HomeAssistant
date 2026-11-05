@@ -281,6 +281,61 @@ def test_a_second_restore_after_a_successful_one_neither_switches_nor_writes(mak
     assert ha.states["select.betriebsart"] == "hz_operationmode_automatic"
 
 
+def test_a_pause_restores_levers_and_auxiliary_values_without_clearing_anything(make_store, clock):
+    ha = FakeHa()
+    pipeline, store = _pipeline(make_store, clock, ha)
+    pipeline.apply_server_values({"curve": 0.8, "room_setpoint": 23.0, "heat_limit": 17.0})
+    gemerkt = (dict(store.state.originals), dict(store.state.aux_originals))
+    assert gemerkt[1]["mode_select"] == "hz_operationmode_automatic"
+    ha.calls.clear()
+    assert pipeline.restore_for_pause() is True
+    assert ("select", "select.betriebsart", "hz_operationmode_automatic") in ha.calls  # Betriebsart geht zurueck
+    assert ha.states["select.betriebsart"] == "hz_operationmode_automatic"
+    assert (dict(store.state.originals), dict(store.state.aux_originals)) == gemerkt  # nichts geleert
+    assert store.state.abo_finished is False
+    assert store.state.boost_active is False and store.state.emergency_boost_active is False
+
+
+def test_a_second_pause_restores_again_with_the_originals_of_the_first(make_store, clock):
+    ha = FakeHa()
+    pipeline, store = _pipeline(make_store, clock, ha)
+    pipeline.apply_server_values({"curve": 0.8, "room_setpoint": 23.0, "heat_limit": 17.0})
+    gemerkt = (dict(store.state.originals), dict(store.state.aux_originals))
+    assert pipeline.restore_for_pause() is True
+    # Rueckkehr in den Betrieb: die Serverwerte stehen wieder auf der Anlage (hier direkt gesetzt).
+    ha.states.update({"select.betriebsart": "hz_operationmode_normal", "number.hk": 0.85, "number.normal": 22.0})
+    clock.advance(WEISHAUPT_MODBUS.settle_seconds + 1)
+    ha.calls.clear()
+    assert pipeline.restore_for_pause() is True
+    assert ha.states["select.betriebsart"] == "hz_operationmode_automatic"
+    assert ha.states["number.hk"] == 0.75 and ha.states["number.normal"] == 20.0
+    assert (dict(store.state.originals), dict(store.state.aux_originals)) == gemerkt  # nicht neu gemerkt
+
+
+def test_a_pause_waits_for_a_running_emergency_boost_and_writes_nothing(make_store, clock):
+    ha = FakeHa()
+    pipeline, store = _pipeline(make_store, clock, ha)
+    pipeline.apply_server_values({"curve": 0.8, "room_setpoint": 23.0, "heat_limit": 17.0})
+    assert pipeline.set_boosts(comfort=False, emergency=True, kaelteschutz=True) == (False, True)
+    ha.calls.clear()
+    assert pipeline.restore_for_pause() is False
+    assert ha.calls == [] and store.state.emergency_boost_active is True
+
+
+def test_a_failing_pause_keeps_the_boost_flags_and_reports_failure(make_store, clock):
+    ha = FakeHa()
+    pipeline, store = _pipeline(make_store, clock, ha)
+    pipeline.apply_server_values({"curve": 0.8, "room_setpoint": 23.0, "heat_limit": 17.0})
+    assert pipeline.set_boosts(comfort=True, emergency=False) == (True, False)
+    ha.failing.add("number.hk")
+    assert pipeline.restore_for_pause() is False
+    assert store.state.boost_active is True
+    ha.failing.clear()
+    clock.advance(10000)
+    assert pipeline.restore_for_pause() is True
+    assert store.state.boost_active is False
+
+
 def test_a_restore_without_auxiliary_originals_does_not_switch_the_mode(make_store, clock):
     # Hilfswerte nie gemerkt (Backup ohne aux_originals), Ursprungswert des Normal-Solls weicht ab: das Normal-Soll (eigenes
     # Register) wird geschrieben, die Betriebsart bleibt beim Nutzer.

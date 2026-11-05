@@ -147,7 +147,8 @@ def rastung_pruefen(konfiguration, rastung_pfad: Path) -> None:
 
 
 def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
-                   abo_source: Callable[[], str], kreis: int | None = None) -> RuntimeConfig:
+                   abo_source: Callable[[], str], kreis: int | None = None,
+                   zustand_source: Callable[[], str] | None = None) -> RuntimeConfig:
     """Die Laufzeitkonfiguration des Kreises `kreis` (ohne Angabe des ersten). Wirft ConfigError (der Host macht daraus
     StartFailure); config_check hat das Dokument schon geprueft."""
     if not eingerichtet(konfiguration):
@@ -175,6 +176,7 @@ def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
         telemetry_interval=intervalle.get("telemetrie_s", DEFAULT_TELEMETRY_INTERVAL_SECONDS),
         notify_hints_off=(), room_sensor_refs=tuple(sensors), battery_refs=(), entitlement_path=entitlement_path,
         abo_source=abo_source, referenzraeume=tuple(kreisansicht.referenz_versatz(konfiguration, kreis)),
+        zustand_source=zustand_source or (lambda: kreisansicht.IN_BETRIEB),
     )
 
 

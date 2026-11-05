@@ -16,6 +16,7 @@ from smartheat_core.emergency_boost import (
     kaelteschutz_entscheiden,
 )
 from smartheat_core.logtext import lesbar
+from smartheat_runtime import testphase
 from smartheat_runtime.plausibility import ROOM_ACTUAL_RANGE, is_plausible
 from smartheat_runtime.ports import SignalUngueltig
 from smartheat_runtime.runtime import Runtime
@@ -82,7 +83,9 @@ def run_local_check(rt: Runtime) -> None:
     """Comfort-Boost nur bei Sollwerterhoehung, Notfall-Boost nur waehrend Notbetrieb, Kaelteschutz (ein Notfall-Boost
     auch ausserhalb des Notbetriebs) bei langer Abweichung oder Frostnaehe. room_target kommt aus dem
     Stable-Target-Cache, damit ein Zwischenwert beim Verstellen keinen Boost ausloest. I/O-Fehler gehen an den
-    Aufrufer."""
+    Aufrufer. In der Testphase ohne Setwell stellt der Check beim Eintritt die Hebel zurueck und startet keinen
+    Comfort-Boost; der Kaelteschutz und der Notfall-Boost des Notbetriebs gelten weiter."""
+    testphase.pruefen(rt)
     manifest = rt.manifest
     if "room_actual" not in manifest.refs or "room_target" not in manifest.refs:
         return
@@ -115,7 +118,7 @@ def run_local_check(rt: Runtime) -> None:
         logger.info("Comfort-Boost endet nach der Hoechstdauer (seit %s)", state.boost_since)
     safety = rt.override.safety
     # Ohne Comfort-Boost-Werte (z. B. Fussbodenheizung) gibt es keinen Comfort-Boost.
-    comfort = not expired and bool(safety.comfort_boost) and decide_boost(
+    comfort = not expired and bool(safety.comfort_boost) and not testphase.aktiv(rt) and decide_boost(
         room_actual=room_actual,
         room_target=room_target,
         previous_room_target=state.last_room_target,

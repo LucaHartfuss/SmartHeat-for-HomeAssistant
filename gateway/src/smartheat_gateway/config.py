@@ -57,13 +57,13 @@ def bindung(konfiguration, kreis: int | None = None) -> GatewayBindung:
     return GatewayBindung(driver_id, dict(parameter), tuple(sensors), thermostat, raeume)
 
 
-def parse_dokument(konfiguration, paths: Paths, abo_source: Callable[[], str],
-                   kreis: int | None = None) -> tuple[RuntimeConfig, GatewayBindung]:
+def parse_dokument(konfiguration, paths: Paths, abo_source: Callable[[], str], kreis: int | None = None,
+                   zustand_source: Callable[[], str] | None = None) -> tuple[RuntimeConfig, GatewayBindung]:
     """Laufzeitkonfiguration und Bindung des Heizkreises `kreis` (ohne Angabe des ersten)."""
     nummer = dokument_config.kreisnummer(konfiguration, kreis)
     runtime = dokument_config.runtime_config(
         konfiguration, rastung_pfad=paths.rastung, entitlement_path=paths.entitlement(nummer), abo_source=abo_source,
-        kreis=kreis)
+        kreis=kreis, zustand_source=zustand_source)
     return runtime, bindung(konfiguration, kreis)
 
 
