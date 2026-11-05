@@ -1,9 +1,10 @@
 """Abweichung des Ist vom Ziel ueber die Referenzraeume eines Kreises (Rechnung, ohne I/O).
 
 Jeder Referenzraum hat ein Ziel: das Soll des Kreises plus seinen Versatz, begrenzt auf den Bereich der Raumsolle
-(`ZIEL_MIN` bis `ZIEL_MAX`). Das Delta ist das Mittel von Ziel minus Ist ueber die Referenzraeume mit gueltigem Ist;
-Kontrollraeume gehen nie ein, der Aufrufer reicht sie nicht herein. Die Entscheidungen fuer Boost und Notfall-Boost
-rechnen mit `Soll - Delta` wie mit dem Ist eines einzelnen Raums: ein Referenzraum ohne Versatz ergibt genau das Ist.
+(`ZIEL_MIN` bis `ZIEL_MAX`); bei einem Soll unter 15 ist das Ziel das Soll selbst. Das Delta ist das Mittel von Ziel
+minus Ist ueber die Referenzraeume mit gueltigem Ist; Kontrollraeume gehen nie ein, der Aufrufer reicht sie nicht herein.
+Die Entscheidungen fuer Boost und Notfall-Boost rechnen mit `Soll - Delta` wie mit dem Ist eines einzelnen Raums: ein
+Referenzraum ohne Versatz ergibt genau das Ist.
 
 Dieselbe Rechnung steht auf dem Server (`heizungsserver.regelung.raum_delta`); der Contract-Check vergleicht beide an
 gemeinsamen Vektoren (`tools/contracts/raum_delta.json`)."""
@@ -15,10 +16,12 @@ ZIEL_MAX = 25.0
 
 
 def ziel(soll: float, versatz: float) -> float:
-    """Ziel eines Referenzraums: Soll plus Versatz, begrenzt auf 15 bis 25. Liegt das Soll selbst ausserhalb (Frostschutz,
-    Abwesenheit), zieht die Begrenzung das Ziel nie darauf zu: sie reicht nur bis zum Soll, ein Raum ohne Versatz hat
-    genau das Soll als Ziel."""
-    return min(max(ZIEL_MAX, soll), max(min(ZIEL_MIN, soll), soll + versatz))
+    """Ziel eines Referenzraums: Soll plus Versatz, begrenzt auf 15 bis 25. Liegt das Soll selbst ausserhalb, zieht die
+    Begrenzung das Ziel nie darauf zu; bei einem Soll unter 15 (Frostschutz, Abwesenheit) ist das Ziel das Soll, auch mit
+    Versatz, ein Raum ohne Versatz hat stets genau das Soll als Ziel."""
+    if soll < ZIEL_MIN:
+        return soll
+    return min(max(ZIEL_MAX, soll), max(ZIEL_MIN, soll + versatz))
 
 
 def delta(soll: float, ist_je_referenzraum: Mapping[int, float], versatz_je_raum: Mapping[int, float]) -> float | None:

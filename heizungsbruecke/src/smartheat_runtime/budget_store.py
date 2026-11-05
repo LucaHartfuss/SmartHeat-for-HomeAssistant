@@ -1,9 +1,10 @@
 """Schreibbudgets bei mehreren Kreisen. Jeder Kreis hat seinen Zustand (`StateStore`, `runtime/kreis-<n>/backup.json`);
 manche Zaehler gehoeren aber der ganzen Anlage, weil sie ein Kontingent des Geraets oder der Cloud abbilden, das alle
 Kreise teilen: der Tagesgesamtzaehler der physischen Schreibvorgaenge (`writes:total`), die Zonenvorbereitung, die
-Boost-Starts (Comfort und Notfall) und der Lebensdauerzaehler. Sie stehen in `runtime/anlage_budget.json`, einer
-`AnlagenBudget` fuer alle Kreise. Alles andere (Durchsetzung je Hebelgruppe, Boost-Ende, Wiederherstellung) bleibt im
-Kreis.
+Boost-Starts (Comfort und Notfall), die Durchsetzung je Hebel (`enforce:<hebel>`, deren Tageslimit das Kontingent der
+Cloud der Anlage abbildet; Mindestabstand und Limit gelten damit je Anlage) und der Lebensdauerzaehler. Sie stehen in
+`runtime/anlage_budget.json`, einer `AnlagenBudget` fuer alle Kreise. Alles andere (Boost-Ende, Wiederherstellung) bleibt
+im Kreis.
 
 `BudgetStore` legt beide hinter die Schnittstelle des `StateStore`: `state.write_budget` und `state.lifetime_writes` sind
 die zusammengesetzte Sicht, `update(write_budget=...)` und `update(lifetime_writes=...)` verteilen nach Schluessel.
@@ -28,7 +29,7 @@ from pathlib import Path
 from smartheat_core.logtext import lesbar
 from smartheat_runtime import backup_store
 from smartheat_runtime.delivery import DeliveryState
-from smartheat_runtime.state import ANLAGE_SCHLUESSEL, BridgeState, StateStore, StorageError, _parse_budget
+from smartheat_runtime.state import BridgeState, StateStore, StorageError, _parse_budget, gehoert_der_anlage
 
 logger = logging.getLogger(__name__)
 
@@ -131,17 +132,23 @@ class BudgetStore:
     def _uebernehmen(self) -> None:
         """Zaehler der Anlage in der Sicherung des Kreises (Bestand aus dem Stand vor den Kreisordnern) wandern einmal in
         die Anlagendatei, wenn es sie noch nicht gibt, und verschwinden aus dem Kreis. Eine vorhandene Anlagendatei
-        gilt immer; ein Fehler beim Schreiben laesst den Kreis unberuehrt, der Versuch wiederholt sich beim naechsten Start."""
+        gilt immer: von den Eintraegen des Kreises kommen nur die dazu, die ihr fehlen (etwa die Durchsetzung eines Hebels,
+        die erst seit dem Umstieg auf die Zaehlung je Anlage dorthin gehoert). Ein Fehler beim Schreiben laesst den Kreis
+        unberuehrt, der Versuch wiederholt sich beim naechsten Start."""
         state = self._kreis.state
-        alt = {key: entry for key, entry in state.write_budget.items() if key in ANLAGE_SCHLUESSEL}
+        alt = {key: entry for key, entry in state.write_budget.items() if gehoert_der_anlage(key)}
         if not alt and not state.lifetime_writes:
             return
-        if not self._anlage.vorhanden:
-            try:
+        try:
+            if not self._anlage.vorhanden:
                 self._anlage.update(write_budget=alt, lifetime_writes=state.lifetime_writes)
-            except StorageError:
-                logger.warning("Zaehler der Anlage nicht uebernommen, der Versuch wiederholt sich beim naechsten Start")
-                return
+            else:
+                fehlend = {key: entry for key, entry in alt.items() if key not in self._anlage.write_budget}
+                if fehlend:
+                    self._anlage.update(write_budget={**self._anlage.write_budget, **fehlend})
+        except StorageError:
+            logger.warning("Zaehler der Anlage nicht uebernommen, der Versuch wiederholt sich beim naechsten Start")
+            return
         try:
             self._kreis.update(write_budget=_ohne_anlage(state.write_budget), lifetime_writes=0)
         except StorageError:
@@ -190,7 +197,7 @@ class BudgetStore:
             gelesen_lebensdauer = getattr(self._sicht, "lifetime_writes", None)
             aenderungen: dict = {}
             if gesamt is not None:
-                neu = {key: entry for key, entry in gesamt.items() if key in ANLAGE_SCHLUESSEL}
+                neu = {key: entry for key, entry in gesamt.items() if gehoert_der_anlage(key)}
                 merged = _eingefuegt(aktuell, neu, aktuell if gelesen is None else gelesen)
                 if merged != aktuell:
                     aenderungen["write_budget"] = merged
@@ -283,7 +290,7 @@ def _lebensdauer(aktuell: int, neu: int, gelesen: int | None) -> int:
 
 
 def _ohne_anlage(budget: dict) -> dict:
-    return {key: entry for key, entry in budget.items() if key not in ANLAGE_SCHLUESSEL}
+    return {key: entry for key, entry in budget.items() if not gehoert_der_anlage(key)}
 
 
 def _nur_kreis(namen) -> None:

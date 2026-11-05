@@ -13,9 +13,16 @@ from smartheat_core import write_budget
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime import backup_store
-from smartheat_runtime.budget_store import ANLAGE_SCHLUESSEL, AnlagenBudget, BudgetStore
+from smartheat_runtime.budget_store import AnlagenBudget, BudgetStore
 from smartheat_runtime.roles import ChannelManifest
-from smartheat_runtime.state import BridgeState, StateStore, StorageError, bind_to_tenant
+from smartheat_runtime.state import (
+    ANLAGE_SCHLUESSEL,
+    BridgeState,
+    StateStore,
+    StorageError,
+    bind_to_tenant,
+    gehoert_der_anlage,
+)
 
 DAY = "2026-10-03"
 GRENZE = 10  # BindingDescription.daily_write_limit des Weishaupt-Beispiels
@@ -64,8 +71,8 @@ def test_die_schluessel_der_anlage_stehen_in_der_anlagendatei_und_die_des_kreise
     for key in (*ANLAGE_SCHLUESSEL, write_budget.BOOST_END, write_budget.RESTORE, "enforce:curve+heat_limit"):
         write_budget.put(store, key, _eintrag())
     assert set(_anlage_datei(runtime_dir)["write_budget"]) == {
-        "writes:total", "zone_prepare", "boost_start", "emergency_start"}
-    assert set(_kreis_datei(runtime_dir, 1)["write_budget"]) == {"boost_end", "restore", "enforce:curve+heat_limit"}
+        "writes:total", "zone_prepare", "boost_start", "emergency_start", "enforce:curve+heat_limit"}
+    assert set(_kreis_datei(runtime_dir, 1)["write_budget"]) == {"boost_end", "restore"}
     assert set(store.state.write_budget) == set(_anlage_datei(runtime_dir)["write_budget"]) | set(
         _kreis_datei(runtime_dir, 1)["write_budget"])
 
@@ -73,6 +80,13 @@ def test_die_schluessel_der_anlage_stehen_in_der_anlagendatei_und_die_des_kreise
 def test_die_anlage_schluessel_sind_genau_die_der_ganzen_anlage():
     erwartet = {write_budget.TOTAL, write_budget.ZONE_PREPARE, write_budget.BOOST_START, write_budget.EMERGENCY_START}
     assert set(ANLAGE_SCHLUESSEL) == erwartet
+
+
+def test_die_durchsetzung_je_hebel_gehoert_der_anlage_und_sonst_nur_die_festen_schluessel():
+    for key in (*ANLAGE_SCHLUESSEL, "enforce:curve", "enforce:curve+level", "enforce:zone_mode"):
+        assert gehoert_der_anlage(key), key
+    for key in (write_budget.BOOST_END, write_budget.RESTORE, "enforce", "xenforce:curve"):
+        assert not gehoert_der_anlage(key), key
 
 
 def test_der_lebensdauerzaehler_gehoert_der_anlage(runtime_dir):
@@ -107,12 +121,44 @@ def test_zwei_kreise_zaehlen_den_gesamtzaehler_gemeinsam_und_den_rest_je_kreis(r
     zwei = BudgetStore(_kreis_store(runtime_dir, 2), anlage)
     write_budget.put(eins, write_budget.TOTAL, _eintrag(3))
     write_budget.put(zwei, write_budget.TOTAL, write_budget.added(write_budget.get(zwei, write_budget.TOTAL), 2, 0.0, DAY))
-    write_budget.put(eins, "enforce:curve", _eintrag(1))
+    write_budget.put(eins, write_budget.RESTORE, _eintrag(1))
     assert write_budget.get(eins, write_budget.TOTAL)["count"] == 5
     assert write_budget.get(zwei, write_budget.TOTAL)["count"] == 5
-    assert write_budget.get(eins, "enforce:curve") is not None
-    assert write_budget.get(zwei, "enforce:curve") is None
+    assert write_budget.get(eins, write_budget.RESTORE) is not None
+    assert write_budget.get(zwei, write_budget.RESTORE) is None
     assert eins.state.lifetime_writes == zwei.state.lifetime_writes
+
+
+@pytest.mark.parametrize("vorher,zweiter_darf", [(5, True), (6, False)])
+def test_das_tageslimit_der_durchsetzung_gilt_je_hebel_fuer_die_ganze_anlage(runtime_dir, vorher, zweiter_darf):
+    """Zwei Kreise zaehlen die Durchsetzung desselben Hebels an einem Eintrag: erst die Summe beider Kreise erreicht
+    das Tageslimit (sechs), nicht jeder Kreis fuer sich."""
+    anlage = _budget(runtime_dir)
+    eins = BudgetStore(_kreis_store(runtime_dir, 1), anlage)
+    zwei = BudgetStore(_kreis_store(runtime_dir, 2), anlage)
+    regel = write_budget.enforce_rule(write_budget.MAX_PER_DAY)
+    for _ in range(3):
+        write_budget.before_attempt(eins, "enforce:curve", regel, 0.0, day=DAY)
+    for _ in range(vorher - 3):
+        write_budget.before_attempt(zwei, "enforce:curve", regel, 100.0, day=DAY)
+    spaeter = 100.0 + 2 * write_budget.INTERVAL_SECONDS
+    assert write_budget.may_attempt(eins, "enforce:curve", regel, spaeter) is zweiter_darf
+    assert write_budget.may_attempt(zwei, "enforce:curve", regel, spaeter) is zweiter_darf
+    assert write_budget.get(eins, "enforce:curve")["count"] == vorher
+    assert not (runtime_dir / "kreis-1").exists()  # im Kreis steht davon nichts
+    assert not (runtime_dir / "kreis-2").exists()
+    assert _anlage_datei(runtime_dir)["write_budget"]["enforce:curve"]["count"] == vorher
+
+
+def test_ein_anderer_hebel_zaehlt_getrennt(runtime_dir):
+    anlage = _budget(runtime_dir)
+    eins = BudgetStore(_kreis_store(runtime_dir, 1), anlage)
+    zwei = BudgetStore(_kreis_store(runtime_dir, 2), anlage)
+    regel = write_budget.enforce_rule(write_budget.MAX_PER_DAY)
+    write_budget.before_attempt(eins, "enforce:curve", regel, 0.0, day=DAY)
+    write_budget.before_attempt(zwei, "enforce:heat_limit", regel, 0.0, day=DAY)
+    assert write_budget.get(zwei, "enforce:curve")["count"] == 1
+    assert write_budget.get(eins, "enforce:heat_limit")["count"] == 1
 
 
 class Ha:
@@ -164,6 +210,21 @@ def test_ein_bestand_aus_der_migration_geht_einmal_in_die_anlagendatei_ueber(run
     assert _anlage_datei(runtime_dir) == {"write_budget": {"writes:total": _eintrag(4)}, "lifetime_writes": 120}
     assert _kreis_datei(runtime_dir, 1)["write_budget"] == {"boost_end": _eintrag(2)}
     assert "lifetime_writes" not in _kreis_datei(runtime_dir, 1)
+
+
+def test_die_durchsetzung_eines_alten_kreisbestands_geht_in_die_vorhandene_anlagendatei_wenn_sie_dort_fehlt(runtime_dir):
+    """Beim Umstieg auf die Zaehlung je Anlage steht die Durchsetzung eines Hebels noch im Kreis: sie wandert in die
+    Anlagendatei, ein dort schon vorhandener Eintrag desselben Hebels bleibt unberuehrt."""
+    backup_store.save_backup(runtime_dir / "anlage_budget.json", {"write_budget": {
+        "writes:total": _eintrag(8), "enforce:heat_limit": _eintrag(2)}})
+    kreis = _kreis_store(runtime_dir, 1, backup={"write_budget": {
+        "enforce:curve": _eintrag(3), "enforce:heat_limit": _eintrag(5), "restore": _eintrag(1)}})
+    store = BudgetStore(kreis, _budget(runtime_dir))
+    assert write_budget.get(store, "enforce:curve") == _eintrag(3)
+    assert write_budget.get(store, "enforce:heat_limit") == _eintrag(2)
+    assert write_budget.get(store, "writes:total") == _eintrag(8)
+    assert _kreis_datei(runtime_dir, 1)["write_budget"] == {"restore": _eintrag(1)}
+    assert set(_anlage_datei(runtime_dir)["write_budget"]) == {"writes:total", "enforce:curve", "enforce:heat_limit"}
 
 
 def test_ein_alter_bestand_ueberschreibt_nie_eine_vorhandene_anlagendatei(runtime_dir):
