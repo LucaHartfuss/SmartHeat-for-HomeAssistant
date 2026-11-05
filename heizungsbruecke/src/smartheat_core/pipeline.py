@@ -161,7 +161,7 @@ class LeverPipeline:
         """Letzter eigener Schreibwert dieses Hebels seit dem Start (nur Laufzeit), sonst None."""
         return self._last_written.get(lever)
 
-    def set_boosts(self, comfort: bool, emergency: bool) -> tuple[bool, bool]:
+    def set_boosts(self, comfort: bool, emergency: bool, kaelteschutz: bool = False) -> tuple[bool, bool]:
         """Setzt die Boost-Flags und schreibt die Werte der neuen Sollwert-Zeile, falls sie sich aendert. Ein neu
         startender Boost braucht vorher einen gespeicherten Wiederherstellungspunkt, sonst wird er abgelehnt; ein
         laufender Boost wird nie abgelehnt. Ein neu startender Boost braucht ausserdem Platz im Tageslimit der
@@ -172,12 +172,14 @@ class LeverPipeline:
         zusaetzlich auf dem zuletzt gespeicherten, aelteren Punkt starten, wenn der aktuelle nicht speicherbar ist
         (N6). Wirft das Schreiben, bleiben die Flags unveraendert. Nach einem Fehlschlag bremst das Schreibbudget:
         dann bleiben die Flags ohne Schreiben stehen, zurueckgegeben werden die bisherigen.
+        `kaelteschutz`: der Notfall-Boost ist ein Kaelteschutz-Lauf; sein Start wird vom Tageslimit der Schreibvorgaenge
+        nicht abgelehnt (er zaehlt mit), der Start-Zaehler gilt.
         Pruefen der Start-Zaehler der Anlage und Zaehlen des Starts sind eine Einheit (`transaktion`): zwei Kreise
         starten nie gleichzeitig gegen denselben Abstand."""
         with self._store.transaktion():
-            return self._set_boosts(comfort, emergency)
+            return self._set_boosts(comfort, emergency, kaelteschutz)
 
-    def _set_boosts(self, comfort: bool, emergency: bool) -> tuple[bool, bool]:
+    def _set_boosts(self, comfort: bool, emergency: bool, kaelteschutz: bool) -> tuple[bool, bool]:
         self.comfort_start_heute_gesperrt = False
         self.capture_originals()
         state = self._store.state
@@ -196,7 +198,12 @@ class LeverPipeline:
         # Jeder wirklich startende Boost braucht das Tageslimit (soweit es eines gibt) und seinen Start-Zaehler;
         # scheitert eine Pruefung, wird nur dieses Flag False (der Rueckweg des anderen bleibt frei), nichts wird
         # gezaehlt.
-        if starting_emergency and emergency and self._start_refused(write_budget.EMERGENCY_START, "Notfall-Boost"):
+        # Ein Kaelteschutz-Start geht am Tageslimit vorbei (wie der Rueckweg: Schutz vor Kaelte vor Verschleissschutz);
+        # sein Schreiben zaehlt mit, und der Start-Zaehler des Notfall-Boosts gilt auch fuer ihn.
+        if starting_emergency and emergency and self._start_refused(
+            write_budget.EMERGENCY_START, "Kaelteschutz" if kaelteschutz else "Notfall-Boost",
+            tageslimit_gilt=not kaelteschutz,
+        ):
             emergency = False
         if starting_comfort and comfort:
             reason = self._start_refused(write_budget.BOOST_START, "Comfort-Boost")
@@ -221,11 +228,12 @@ class LeverPipeline:
         self._store.update(boost_active=comfort, emergency_boost_active=emergency)
         return comfort, emergency
 
-    def _start_refused(self, key: str, name: str) -> str | None:
+    def _start_refused(self, key: str, name: str, tageslimit_gilt: bool = True) -> str | None:
         """Grund (_REASON_*), warum ein jetzt startender Boost abgelehnt wird, sonst None: zuerst das Tageslimit der
-        Schreibvorgaenge (nur mit daily_write_limit), dann der Start-Zaehler des Boosts. Zaehlt nichts."""
+        Schreibvorgaenge (nur mit daily_write_limit und `tageslimit_gilt`), dann der Start-Zaehler des Boosts. Zaehlt
+        nichts."""
         day = write_budget.today()
-        if self.daily_budget_reached():
+        if tageslimit_gilt and self.daily_budget_reached():
             reason = _REASON_DAILY_LIMIT
             self._notify_start_limit(day)
         elif write_budget.may_attempt(self._store, key, write_budget.START_QUOTA, self._clock()):
@@ -396,7 +404,7 @@ class LeverPipeline:
             return False
         try:
             self._store.update(
-                boost_active=False, emergency_boost_active=False,
+                boost_active=False, emergency_boost_active=False, kaelteschutz_art=None, kaelteschutz_seit=None,
                 restore_point={**self._store.state.restore_point, **originals},
                 # Hilfswerte sind zurueckgestellt: ein weiterer Aufruf (naechster Start, Fristende) schreibt nur noch
                 # abweichende Hebel (Quota-Check) und stellt ein Binding mit Hilfswerten nicht mehr um (_write); ein

@@ -124,7 +124,8 @@ def test_ein_kontrollraum_aendert_die_entscheidung_nie(make_store):
     warm = _rt(make_store, {1: 20.8, 3: 35.0}, referenz=((1, 0.0),))
     regulation.run_local_check(warm)
     assert warm.store.state.boost_active is False  # der heisse Kontrollraum haelt nichts zurueck
-    assert "sensor.raum3" not in [call.args[0] for call in warm.ha_api.get_state.call_args_list]
+    # gelesen wird er (der Kaelteschutz prueft jeden Raum des Kreises auf Frost), entschieden hat er nichts
+    assert _writes(warm) == []
 
 
 def test_ein_kalter_kontrollraum_startet_keinen_boost(make_store):

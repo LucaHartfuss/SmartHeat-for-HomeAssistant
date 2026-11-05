@@ -1,7 +1,7 @@
 """Grenz-Szenarien: was immer der Server fordert, die Anlage bekommt nie einen Wert unter dem lokalen Minimum
 (und nie einen ueber dem lokalen Maximum). Die Grenzen stehen hier woertlich, nie aus dem Produktcode."""
 import pytest
-from anlagen import ALLE, hebel_von, schreibziel
+from anlagen import ALLE, RAUMFUEHLER, hebel_von, schreibziel
 from welt import Anlage
 
 #: lokales Minimum je (Hebelsatz, Verteilsystem) und Hebel (Regel 4), woertlich
@@ -82,3 +82,24 @@ def test_ak_g1_03_notbetrieb_und_notfall_boost(welt):
     anlage.raum(19.0)  # ohne Notbetrieb kein Notfall-Boost mehr
     anlage.runde(2)
     assert len(anlage.ha.schreibvorgaenge) == geschrieben
+
+
+@pytest.mark.akzeptanz("AK-G1-04")
+def test_ak_g1_04_frostnaehe_hebt_an_ohne_notbetrieb_und_endet_bei_ankunft(welt):
+    satz = "vaillant_vrc720"
+    anlage: Anlage = welt(satz, "Heizkoerper")
+    anlage.ha.states[RAUMFUEHLER] = 21.0
+    anlage.starten()  # Soll 21,0, der Server antwortet mit niedrigen Werten
+    server = {"curve": 0.4, "room_setpoint": 15.0, "heat_limit": 10.0}
+    anlage.server_antwortet(server)
+    anlage.runde(2)
+    assert _stand(anlage, satz) == server
+    anlage.vergehen(600, server, 4.9)  # unter 5 Grad, aber erst zehn Minuten: noch kein Eingriff
+    assert _stand(anlage, satz) == server
+    anlage.vergehen(600, server, 4.9)  # ueber 15 Minuten unter 5 Grad: die Anlage wird angehoben, ohne Notbetrieb
+    assert _stand(anlage, satz) == NOTFALL_BOOST
+    anlage.vergehen(600, server, 6.0)  # der Server fordert weiter wenig; der Lauf haelt bis zur Ankunft
+    assert _stand(anlage, satz) == NOTFALL_BOOST
+    anlage.raum(20.5)  # Soll - 0,5 erreicht: zurueck auf die Werte des Servers
+    anlage.runde(2)
+    assert _stand(anlage, satz) == server

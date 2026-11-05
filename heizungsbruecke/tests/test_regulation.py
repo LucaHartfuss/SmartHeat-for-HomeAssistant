@@ -78,7 +78,8 @@ def test_check_reads_only_room_actual_and_uses_cached_target(make_store):
 
     regulation.run_local_check(rt)
 
-    assert [call.args[0] for call in rt.ha_api.get_state.call_args_list] == ["sensor.room_actual"]
+    # nur der Fuehler wird gelesen (fuer den Check und den Kaelteschutz), nie das Soll: es kommt aus dem Cache
+    assert {call.args[0] for call in rt.ha_api.get_state.call_args_list} == {"sensor.room_actual"}
     assert rt.store.state.boost_active is False  # ohne Vorwert keine "Erhoehung"
     assert _writes(rt) == []
 
@@ -89,7 +90,9 @@ def test_check_without_cached_target_is_skipped_visibly(make_store, caplog):
     with caplog.at_level(logging.WARNING):
         regulation.run_local_check(rt)
 
-    rt.ha_api.get_state.assert_not_called()
+    # ohne Soll laeuft nur die Frostnaehe des Kaelteschutzes: der Fuehler wird gelesen, sonst nichts
+    assert {call.args[0] for call in rt.ha_api.get_state.call_args_list} <= {"sensor.room_actual"}
+    assert _writes(rt) == []
     assert "room_target=None" in caplog.text
 
 

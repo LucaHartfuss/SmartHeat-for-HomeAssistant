@@ -42,6 +42,3 @@ _.delta  # Contract-Check 89 (tools/contracts/raum_delta.json) rechnet Server un
 # --- Feldlisten des Status-Ereignisses (V5) und des flachen Kreis-Ereignisses (V1): Leser auf der Gegenseite ---
 _.EVENT_FIELDS  # geraet_status/status/geraet_nachweis: Contract-Check 14 und 88 vergleichen sie mit der Integration bzw. der Fixture
 _.KREIS_EVENT_FIELDS  # geraet_status: Contract-Check 14 und 88 vergleichen die Kreisfelder mit STATUS_KREIS_FIELDS der Integration
-
-# --- Noch nicht verdrahtet: der lokale Pruefertakt ruft die Kaelteschutz-Entscheidung erst im naechsten Schritt auf ---
-_.kaelteschutz_entscheiden  # smartheat_core/emergency_boost.py: Tests rufen sie, der Pruefertakt (regulation.run_local_check) folgt

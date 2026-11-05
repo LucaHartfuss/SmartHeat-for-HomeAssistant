@@ -15,7 +15,8 @@ import pytest
 ORDNER = Path(__file__).resolve().parent
 #: alle Szenarien dieser Suite; jede ID hat genau einen Test mit @pytest.mark.akzeptanz("<ID>")
 IDS = (
-    "AK-G1-01", "AK-G1-03", "AK-G2-04", "AK-G3-01", "AK-G3-02", "AK-G3-03", "AK-G4-01", "AK-G4-02", "AK-G5-01",
+    "AK-G1-01", "AK-G1-03", "AK-G1-04", "AK-G2-04", "AK-G2-05", "AK-G2-06",
+    "AK-G3-01", "AK-G3-02", "AK-G3-03", "AK-G4-01", "AK-G4-02", "AK-G4-03", "AK-G5-01",
     "AK-G6-01", "AK-G6-02", "AK-G6-03", "AK-G7-01", "AK-G8-01", "AK-G8-02", "AK-G8-03", "AK-G9-01", "AK-G9-02", "AK-G9-06",
     "AK-G10-01",
 )

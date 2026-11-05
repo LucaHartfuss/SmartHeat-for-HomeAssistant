@@ -176,7 +176,7 @@ def test_start_runs_priming_check_before_mqtt_loop_start(env, monkeypatch):
     read_state = env.ha.get_state
 
     def _spy(entity_id):
-        if entity_id == "sensor.room_actual":
+        if entity_id == "sensor.room_actual" and "check" not in order:  # ein Check liest den Fuehler mehrfach
             order.append("check")
         return read_state(entity_id)
 

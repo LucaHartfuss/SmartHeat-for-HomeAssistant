@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from smartheat_core import write_budget
+from smartheat_core.emergency_boost import KaelteschutzZustand
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime import backup_store
 from smartheat_runtime.delivery import DeliveryState, from_persisted, to_persisted
@@ -28,7 +29,12 @@ class StorageError(OSError):
 
 _NUMBER_FIELDS = ("last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
-_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "boost_since", "tenant_id", "plant_id")
+_TEXT_FIELDS = (
+    "last_daily_trigger_date", "last_ack_at", "boost_since", "tenant_id", "plant_id", "kaelteschutz_art",
+    "kaelteschutz_seit",
+)
+#: Die Arten eines Kaelteschutz-Laufs (emergency_boost.KaelteschutzEntscheidung.art ohne "aus").
+_KAELTESCHUTZ_ARTEN = ("soll", "frost")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _LEVER_MAP_FIELDS = ("restore_point", "originals", "learned")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
@@ -58,6 +64,12 @@ class BridgeState:
     emergency_boost_active: bool = False
     # Beginn des laufenden Comfort-Boosts (ISO), fuer die Hoechstdauer; None ohne Boost.
     boost_since: str | None = None
+    # Laufender Kaelteschutz (regulation.py): Art ("soll" oder "frost") und Beginn (ISO mit Zeitzone); beide None ohne
+    # Lauf. Der Lauf ueberlebt einen Neustart, die Zaehlung der Ausloeser nicht (kaelteschutz_zaehlung).
+    kaelteschutz_art: str | None = None
+    kaelteschutz_seit: str | None = None
+    # Zaehlzustand der Kaelteschutz-Ausloeser (nur Laufzeit): ein Neustart zaehlt neu, nie aus einem Fehler heraus.
+    kaelteschutz_zaehlung: KaelteschutzZustand = field(default_factory=KaelteschutzZustand)
     # Aufeinanderfolgende lokale Checks ohne lesbaren Raumwert (nur Laufzeit).
     room_actual_misses: int = 0
     last_room_target: float | None = None
@@ -185,11 +197,19 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
             continue
         # boost_since: nur ein ISO-Zeitpunkt mit Zeitzone ist gueltig, alles andere "kein Flag" (sonst
         # bricht der lokale Check bei jedem Lauf ab).
-        valid = isinstance(raw[key], str) and (key != "boost_since" or parse_since(raw[key]) is not None)
+        valid = isinstance(raw[key], str) and (
+            (key not in ("boost_since", "kaelteschutz_seit") or parse_since(raw[key]) is not None)
+            and (key != "kaelteschutz_art" or raw[key] in _KAELTESCHUTZ_ARTEN)
+        )
         if valid:
             values[key] = raw[key]
         else:
             _invalid(key)
+    # Ein Kaelteschutz-Lauf braucht Art und Beginn; eines allein gilt als kein Lauf.
+    if ("kaelteschutz_art" in values) != ("kaelteschutz_seit" in values):
+        logger.warning("%s: Kaelteschutz-Lauf unvollstaendig, er gilt als beendet", path)
+        values.pop("kaelteschutz_art", None)
+        values.pop("kaelteschutz_seit", None)
     for key in _TEXT_MAP_FIELDS:
         if key not in raw:
             continue
@@ -399,7 +419,7 @@ class StateStore:
 # Einrichtung (bei jeder neuen Einrichtung zurueckgesetzt: Erstkontakt-Tick, frische Zustellung).
 _PLANT_BOUND = (
     "restore_point", "originals", "aux_originals", "learned", "boost_active", "emergency_boost_active", "boost_since",
-    "manual_override", "manual_override_pending", "write_budget", "deferred_levers", "energy_state",
+    "kaelteschutz_art", "kaelteschutz_seit", "manual_override", "manual_override_pending", "write_budget", "deferred_levers", "energy_state",
     "lifetime_writes", "last_room_target",
 )
 _SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")
