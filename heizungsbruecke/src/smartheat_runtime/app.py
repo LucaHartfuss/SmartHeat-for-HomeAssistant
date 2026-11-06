@@ -784,7 +784,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     assert boot.tenant_id is not None  # configured bzw. signed_off setzen ihn voraus
     store = _zustandsspeicher(boot)
     status = StatusReporter(status_sink or host.status_sink, boot.tenant_id, store, boot.lever_set,
-                            boot.client_version)
+                            boot.client_version, boot.zustand_source)
     if _zustand_nicht_migriert(boot):
         # Vor jedem Schreiben: Meldung und Fehlerroute wuerden einen frischen Zustand im Kreisordner anlegen.
         logger.error("FEHLER: %s", GRUND_ZUSTAND_NICHT_MIGRIERT)

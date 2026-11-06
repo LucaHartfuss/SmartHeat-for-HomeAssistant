@@ -47,6 +47,9 @@ class BootInfo:
     # Zahl der Heizkreise des Dokuments; sie teilen die Zaehler der Anlage (bei mehr als einem Kreis setzt eine andere
     # Anlage eines Kreises diese Zaehler nicht zurueck).
     kreise_der_anlage: int = 1
+    # Liest den Zustand des Kreises (`kreise[n].zustand`) frisch aus dem Dokument; das Status-Ereignis meldet ihn, auch
+    # im Ruhezustand ohne Laufzeit-Konfiguration.
+    zustand_source: Callable[[], str] = lambda: kreisansicht.IN_BETRIEB
 
 
 def _in_betrieb() -> str:

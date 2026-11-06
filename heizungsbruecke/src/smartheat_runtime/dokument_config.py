@@ -120,7 +120,7 @@ def kreisnummer(konfiguration, kreis: int | None = None) -> int:
 def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_path: Path,
               failsafe_path: Path, aufraeumen_path: Path | None = None,
               alter_zustand: Path | None = None, anlage_budget_path: Path | None = None,
-              kreis: int | None = None) -> BootInfo:
+              kreis: int | None = None, zustand_source: Callable[[], str] | None = None) -> BootInfo:
     """Wirft nie (wie die BootInfo der Hosts): ein unbekannter Hebelsatz faellt fuer das Statusereignis auf den
     Standard zurueck; runtime_config meldet ihn danach als Konfigurationsfehler."""
     intervalle = _e2e_intervalle()  # einmal je Aufruf lesen (und loggen)
@@ -135,6 +135,7 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
         backup_path=backup_path, failsafe_path=failsafe_path, kreis=kreisnummer(konfiguration, kreis),
         aufraeumen_path=aufraeumen_path, alter_zustand=alter_zustand, anlage_budget_path=anlage_budget_path,
         kreise_der_anlage=max(1, len(kreisansicht.kreise(konfiguration))),
+        zustand_source=zustand_source or (lambda: kreisansicht.IN_BETRIEB),
     )
 
 

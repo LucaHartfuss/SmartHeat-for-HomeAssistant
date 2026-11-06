@@ -1,10 +1,10 @@
 """Status-Ereignis des HA-Add-ons: smartheat_status Schema 4 = die Felder der Anlage aus dem Laufzeit-Status
 (Schema 2, smartheat_runtime.status, unveraendert fuer Gateway und up/status), Geraet (ID, Zustand, Verbindung),
 Anlagenname und Hinweise fuer die Reparatur-Hinweise der Integration, dazu `kreise`: je Kreis der Konfiguration
-Name, Raum (Ist, wirksamer Soll aus dem Soll-Speicher), die Kreisfelder der Laufzeit (Boost, Abo, Hebel ...) und die
-Felder des Anzeige-Dokuments. Nie der Uebernahme-Code (der steht nur in der Discovery): ins Ereignis kommen nur die
-benannten Felder, nie ein ganzes Objekt der Quellen. Der Kreisname ist ein Kundendatum: er steht nur in diesem
-lokalen Ereignis, nie in Log, Topic, Push oder Alarm. Gesendet bei jedem Ereignis der Laufzeit (auch dem
+Name, Raum (Ist, wirksamer Soll aus dem Soll-Speicher), die Kreisfelder der Laufzeit (Boost, Abo, Hebel, Zustand,
+Kaelteschutz ...) und die Felder des Anzeige-Dokuments. Nie der Uebernahme-Code (der steht nur in der Discovery):
+ins Ereignis kommen nur die benannten Felder, nie ein ganzes Objekt der Quellen. Der Kreisname ist ein
+Kundendatum: er steht nur in diesem lokalen Ereignis, nie in Log, Topic, Push oder Alarm. Gesendet bei jedem Ereignis der Laufzeit (auch dem
 Lebenszeichen alle 300 s) und bei einer inhaltlichen Aenderung der Anzeige. Felder sind Cross-Repo-Vertrag mit der
 Integration (Contract-Check)."""
 import logging

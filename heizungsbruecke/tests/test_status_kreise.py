@@ -107,6 +107,17 @@ def test_die_flachen_felder_des_laufzeit_ereignisses_kommen_vom_niedrigsten_krei
     assert erg["status"] == "abo_inaktiv"  # die Anlage zeigt den schlechtesten Kreis
 
 
+def test_zustand_und_kaelteschutz_stehen_je_kreis_unabhaengig_in_kreise():
+    eins = build_event("t1", Flags(gestartet=True), BridgeState(kaelteschutz_art="soll"), VAILLANT, "1.0",
+                       kreiszustand="testphase_ohne")
+    zwei = build_event("t1", Flags(gestartet=True), BridgeState(), VAILLANT, "1.0", kreiszustand="ausser_betrieb")
+    erg = zusammenfassen({2: zwei, 1: eins})
+    assert [(k["kreis"], k["zustand"], k["kaelteschutz"]) for k in erg["kreise"]] == [
+        (1, "testphase", "soll"), (2, "ausser_betrieb", "aus")]
+    assert (erg["zustand"], erg["kaelteschutz"]) == ("testphase", "soll")  # flach: der niedrigste Kreis
+    assert ohne_kreise(erg)["zustand"] == "testphase"
+
+
 def test_ein_abgemeldeter_kreis_macht_die_anlage_nicht_abgemeldet_solange_andere_regeln():
     """Abgemeldet ist die Anlage erst, wenn jeder Kreis es ist: sonst hielte der Server (und sign_off) sie fuer
     zurueckgesetzt, obwohl ein Kreis noch regelt."""

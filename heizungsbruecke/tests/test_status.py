@@ -85,7 +85,7 @@ def test_event_carries_every_field():
         "status": "regelt", "grund": None, "notbetrieb": False, "datenfehler": None, "boost": "notfall",
         "letzte_serverantwort": "2026-10-01T12:00:05+02:00", "hebelsatz": "vaillant_vrc720",
         "hebel": {"curve": 0.9, "room_setpoint": 22.0, "heat_limit": None, "min_flow": None}, "gelernt": None,
-        "abo": "aktiv", "abo_frist_ende": None,
+        "abo": "aktiv", "abo_frist_ende": None, "zustand": "regelt", "kaelteschutz": "aus",
         "hinweise": {
             "raumfuehler_ausgefallen": ["sensor.a", "sensor.b"], "batterie_niedrig": ["sensor.x"],
             "manueller_eingriff": {
@@ -112,6 +112,50 @@ def test_ein_wert_innerhalb_des_vertrags_bleibt_unveraendert(caplog):  # Gegenpr
     event = build_event("client1", Flags(gestartet=True, abo="aktiv"), BridgeState(emergency_boost_active=True),
                         VAILLANT, ADDON_VERSION)
     assert (event["status"], event["boost"], event["abo"]) == ("regelt", "notfall", "aktiv") and not caplog.text
+
+
+@pytest.mark.parametrize("flags,state,kreis,erwartet", [
+    (Flags(gestartet=True), BridgeState(), "in_betrieb", "regelt"),
+    (Flags(gestartet=True), BridgeState(), "testphase_ohne", "testphase"),
+    (Flags(gestartet=True), BridgeState(), "ausser_betrieb", "ausser_betrieb"),
+    (Flags(gestartet=True), BridgeState(abo_inactive_since=SINCE), "in_betrieb", "abo_inaktiv"),
+    (Flags(gestartet=True, abo_beendet=True), BridgeState(), "in_betrieb", "abo_beendet"),
+    (Flags(gestartet=True), BridgeState(abo_finished=True), "in_betrieb", "abo_beendet"),
+    # Vorrang: ausser_betrieb > abo_beendet > abo_inaktiv > testphase > regelt
+    (Flags(gestartet=True), BridgeState(abo_inactive_since=SINCE), "testphase_ohne", "abo_inaktiv"),
+    (Flags(gestartet=True, abo_beendet=True), BridgeState(abo_inactive_since=SINCE), "testphase_ohne", "abo_beendet"),
+    (Flags(gestartet=True, abo_beendet=True), BridgeState(abo_inactive_since=SINCE), "ausser_betrieb", "ausser_betrieb"),
+    (Flags(gestartet=True), BridgeState(abo_inactive_since=SINCE), "ausser_betrieb", "ausser_betrieb"),
+])
+def test_zustand_des_kreises_nach_vorrang(flags, state, kreis, erwartet):
+    event = build_event("client1", flags, state, VAILLANT, ADDON_VERSION, kreiszustand=kreis)
+    assert event["zustand"] == erwartet and event["zustand"] in status.KREIS_ZUSTAND_VALUES
+
+
+def test_ohne_angabe_gilt_der_kreis_als_in_betrieb():
+    event = build_event("client1", Flags(gestartet=True), BridgeState(), VAILLANT, ADDON_VERSION)
+    assert event["zustand"] == "regelt"
+
+
+@pytest.mark.parametrize("art,erwartet", [(None, "aus"), ("soll", "soll"), ("frost", "frost")])
+def test_kaelteschutz_des_kreises_aus_dem_zustand(art, erwartet):
+    event = build_event("client1", Flags(gestartet=True), BridgeState(kaelteschutz_art=art), VAILLANT, ADDON_VERSION)
+    assert event["kaelteschutz"] == erwartet and event["kaelteschutz"] in status.KAELTESCHUTZ_VALUES
+
+
+def test_kaelteschutz_eines_kreises_ausser_betrieb_wird_gemeldet_wie_der_zustand_ihn_fuehrt():
+    event = build_event("client1", Flags(gestartet=True), BridgeState(kaelteschutz_art="frost"), VAILLANT,
+                        ADDON_VERSION, kreiszustand="ausser_betrieb")
+    assert (event["zustand"], event["kaelteschutz"]) == ("ausser_betrieb", "frost")
+
+
+@pytest.mark.parametrize("helfer, feld, ersatz", [("_kreis_zustand", "zustand", "regelt"),
+                                                  ("_kaelteschutz", "kaelteschutz", "aus")])
+def test_zustand_und_kaelteschutz_ausserhalb_des_vertrags_werden_ersetzt_und_geloggt(monkeypatch, caplog, helfer, feld,
+                                                                                    ersatz):
+    monkeypatch.setattr(status, helfer, lambda *a, **k: "irgendwas")  # Fehlerinjektion, Zusicherung auf build_event
+    event = build_event("client1", Flags(gestartet=True), BridgeState(), VAILLANT, ADDON_VERSION)
+    assert event[feld] == ersatz and feld in caplog.text and "irgendwas" not in caplog.text
 
 
 def test_die_hinweise_haben_genau_die_felder_des_vertrags():
@@ -220,6 +264,25 @@ def test_reporter_sees_changes_in_the_store(make_store):
     reporter.publish_if_changed()
 
     assert ha_api.fire_event.call_args.args[1]["boost"] == "komfort"
+
+
+def test_ein_zustandswechsel_des_kreises_loest_ohne_neustart_ein_ereignis_aus(make_store):
+    ha_api = MagicMock(spec=HomeAssistantApi)
+    zustand = ["in_betrieb"]
+    reporter = StatusReporter(HaEventSink(ha_api), "client1", make_store(), VAILLANT, ADDON_VERSION,
+                              zustand_source=lambda: zustand[0])
+    reporter.update(gestartet=True)
+    assert (ha_api.fire_event.call_count, ha_api.fire_event.call_args.args[1]["zustand"]) == (1, "regelt")
+    reporter.publish_if_changed()
+    assert ha_api.fire_event.call_count == 1
+
+    zustand[0] = "testphase_ohne"
+    reporter.publish_if_changed()
+    assert (ha_api.fire_event.call_count, ha_api.fire_event.call_args.args[1]["zustand"]) == (2, "testphase")
+
+    zustand[0] = "ausser_betrieb"
+    reporter.publish_if_changed()
+    assert (ha_api.fire_event.call_count, ha_api.fire_event.call_args.args[1]["zustand"]) == (3, "ausser_betrieb")
 
 
 def test_failed_send_is_logged_and_repeated_on_the_next_check(make_store, caplog):

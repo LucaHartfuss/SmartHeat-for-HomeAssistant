@@ -6,9 +6,10 @@ aus, meldet sie das selbst. Felder und Wertemengen sind Cross-Repo-Vertrag mit c
 (Contract-Check)."""
 import logging
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 
+from smartheat_core import kreisansicht
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime import battery, delivery, entitlement, room_sensors
 from smartheat_runtime.ports import StatusSink
@@ -52,6 +53,21 @@ ABO_BEENDET = "beendet"
 ABO_UNBEKANNT = "unbekannt"
 ABO_VALUES = (ABO_AKTIV, ABO_INAKTIV, ABO_BEENDET, ABO_UNBEKANNT)
 
+#: Kaelteschutz des Kreises im Ereignis (Quelle `BridgeState.kaelteschutz_art`, ohne Lauf `aus`).
+KAELTESCHUTZ_AUS = "aus"
+KAELTESCHUTZ_VALUES = (KAELTESCHUTZ_AUS, "soll", "frost")
+
+#: Kreiszustand fuer die Anzeige: die kleine Menge dieses Stands, weitere Codes kommen additiv hinzu.
+KREIS_ZUSTAND_REGELT = "regelt"
+KREIS_ZUSTAND_ABO_INAKTIV = "abo_inaktiv"
+KREIS_ZUSTAND_ABO_BEENDET = "abo_beendet"
+KREIS_ZUSTAND_TESTPHASE = "testphase"
+KREIS_ZUSTAND_AUSSER_BETRIEB = "ausser_betrieb"
+KREIS_ZUSTAND_VALUES = (
+    KREIS_ZUSTAND_REGELT, KREIS_ZUSTAND_ABO_INAKTIV, KREIS_ZUSTAND_ABO_BEENDET, KREIS_ZUSTAND_TESTPHASE,
+    KREIS_ZUSTAND_AUSSER_BETRIEB,
+)
+
 DATENFEHLER_ARTEN = ("lokal", "server", "anlage")
 _FAULT_ART = dict(
     zip((delivery.SOURCE_LOCAL, delivery.SOURCE_SERVER, delivery.SOURCE_WRITE), DATENFEHLER_ARTEN, strict=True)
@@ -60,7 +76,8 @@ _FAULT_ART = dict(
 HINT_FIELDS = ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff")
 EVENT_FIELDS = (
     "schema", "tenant_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
-    "boost", "letzte_serverantwort", "hebelsatz", "hebel", "gelernt", "abo", "abo_frist_ende", "hinweise",
+    "boost", "letzte_serverantwort", "hebelsatz", "hebel", "gelernt", "abo", "abo_frist_ende", "zustand",
+    "kaelteschutz", "hinweise",
 )
 #: Felder der Anlage und Felder des Kreises: zusammen genau EVENT_FIELDS. Das Ereignis eines Kreises ist flach (Server,
 #: up/status); die Zusammenfassung der Anlage fuehrt die Kreisfelder zusaetzlich je Kreis in `kreise`.
@@ -68,7 +85,7 @@ ANLAGE_FELDER = (
     "schema", "tenant_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler", "letzte_serverantwort",
     "hinweise",
 )
-KREIS_FELDER = ("boost", "hebelsatz", "hebel", "gelernt", "abo", "abo_frist_ende")
+KREIS_FELDER = ("boost", "hebelsatz", "hebel", "gelernt", "abo", "abo_frist_ende", "zustand", "kaelteschutz")
 # Felder der Anlage, die dem schlechtesten Kreis folgen (der Notbetrieb ist ein ODER, die uebrigen kommen vom ersten).
 _SCHLECHTESTER = ("status", "grund", "datenfehler", "letzte_serverantwort", "hinweise")
 
@@ -145,6 +162,24 @@ def _abo(flags: Flags, state) -> str:
     return flags.abo
 
 
+def _kreis_zustand(kreiszustand: str, abo: str) -> str:
+    """Zustand fuer die Anzeige mit Vorrang: ausser Betrieb, Abo beendet, Abo inaktiv, Testphase, sonst `regelt`.
+    `abo` ist der Wert des Ereignisfelds (Abo beendet geht auch aus dem Abschluss-Start hervor)."""
+    if kreiszustand == kreisansicht.AUSSER_BETRIEB:
+        return KREIS_ZUSTAND_AUSSER_BETRIEB
+    if abo == ABO_BEENDET:
+        return KREIS_ZUSTAND_ABO_BEENDET
+    if abo == ABO_INAKTIV:
+        return KREIS_ZUSTAND_ABO_INAKTIV
+    if kreiszustand == kreisansicht.TESTPHASE_OHNE:
+        return KREIS_ZUSTAND_TESTPHASE
+    return KREIS_ZUSTAND_REGELT
+
+
+def _kaelteschutz(state) -> str:
+    return state.kaelteschutz_art or KAELTESCHUTZ_AUS
+
+
 def _open_keys(state, prefix: str, value: str) -> list[str]:
     """Entity-IDs der Meldeschluessel `<prefix>:<entity>` im Zustand `value`, sortiert."""
     return sorted(
@@ -187,7 +222,7 @@ def _im_vertrag(feld: str, wert: str, erlaubt: tuple[str, ...], ersatz: str) -> 
 
 def build_event(
     tenant_id: str, flags: Flags, state, lever_set, client_version: str,
-    storage_failed: bool = False,
+    storage_failed: bool = False, kreiszustand: str = kreisansicht.IN_BETRIEB,
 ) -> dict:
     status = _im_vertrag("status", overall_status(flags, state, storage_failed), STATUS_VALUES, STATUS_DATENFEHLER)
     abo = _im_vertrag("abo", _abo(flags, state), ABO_VALUES, ABO_UNBEKANNT)
@@ -212,6 +247,8 @@ def build_event(
         "abo_frist_ende": (
             entitlement.grace_end(state.abo_inactive_since).date().isoformat() if abo == ABO_INAKTIV else None
         ),
+        "zustand": _im_vertrag("zustand", _kreis_zustand(kreiszustand, abo), KREIS_ZUSTAND_VALUES, KREIS_ZUSTAND_REGELT),
+        "kaelteschutz": _im_vertrag("kaelteschutz", _kaelteschutz(state), KAELTESCHUTZ_VALUES, KAELTESCHUTZ_AUS),
         "hinweise": dict(zip(HINT_FIELDS, (
             _open_keys(state, "raumfuehler", room_sensors.STATE_FAILED),
             _open_keys(state, "batterie", battery.STATE_LOW),
@@ -226,12 +263,14 @@ class StatusReporter:
 
     def __init__(
         self, sink: StatusSink, tenant_id: str, store, lever_set, client_version: str,
+        zustand_source: Callable[[], str] = lambda: kreisansicht.IN_BETRIEB,
     ) -> None:
         self._sink = sink
         self._tenant_id = tenant_id
         self._store = store
         self._lever_set = lever_set
         self._client_version = client_version
+        self._zustand_source = zustand_source  # Kreiszustand des Dokuments, bei jedem Ereignis frisch gelesen
         self.flags = Flags()
         self._published: dict | None = None
 
@@ -242,7 +281,7 @@ class StatusReporter:
     def event(self) -> dict:
         return build_event(
             self._tenant_id, self.flags, self._store.state, self._lever_set,
-            self._client_version, self._store.storage_failed,
+            self._client_version, self._store.storage_failed, self._zustand_source(),
         )
 
     def update(self, **changes) -> None:
@@ -268,7 +307,7 @@ class StatusReporter:
 def zusammenfassen(ereignisse: Mapping[int, dict]) -> dict:
     """Ein Ereignis der Anlage aus den Ereignissen ihrer Kreise (Schluessel: Kreisnummer). Status, Grund, Datenfehler,
     letzte Serverantwort und Hinweise folgen dem schlechtesten Kreis (bei Gleichstand dem mit Grund, dann dem niedrigeren),
-    der Notbetrieb steht, sobald ein Kreis ihn meldet; Boost, Hebelsatz, Hebel, Gelerntes und Abo stehen je Kreis in
+    der Notbetrieb steht, sobald ein Kreis ihn meldet; Boost, Hebelsatz, Hebel, Gelerntes, Abo, Zustand und Kaelteschutz stehen je Kreis in
     `kreise` (aufsteigend nach Kreisnummer) und flach, wie das Laufzeit-Ereignis sie kennt, vom niedrigsten Kreis. Abgemeldet ist die Anlage erst, wenn jeder Kreis es ist: solange ein anderer Kreis regelt oder wartet, zaehlt
     der schlechteste der uebrigen (sonst gaelte die Anlage als zurueckgesetzt, obwohl ein Kreis noch regelt)."""
     if not ereignisse:

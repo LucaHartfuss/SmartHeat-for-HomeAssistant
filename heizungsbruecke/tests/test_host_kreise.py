@@ -338,6 +338,23 @@ def test_beim_abmelden_mit_gelingenden_kreisen_ist_die_markierung_erledigt(zwei)
     assert welt.laufzeit.kreise()[1].status.event()["grund"] is None
 
 
+def test_der_zustandswechsel_eines_kreises_erreicht_das_status_ereignis_ohne_neustart(zwei):
+    welt = zwei(soll=(21.0, 22.0))
+    _verbinden(welt)
+
+    def kreis_zustaende():
+        return [(k["kreis"], k["zustand"]) for k in welt.ha.events[-1][1]["kreise"]]
+
+    assert kreis_zustaende() == [(1, "regelt"), (2, "regelt")]
+    welt.device.konf["kreise"][0]["zustand"] = "testphase_ohne"
+    _client(welt, 1).kwargs["on_trigger_event"]({"platform": "state", "entity_id": "sensor.room_actual",
+                                                 "to_state": {"state": str(welt.ha.states["sensor.room_actual"])}})
+    welt.laufzeit.worker.run_pending()
+    assert not welt.geraet._neustart
+    assert kreis_zustaende() == [(1, "testphase"), (2, "regelt")]
+    assert welt.ha.events[-1][1]["kreise"][0]["kaelteschutz"] == "aus"
+
+
 def test_kreis_1_in_der_testphase_ohne_ruht_und_kreis_2_in_betrieb_schreibt_weiter(zwei):
     welt = zwei(soll=(21.0, 22.0))
     _verbinden(welt)

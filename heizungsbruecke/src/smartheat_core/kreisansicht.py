@@ -11,7 +11,7 @@ from collections.abc import Mapping
 ROLLE_REFERENZ = "referenz"
 #: Zustand eines Kreises (Kopie aus smartheat_device.wire.KREIS_ZUSTAENDE); fehlt das Feld, gilt der erste.
 ZUSTAENDE = ("in_betrieb", "ausser_betrieb", "testphase_ohne")
-IN_BETRIEB = ZUSTAENDE[0]
+IN_BETRIEB, AUSSER_BETRIEB, TESTPHASE_OHNE = ZUSTAENDE
 #: Felder, die die Sicht aus dem Kreiseintrag unveraendert uebernimmt.
 KREIS_FELDER = ("kreis", "name", "bindung", "hebelsatz", "verteilsystem", "abo")
 #: Anlagenweite Felder der Sicht.

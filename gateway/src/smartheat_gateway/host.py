@@ -107,7 +107,8 @@ class GatewayHost:
             self.konfiguration, abgemeldet=abgemeldet, client_version=GATEWAY_VERSION,
             backup_path=self._paths.backup(self.kreis), failsafe_path=self._paths.failsafe(self.kreis),
             aufraeumen_path=self._paths.aufraeumen, alter_zustand=self._paths.alter_backup,
-            anlage_budget_path=self._paths.anlage_budget, kreis=self.kreis)
+            anlage_budget_path=self._paths.anlage_budget, kreis=self.kreis,
+            zustand_source=lambda: kreisansicht.zustand(self._geraet.konfiguration(), self.kreis))
         if not boot.configured and not boot.signed_off:
             logger.info(NOT_CONFIGURED_HINT)
         return boot

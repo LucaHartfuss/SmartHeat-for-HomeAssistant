@@ -44,7 +44,9 @@
        },
        "gelernt": null,
        "abo": "unbekannt",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -91,7 +93,9 @@
        },
        "gelernt": null,
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -154,7 +158,9 @@
        },
        "gelernt": null,
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -201,7 +207,9 @@
        },
        "gelernt": null,
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -290,7 +298,9 @@
        },
        "gelernt": null,
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -405,7 +415,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -531,7 +543,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -658,7 +672,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -791,7 +807,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -841,7 +859,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -971,7 +991,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -1127,7 +1149,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -1259,7 +1283,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -1378,7 +1404,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -1505,7 +1533,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -1633,7 +1663,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -1725,7 +1757,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -1870,7 +1904,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -1950,7 +1986,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -2104,7 +2142,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -2202,7 +2242,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -2312,7 +2354,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -2385,7 +2429,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -2458,7 +2504,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -2531,7 +2579,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -2604,7 +2654,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -2677,7 +2729,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -2750,7 +2804,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -2823,7 +2879,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -2896,7 +2954,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -2989,7 +3049,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -3047,7 +3109,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -3120,7 +3184,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -3244,7 +3310,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -3325,7 +3393,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -3454,7 +3524,9 @@
         "heat_limit": 16.0
        },
        "abo": "unbekannt",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -3506,7 +3578,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -3562,7 +3636,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -3637,7 +3713,9 @@
         "heat_limit": 16.0
        },
        "abo": "aktiv",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -3766,7 +3844,9 @@
         "heat_limit": 16.0
        },
        "abo": "unbekannt",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -3835,7 +3915,9 @@
         "heat_limit": 16.0
        },
        "abo": "inaktiv",
-       "abo_frist_ende": "2026-02-14"
+       "abo_frist_ende": "2026-02-14",
+       "zustand": "abo_inaktiv",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -3971,7 +4053,9 @@
         "heat_limit": 16.0
        },
        "abo": "inaktiv",
-       "abo_frist_ende": "2026-02-14"
+       "abo_frist_ende": "2026-02-14",
+       "zustand": "abo_inaktiv",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -4108,7 +4192,9 @@
         "heat_limit": 16.0
        },
        "abo": "unbekannt",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -4164,7 +4250,9 @@
         "heat_limit": 16.0
        },
        "abo": "inaktiv",
-       "abo_frist_ende": "2026-03-17"
+       "abo_frist_ende": "2026-03-17",
+       "zustand": "abo_inaktiv",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -4301,7 +4389,9 @@
         "heat_limit": 16.0
        },
        "abo": "inaktiv",
-       "abo_frist_ende": "2026-03-17"
+       "abo_frist_ende": "2026-03-17",
+       "zustand": "abo_inaktiv",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -4400,7 +4490,9 @@
         "heat_limit": 16.0
        },
        "abo": "beendet",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "abo_beendet",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -4534,7 +4626,9 @@
         "heat_limit": 16.0
        },
        "abo": "unbekannt",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }
@@ -4599,7 +4693,9 @@
         "heat_limit": 16.0
        },
        "abo": "unbekannt",
-       "abo_frist_ende": null
+       "abo_frist_ende": null,
+       "zustand": "regelt",
+       "kaelteschutz": "aus"
       }
      ]
     }

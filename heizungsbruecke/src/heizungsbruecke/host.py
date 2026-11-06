@@ -128,7 +128,8 @@ class HaHost:
             self._konfiguration, abgemeldet=abgemeldet, client_version=ADDON_VERSION,
             backup_path=config.backup_path(self.kreis), failsafe_path=config.failsafe_path(self.kreis),
             aufraeumen_path=config.AUFRAEUMEN_PATH, alter_zustand=config.ALTER_BACKUP_PATH,
-            anlage_budget_path=config.anlage_budget_path(), kreis=self.kreis)
+            anlage_budget_path=config.anlage_budget_path(), kreis=self.kreis,
+            zustand_source=lambda: kreisansicht.zustand(self._geraet.konfiguration(), self.kreis))
         vorab = self._bindung_oder_none()
         boot = dataclasses.replace(boot, notify_hints_off=vorab.hinweise_aus if vorab else ())
         if not boot.configured and not boot.signed_off:

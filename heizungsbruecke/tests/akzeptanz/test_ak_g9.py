@@ -238,3 +238,27 @@ def test_ak_g9_11_ausser_betrieb_sendet_nur_raumwerte(welt):
     _zustand_setzen(anlage, 3, "in_betrieb")  # zurueck ohne Neustart: Snapshots laufen wieder
     _server_antwortet_auf_neuen_wunsch(anlage, SERVER_NORMAL)
     assert len(anlage.link.of("up/snapshot")) > snapshots and stand(anlage) == SERVER_NORMAL
+
+
+def _kreis_im_status(anlage) -> dict:
+    """Der Eintrag des Kreises im zuletzt gemeldeten Status-Ereignis (das Home Assistant der Integration zeigt)."""
+    ereignisse = [m[2] for m in anlage.ha.meldungen if m[0] == "ereignis" and m[1] == "smartheat_status"]
+    return ereignisse[-1]["kreise"][0]
+
+
+@pytest.mark.akzeptanz("AK-G9-12")
+def test_ak_g9_12_status_zeigt_testphase_ausser_betrieb_und_kaelteschutz_je_kreis(welt):
+    anlage = boost_anlage(welt, heizgrenze=URSPRUNG_HEIZGRENZE)
+    assert (_kreis_im_status(anlage)["zustand"], _kreis_im_status(anlage)["kaelteschutz"]) == ("regelt", "aus")
+    _zustand_setzen(anlage, 2, "testphase_ohne")
+    assert _kreis_im_status(anlage)["zustand"] == "testphase"  # ohne Neustart, mit dem naechsten lokalen Check
+    _zustand_setzen(anlage, 3, "ausser_betrieb")
+    assert _kreis_im_status(anlage)["zustand"] == "ausser_betrieb"
+    anlage.vergehen(1200, SERVER_ANDERS, fuehler=4.9)  # ueber 15 Minuten unter 5 Grad: der Kaelteschutz hebt an
+    assert stand(anlage) == KAELTESCHUTZ
+    assert _kreis_im_status(anlage) == {**_kreis_im_status(anlage), "zustand": "ausser_betrieb", "kaelteschutz": "frost"}
+    anlage.raum(7.0)  # der Lauf endet
+    anlage.runde(2)
+    assert _kreis_im_status(anlage)["kaelteschutz"] == "aus"
+    _zustand_setzen(anlage, 4, "in_betrieb")
+    assert _kreis_im_status(anlage)["zustand"] == "regelt"

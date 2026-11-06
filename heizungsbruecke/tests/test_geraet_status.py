@@ -316,6 +316,18 @@ def test_zwei_kreise_stehen_getrennt_und_aufsteigend_im_ereignis():
         (1, "Wohnen", 20.0, 19.0, "aktiv", "komfort"), (2, "Bad", 23.0, 22.0, "beendet", "keiner")]
 
 
+def test_zustand_und_kaelteschutz_stehen_je_kreis_im_ereignis():
+    ha = FakeHa()
+    kreise = {1: _lokal_kreis(), 2: _lokal_kreis(name="Bad")}
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, _lokal(kreise=kreise), laufzeit_merken=lambda e: None)
+    sink.publish(_runtime_event(kreise=_kreisliste(1, 2, je_kreis={
+        1: {"zustand": "testphase", "kaelteschutz": "soll"}, 2: {"zustand": "ausser_betrieb", "kaelteschutz": "frost"}})))
+    assert [(k["kreis"], k["zustand"], k["kaelteschutz"]) for k in ha.events[-1][1]["kreise"]] == [
+        (1, "testphase", "soll"), (2, "ausser_betrieb", "frost")]
+    assert {"zustand", "kaelteschutz"} <= set(geraet_status.KREIS_EVENT_FIELDS)
+    assert not {"zustand", "kaelteschutz"} & set(geraet_status.EVENT_FIELDS)  # nur je Kreis, nicht an der Anlage
+
+
 def test_die_kreise_der_konfiguration_stehen_auch_vor_dem_ersten_laufzeit_ereignis_da():
     ha = FakeHa()
     sink = geraet_status.GeraetStatus(ha, GERAET_ID, _lokal(kreise={1: _lokal_kreis(), 2: _lokal_kreis(name="Bad")}),
