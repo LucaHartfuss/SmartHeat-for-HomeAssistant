@@ -8,9 +8,11 @@ einer bestehenden Anlage bleibt); jeder weitere Kreis n heisst `SmartHeat <anlag
 Schluessel `room_temperature:<n>`; der Sensor des Raums m im Kreis n `SmartHeat <anlage> K<n> R<m> Raumtemperatur` mit
 `room_temperature:<n>:<m>`. Kein Kundenname steht in einem Entity-Namen.
 
-Jeder Helfer merkt sich die Quelle, auf der er angelegt wurde (derived_sensors.json). Fehlt sie oder
-weicht sie ab, wird er geloescht und neu angelegt; die Entity-ID bleibt dabei gleich (slugify(name),
-gegen echtes HA geprueft)."""
+Jeder Helfer merkt sich die Quelle (Text der Vorlage) und die Fuehlerliste, auf der er angelegt wurde
+(derived_sensors.json). Fehlt die Quelle oder weicht sie ab, wird er geloescht und neu angelegt; die Entity-ID bleibt
+dabei gleich (slugify(name), gegen echtes HA geprueft). Den Hinweis auf einen Quellwechsel (`replaced`) gibt es nur,
+wenn sich die Fuehlerliste aendert; ein anderer Vorlagentext bei gleichen Fuehlern (neuer Wertebereich in einem Update)
+legt neu an, ohne den Kunden zu melden."""
 import hashlib
 import json
 import logging
@@ -60,9 +62,9 @@ def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], state_path: Path
     replaced: list[str] = []
     sources: dict[str, str] = {}
 
-    def ensure(key: str, source: str | None, create_fn) -> str:
+    def ensure(key: str, source: str | None, create_fn, fuehler: list[str] | None = None) -> str:
         entity_id, was_replaced = _ensure_entity(
-            ha_api, tracking, key, source, state_path, create_fn, tenant_id,
+            ha_api, tracking, key, source, state_path, create_fn, tenant_id, fuehler,
         )
         if was_replaced:
             replaced.append(key)
@@ -76,6 +78,7 @@ def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], state_path: Path
         kreis_key(kreis), room_template,
         lambda: ha_api.create_template_sensor(name=f"SmartHeat {tenant_id} {kreis_name}Raumtemperatur",
                                               template=room_template),
+        room_sensors,
     )
     result = {"room_actual": room_actual}
     je_raum: dict[int, str] = {}
@@ -85,6 +88,7 @@ def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], state_path: Path
             raum_key(kreis, nummer), vorlage,
             lambda vorlage=vorlage, nummer=nummer: ha_api.create_template_sensor(
                 name=f"SmartHeat {tenant_id} K{kreis} R{nummer} Raumtemperatur", template=vorlage),
+            list(fuehler),
         )
     vorsatz = f"room_temperature:{kreis}:"
     for key in [k for k in tracking if k.startswith(vorsatz) and k not in {raum_key(kreis, n) for n, _ in raeume}]:
@@ -99,25 +103,33 @@ def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], state_path: Path
 
 def _ensure_entity(
     ha_api, tracking: dict, key: str, source: str | None, state_path: Path, create_fn, tenant_id: str,
+    fuehler: list[str] | None = None,
 ) -> tuple[str, bool]:
-    """(Entity-ID, neu angelegt wegen Quellwechsel?). Erst loeschen, dann anlegen: nur so
+    """(Entity-ID, Quellwechsel gemeldet?). Erst loeschen, dann anlegen: nur so
     bekommt der neue Helfer wieder dieselbe Entity-ID.
 
-    Quellwechsel heisst: eine Quelle ist verlangt und weicht von der gemerkten ab, auch wenn der
-    alte Helfer schon fehlt (Loeschen gelang, Anlegen scheiterte im vorigen Versuch -- das
-    Tracking wird erst nach dem Anlegen geschrieben)."""
+    Neu angelegt wird, wenn eine Quelle verlangt ist und von der gemerkten abweicht, auch wenn der alte Helfer schon
+    fehlt (Loeschen gelang, Anlegen scheiterte im vorigen Versuch -- das Tracking wird erst nach dem Anlegen
+    geschrieben). Gemeldet (zweiter Wert) wird nur, wenn sich dabei die Fuehlerliste aendert. Ein Eintrag ohne gemerkte
+    Fuehlerliste (frueherer Release) gilt als fuehlergleich: der Vorlagentext kann sich ohne neue Fuehler geaendert
+    haben, der Helfer wird dann ersetzt, der Kunde aber nicht gewarnt."""
     existing = tracking.get(key, {})
     existing_id = existing.get("entity_id")
-    replaced = bool(existing_id) and source is not None and existing.get("source") != source
+    neu_anlegen = bool(existing_id) and source is not None and existing.get("source") != source
+    gemerkt = existing.get("fuehler")
+    meldung = neu_anlegen and fuehler is not None and gemerkt is not None and gemerkt != sorted(fuehler)
     if existing_id and ha_api.entity_exists(existing_id):
-        if not replaced:
+        if not neu_anlegen:
             return existing_id, False
         logger.info("Hilfs-Entity %s (%s) wird wegen geaenderter Quelle neu angelegt", lesbar(str(existing_id)), key)
         ha_api.delete_helper(existing_id, tenant_id=tenant_id)
     entity_id = create_fn()
-    tracking[key] = {"entity_id": entity_id} if source is None else {"entity_id": entity_id, "source": source}
+    eintrag = {"entity_id": entity_id} if source is None else {"entity_id": entity_id, "source": source}
+    if source is not None and fuehler is not None:
+        eintrag["fuehler"] = sorted(fuehler)
+    tracking[key] = eintrag
     save_backup(state_path, tracking)
-    return entity_id, replaced
+    return entity_id, meldung
 
 
 def _drop_unused(ha_api, tracking: dict, key: str, state_path: Path, tenant_id: str) -> str | None:

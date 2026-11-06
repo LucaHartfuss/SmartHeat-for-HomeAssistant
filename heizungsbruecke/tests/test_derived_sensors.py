@@ -47,7 +47,8 @@ def test_fresh_install_creates_only_the_room_template(tmp_path):
     assert result.entity_ids == {"room_actual": ROOM_ID}
     assert result.replaced == ()
     ha_api.delete_helper.assert_not_called()
-    assert load_backup(tmp_path / "d.json") == {"room_temperature": {"entity_id": ROOM_ID, "source": ROOM_TEMPLATE}}
+    assert load_backup(tmp_path / "d.json") == {
+        "room_temperature": {"entity_id": ROOM_ID, "source": ROOM_TEMPLATE, "fuehler": sorted(ROOMS)}}
 
 
 
@@ -83,10 +84,10 @@ def test_changed_room_sensors_recreate_only_the_room_template(tmp_path):
 
 
 
-def test_a_helper_without_a_remembered_source_is_recreated_and_reported(tmp_path):
-    """Ein Helfer, dessen Eintrag keine Quelle kennt, gilt als Quellwechsel: er wird geloescht und neu angelegt, die
-    Quelle danach gemerkt, und der Wechsel zaehlt als ersetzt (Meldung „quellwechsel“). Gegenprobe: mit gemerkter
-    gleicher Quelle bleibt er."""
+def test_a_helper_without_a_remembered_source_is_recreated_without_a_source_change_notice(tmp_path):
+    """Ein Helfer ohne gemerkte Quelle und Fuehlerliste (Eintrag eines frueheren Release) wird geloescht und neu
+    angelegt, Quelle und Fuehlerliste danach gemerkt; ohne Fuehlerliste gilt die Fuehlermenge als unveraendert, es
+    gibt keinen Hinweis. Gegenprobe: mit gemerkter gleicher Quelle bleibt er."""
     save_backup(tmp_path / "d.json", {"room_temperature": {"entity_id": ROOM_ID}})
     ha_api = _ha_api(existing={ROOM_ID})
 
@@ -94,11 +95,39 @@ def test_a_helper_without_a_remembered_source_is_recreated_and_reported(tmp_path
 
     ha_api.delete_helper.assert_called_once_with(ROOM_ID, tenant_id="t1")
     ha_api.create_template_sensor.assert_called_once_with(name="SmartHeat t1 Raumtemperatur", template=ROOM_TEMPLATE)
-    assert result.replaced == ("room_temperature",)
-    assert load_backup(tmp_path / "d.json") == {"room_temperature": {"entity_id": ROOM_ID, "source": ROOM_TEMPLATE}}
+    assert result.replaced == ()
+    assert load_backup(tmp_path / "d.json") == {
+        "room_temperature": {"entity_id": ROOM_ID, "source": ROOM_TEMPLATE, "fuehler": sorted(ROOMS)}}
     ha_api = _ha_api(existing={ROOM_ID})
     assert _run(ha_api, tmp_path / "d.json").replaced == ()
     ha_api.delete_helper.assert_not_called()
+
+
+def test_a_changed_template_text_with_the_same_sensors_recreates_the_helper_without_a_notice(tmp_path):
+    """Ein Release, das nur den Vorlagentext aendert (z. B. Wertebereich), legt den Helfer neu an, weil die Grenze in
+    der Vorlage steckt; die Fuehler sind dieselben, der Kunde bekommt keinen Hinweis auf einen Quellwechsel. Die
+    Reihenfolge der Fuehler zaehlt nicht."""
+    save_backup(tmp_path / "d.json", {"room_temperature": {
+        "entity_id": ROOM_ID, "source": "alter Vorlagentext", "fuehler": sorted(ROOMS)}})
+    ha_api = _ha_api(existing={ROOM_ID})
+
+    result = _run(ha_api, tmp_path / "d.json", room_sensors=list(reversed(ROOMS)))
+
+    ha_api.delete_helper.assert_called_once_with(ROOM_ID, tenant_id="t1")
+    assert ha_api.create_template_sensor.call_count == 1
+    assert result.replaced == ()
+    assert load_backup(tmp_path / "d.json")["room_temperature"]["source"] == room_temperature_template(
+        list(reversed(ROOMS)))
+
+
+def test_changed_sensors_with_a_changed_template_text_are_still_a_source_change(tmp_path):
+    save_backup(tmp_path / "d.json", {"room_temperature": {
+        "entity_id": ROOM_ID, "source": "alter Vorlagentext", "fuehler": sorted(ROOMS)}})
+    ha_api = _ha_api(existing={ROOM_ID})
+
+    result = _run(ha_api, tmp_path / "d.json", room_sensors=["sensor.wz"])
+
+    assert result.replaced == ("room_temperature",)
 
 
 def test_tracked_helper_deleted_by_the_user_is_recreated_without_counting_as_replaced(tmp_path):
@@ -150,7 +179,7 @@ def test_source_change_is_still_reported_when_create_failed_after_delete(tmp_pat
     ha_api.delete_helper.assert_called_once_with(ROOM_ID, tenant_id="t1")
     assert result.replaced == ("room_temperature",)
     assert load_backup(tmp_path / "d.json")["room_temperature"] == {
-        "entity_id": ROOM_ID, "source": room_temperature_template(["sensor.wz"]),
+        "entity_id": ROOM_ID, "source": room_temperature_template(["sensor.wz"]), "fuehler": ["sensor.wz"],
     }
 
 
