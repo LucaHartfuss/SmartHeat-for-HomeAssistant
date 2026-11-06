@@ -88,6 +88,21 @@ def test_ak_g2_05_kaelteschutz_bei_langer_abweichung_vom_soll(welt):
     assert _stand(anlage, satz) == SERVER
 
 
+@pytest.mark.akzeptanz("AK-G2-07")
+def test_ak_g2_07_konstanter_frostwert_bei_verbundenem_trigger_startet_den_kaelteschutz_nach_15_minuten(welt):
+    anlage, satz = _warm_gestartet(welt)
+    assert anlage.trigger[-1].connected  # HA ist verbunden: der Watchdog allein haette bisher nichts geprueft
+    anlage.raum(4.0)  # der Fuehler meldet einmal Frostnaehe; danach feuert HA bei konstantem Wert kein Ereignis mehr
+    for _ in range(14):  # 14 Minuten
+        anlage.server_antwortet(SERVER)
+        anlage.runde(60)
+    assert _stand(anlage, satz) == SERVER  # noch keine 15 Minuten
+    for _ in range(6):  # ein weiterer Watchdog-Takt (fuenf Minuten) liegt nach der 15. Minute
+        anlage.server_antwortet(SERVER)
+        anlage.runde(60)
+    assert _stand(anlage, satz) == COMFORT_BOOST  # der Kaelteschutz hebt die Anlage an, obwohl sich nichts mehr aenderte
+
+
 @pytest.mark.akzeptanz("AK-G2-06")
 def test_ak_g2_06_ausgefallener_fuehler_loest_nichts_aus_und_beendet_nichts(welt):
     anlage, satz = _warm_gestartet(welt)
