@@ -23,7 +23,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import NoReturn, Protocol
 
 from smartheat_core import kreisansicht
-from smartheat_runtime import app, dokument_config
+from smartheat_runtime import app, dokument_config, kreiszustand
 from smartheat_runtime.app import STATUS_ABO_BEENDET, Host, IdleBridge
 from smartheat_runtime.ports import StatusSink
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, Runtime
@@ -287,6 +287,9 @@ class Laufzeit:
                     self.wiederaufnehmen(kreis, erzwingen=True, merken=True)
             elif relevant:
                 self.wiederaufnehmen(kreis, erzwingen=True, merken=True)
+            elif _ausser_betrieb(alt, kreis) != _ausser_betrieb(neu, kreis):
+                # Der Wechsel nach oder aus `ausser_betrieb` stellt Abo, MQTT und Lieferung dieses Kreises um: nur er startet neu.
+                self.wiederaufnehmen(kreis, erzwingen=True, merken=True)
             if kreisansicht.zustand(alt, kreis) != kreisansicht.zustand(neu, kreis):
                 self._check_anstossen(kreis)
         return False
@@ -297,6 +300,10 @@ class Laufzeit:
         ergebnis = self.kreise().get(kreis)
         if isinstance(ergebnis, Runtime):
             ergebnis.worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=False)
+
+
+def _ausser_betrieb(konfiguration, kreis: int) -> bool:
+    return kreisansicht.zustand(konfiguration, kreis) == kreiszustand.AUSSER_BETRIEB
 
 
 def _nummern(konfiguration) -> list[int]:

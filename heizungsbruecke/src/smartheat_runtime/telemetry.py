@@ -65,10 +65,12 @@ def run_telemetry_tick(
     manifest, signals, mqtt_client, boost_active: bool, failsafe_active: bool,
     datenfehler: DataFault | None = None, room_target: float | None = None,
     energy: Callable[[dict, dict], dict] | None = None, einheiten: Mapping[str, str] | None = None, *, kreis: int,
+    nur_raeume: bool = False,
 ) -> None:
     """Liest room_actual selbst (lokaler HA-REST-Aufruf, kein Cloud-Roundtrip). `energy` normalisiert die
     Energie-Rohwerte (Tageszaehler, None = unveraendert), `einheiten` ist je Energiekanal die erwartete
-    Einheit (ohne Eintrag kein Kanal). Wirft nie."""
+    Einheit (ohne Eintrag kein Kanal). `nur_raeume` (Kreis ausser Betrieb) sendet ueber dasselbe Paket nur die
+    Raumwerte: keine KPI-, Energie- und Regelfelder. Wirft nie."""
     if "room_actual" not in manifest.refs:
         return
     try:
@@ -83,8 +85,11 @@ def run_telemetry_tick(
                 logger.warning("Telemetrie nicht gesendet: room_actual ist keine endliche Zahl; weitere Takte nur im "
                                "DEBUG-Log bis zur Wiederaufnahme")
             return
-        kpi_fields = read_kpi_fields(manifest, signals, energy, einheiten=einheiten)
-        regulation_fields = read_regulation_fields(manifest, signals, room_target)
+        if nur_raeume:
+            kpi_fields, regulation_fields = {}, {"raeume": read_raeume(manifest, signals)}
+        else:
+            kpi_fields = read_kpi_fields(manifest, signals, energy, einheiten=einheiten)
+            regulation_fields = read_regulation_fields(manifest, signals, room_target)
         publish_telemetry(
             mqtt_client=mqtt_client, room_actual=room_actual,
             boost_active=boost_active, failsafe_active=failsafe_active,

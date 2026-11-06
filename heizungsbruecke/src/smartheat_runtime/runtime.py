@@ -77,6 +77,8 @@ class Runtime:
     # Testphase ohne Setwell: die Rueckstellung beim Eintritt ist erledigt. Nach einem Prozessstart mitten in der Phase
     # stellt der erste Check einmal erneut zurueck. Nicht persistiert.
     testphase_rueckgestellt: bool = False
+    # Kreis ausser Betrieb: die Rueckstellung beim Eintritt ist erledigt (wie testphase_rueckgestellt). Nicht persistiert.
+    ausser_betrieb_rueckgestellt: bool = False
     # Comfort-Boost: Stand der monotonen Uhr (clock) beim Start des Boosts in diesem Prozess, None bei einem
     # Boost aus einem frueheren Lauf. Gilt nur bei aktivem Boost: ein Boost-Ende ueber die Pipeline laesst den Wert
     # stehen, jeder neue Start ueberschreibt ihn. Die 4-h-Grenze zaehlt auch hier, falls die Wanduhr zurueckspringt.

@@ -25,6 +25,7 @@ from smartheat_runtime import (
     datentraeger,
     delivery,
     entitlement,
+    kreiszustand,
     regulation,
     roles,
     room_sensors,
@@ -444,6 +445,8 @@ def _on_local_check(rt: Runtime, event: Event) -> None:
     if not rt.zone_prepared:
         _prepare_zone(rt)
     _run_local_check(rt, "Fehler im lokalen Check (Boost/Notfall-Boost), wird beim naechsten Ereignis erneut versucht")
+    if kreiszustand.ausser_betrieb(rt):
+        return  # ausser Betrieb gibt es keinen Tick: nichts zum Server, nichts von ihm
     try:
         trigger = regulation.claim_due_tick(rt, wallclock.now())
     except StorageError:
@@ -460,10 +463,14 @@ def _on_setpoints(rt: Runtime, event: Event) -> None:
 
 
 def _on_ack_timeout(rt: Runtime, event: Event) -> None:
+    if kreiszustand.ausser_betrieb(rt):
+        return  # ein offener Tick bleibt, wie er ist, bis der Kreis zurueckkehrt
     ticks.deliver(rt, delivery.AckTimeout(seq=event.data["seq"], gen=event.data["gen"]))
 
 
 def _on_retry_due(rt: Runtime, event: Event) -> None:
+    if kreiszustand.ausser_betrieb(rt):
+        return
     ticks.deliver(rt, delivery.RetryDue(seq=event.data["seq"], gen=event.data["gen"]))
 
 
@@ -481,7 +488,8 @@ def _on_connection_check(rt: Runtime, event: Event) -> None:
     deshalb einen Pruef-Tick an; das Ack nach dem Wiederverbinden beendet den Notbetrieb regulaer."""
     rt.worker.schedule(rt.config.local_check_interval, Event(EV_CONNECTION_CHECK))
     state = rt.store.state
-    if rt.mqtt_client is None or state.abo_inactive_since is not None or rt.mqtt_client.is_connected():
+    if (rt.mqtt_client is None or state.abo_inactive_since is not None or rt.mqtt_client.is_connected()
+            or kreiszustand.ausser_betrieb(rt)):  # ausser Betrieb: kein Pruef-Tick, keine Abo-Abfrage
         rt.mqtt_down_since = None
         return
     now = rt.clock()
@@ -501,12 +509,19 @@ def _on_connection_check(rt: Runtime, event: Event) -> None:
 def _on_telemetry(rt: Runtime, event: Event) -> None:
     rt.worker.schedule(rt.config.telemetry_interval, Event(EV_TELEMETRY))
     state = rt.store.state
-    if state.abo_inactive_since is not None or rt.mqtt_client is None:
+    ausser = kreiszustand.ausser_betrieb(rt)
+    if (state.abo_inactive_since is not None and not ausser) or rt.mqtt_client is None:
         return
     if not rt.mqtt_client.is_connected():
         # Ohne Verbindung nicht publizieren: paho staute die Nachrichten unbegrenzt. Der
         # Server erkennt die Luecke ueber MAX_GAP.
         logger.debug("Telemetrie uebersprungen, keine MQTT-Verbindung")
+        return
+    if ausser:
+        telemetry.run_telemetry_tick(
+            rt.manifest, rt.signals, rt.mqtt_client, boost_active=False, failsafe_active=False,
+            kreis=rt.config.kreis, nur_raeume=True,
+        )  # Schutz-Telemetrie: nur Raumwerte fuer die Frostnaehe, keine Hebel- und Regelungsdaten
         return
     datenfehler = state.delivery.datenfehler
     if datenfehler is None and rt.store.storage_failed:
@@ -522,7 +537,8 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
 
 def _on_grace_check(rt: Runtime, event: Event) -> None:
     rt.worker.schedule(rt.config.local_check_interval, Event(EV_GRACE_CHECK))
-    abo.check_grace_end(rt)
+    if not kreiszustand.ausser_betrieb(rt):  # ausser Betrieb gibt es keine Abo-Frist
+        abo.check_grace_end(rt)
 
 
 def _on_health(rt: Runtime, event: Event) -> None:
@@ -539,8 +555,9 @@ def _on_health(rt: Runtime, event: Event) -> None:
     if rt.store.state.abo_finished:
         return
     checks = [battery.check_batteries, room_sensors.check_room_sensors, aussentemperatur.check]
-    # Ohne Setwell (Testphase) gibt es nichts durchzusetzen: ein Eingriff von Hand ist dann der Normalfall.
-    if not testphase.aktiv(rt):
+    # Ohne Setwell (Testphase, Kreis ausser Betrieb) gibt es nichts durchzusetzen: ein Eingriff von Hand ist dann der
+    # Normalfall.
+    if not (testphase.aktiv(rt) or kreiszustand.ausser_betrieb(rt)):
         checks.append(enforce.check_manual_override)
     for check in checks:
         try:
@@ -556,7 +573,8 @@ def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
     rt.connection_failing_queried_at = None
     if not status.flags.gestartet:
         status.update(gestartet=True)
-    ticks.deliver(rt, delivery.MqttConnected())
+    if not kreiszustand.ausser_betrieb(rt):
+        ticks.deliver(rt, delivery.MqttConnected())
 
 
 def _on_source_connected(rt: Runtime, event: Event) -> None:
@@ -700,8 +718,8 @@ def _prepare_zone(rt: Runtime) -> None:
     """Zone vorbereiten (LeverPipeline.prepare_start); scheitert es, versucht es ein spaeterer lokaler
     Check erneut (Kontingent: _may_prepare_zone), statt dass erst die Durchsetzung nach
     settle_seconds des Bindings umstellt. Pruefen und Zaehlen des Kontingents sind eine Einheit (`transaktion`).
-    In der Testphase ohne Setwell bleibt die Zone, wie sie ist."""
-    if testphase.aktiv(rt):
+    In der Testphase ohne Setwell und ausser Betrieb bleibt die Zone, wie sie ist."""
+    if testphase.aktiv(rt) or kreiszustand.ausser_betrieb(rt):
         return
     with rt.store.transaktion():
         _prepare_zone_gesperrt(rt)
@@ -813,7 +831,10 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     # Abo-Status erst hier: Abschluss-Start und lokaler Modus brauchen Manifest und Clamps.
     # "unknown" (accounts-api nicht erreichbar) startet normal -- fail-open.
     now = wallclock.now()
-    abo_status = entitlement.query(config)
+    # Ein Kreis ausser Betrieb hat weder Abo noch Server: keine Abo-Abfrage, keine Frist, kein Abo-inaktiv-Modus.
+    # Seine MQTT-Verbindung dient nur den Raumwerten der Schutz-Telemetrie.
+    ausser = kreiszustand.ausser_betrieb(rt)
+    abo_status = entitlement.UNKNOWN if ausser else entitlement.query(config)
     if abo_status == entitlement.ACTIVE:
         entitlement.clear(config.entitlement_path)
         notifier.notify("abo", STATE_OK, abo.ABO_ACTIVE_MESSAGE, critical=True)
@@ -826,10 +847,10 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
 
     melder = _ursprung_melder(rt, host)
     _register_handlers(rt, melder)
-    abo_inactive = rt.store.state.abo_inactive_since is not None
+    abo_inactive = rt.store.state.abo_inactive_since is not None  # ausser Betrieb nie: Abo-Status oben ist unbekannt
     if not abo_inactive:
         rt.mqtt_client = mqtt_factory(rt.worker, rt.config.kreis)
-    stale_notbetrieb = not abo_inactive and _is_stale_notbetrieb(rt)
+    stale_notbetrieb = not abo_inactive and not ausser and _is_stale_notbetrieb(rt)
     if stale_notbetrieb:
         # vor _prime: dessen lokaler Check startete sonst einen Notfall-Boost
         _end_stale_notbetrieb(rt, beenden=abo_status == entitlement.ACTIVE)
@@ -847,7 +868,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     if abo_inactive:
         # Ohne MQTT kein EV_MQTT_CONNECTED: die lokale Regelung laeuft, der Start ist abgeschlossen.
         status.update(gestartet=True)
-    else:
+    elif not ausser:
         # Offenen Tick aus failsafe_state.json sofort mit derselben seq erneut versuchen.
         ticks.deliver(rt, delivery.Boot())
         if stale_notbetrieb:

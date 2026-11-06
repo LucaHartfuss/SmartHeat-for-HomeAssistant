@@ -18,7 +18,7 @@ IDS = (
     "AK-G1-01", "AK-G1-03", "AK-G1-07", "AK-G2-04", "AK-G2-05", "AK-G2-06",
     "AK-G3-01", "AK-G3-02", "AK-G3-03", "AK-G4-01", "AK-G4-02", "AK-G4-05", "AK-G5-01",
     "AK-G6-01", "AK-G6-02", "AK-G6-03", "AK-G7-01", "AK-G8-01", "AK-G8-02", "AK-G8-03", "AK-G9-01", "AK-G9-02", "AK-G9-06",
-    "AK-G9-07", "AK-G9-08", "AK-G9-09", "AK-G10-01",
+    "AK-G9-07", "AK-G9-08", "AK-G9-09", "AK-G9-10", "AK-G9-11", "AK-G10-01",
 )
 #: Tests der Suite (Node-ID) und die, die bestanden haben; die Deckung der Laeufe prueft pytest_sessionfinish
 GESAMMELT: set[str] = set()

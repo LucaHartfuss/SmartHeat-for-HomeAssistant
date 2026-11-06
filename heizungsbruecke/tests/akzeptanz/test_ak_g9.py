@@ -1,7 +1,9 @@
 """G-9: Endzustaende. Wird die Regelung beendet (Abmelden, Abo-Ende), stehen danach Heizkurve, Zonensollwert,
 Heizgrenze und Mindestvorlauf wieder so, wie sie vor dem ersten Schreiben standen; schlaegt das Zuruecksetzen fehl,
 versucht das Add-on es weiter. Die Testphase ohne Setwell ist ein Endzustand auf Zeit: der Kreis wird einmal
-zurueckgestellt, danach schreibt das Add-on nichts mehr, und Ursprungswerte und Lernstand bleiben stehen."""
+zurueckgestellt, danach schreibt das Add-on nichts mehr, und Ursprungswerte und Lernstand bleiben stehen. Ein Kreis
+ausser Betrieb wird ebenfalls einmal zurueckgestellt; danach schreibt das Add-on nur den Kaelteschutz bei Frostnaehe
+und sendet nur Raumwerte."""
 import json
 
 import pytest
@@ -190,3 +192,49 @@ def test_ak_g9_09_ursprungswerte_und_lernstand_bleiben_nach_der_testphase_gleich
     assert _gemerkt()["originals"] == vorher["originals"]
     _abmelden(anlage, version=4)  # das Ende nach der Testphase stellt auf die Ursprungswerte von ganz am Anfang zurueck
     assert stand(anlage) == ENDZUSTAND
+
+
+#: Hebelwerte im Kaelteschutz (Vaillant x Heizkoerper), wie beim Notfall-Boost
+KAELTESCHUTZ = {"curve": 1.5, "room_setpoint": 25.0, "heat_limit": 23.0}
+TELEMETRIE_NUR_RAUM = {"kreis", "room_actual", "boost_active", "failsafe_active", "ts", "raeume"}
+
+
+@pytest.mark.akzeptanz("AK-G9-10")
+def test_ak_g9_10_ausser_betrieb_schreibt_nur_den_kaelteschutz_bei_frostnaehe(welt):
+    anlage = boost_anlage(welt, heizgrenze=URSPRUNG_HEIZGRENZE)
+    _zustand_setzen(anlage, 2, "ausser_betrieb")
+    assert stand(anlage) == ENDZUSTAND  # einmal zurueckgestellt, der Boost ist beendet
+    schreibaufrufe, starts = len(anlage.ha.schreibvorgaenge), len(boost_starts(anlage))
+    anlage.wunsch(23.0)
+    anlage.app_verstellt(schreibziel(SATZ, "heat_limit"), 12.0)  # von aussen verstellt: nichts wird durchgesetzt
+    anlage.vergehen(3 * 3600, SERVER_ANDERS, fuehler=18.0)  # drei Stunden unter dem Wunsch: kein Soll-Ausloeser
+    assert len(anlage.ha.schreibvorgaenge) == schreibaufrufe and len(boost_starts(anlage)) == starts
+    assert anlage.ha.states[schreibziel(SATZ, "heat_limit")] == 12.0
+    anlage.vergehen(600, SERVER_ANDERS, fuehler=4.9)  # unter 5 Grad, aber erst zehn Minuten: noch kein Eingriff
+    assert len(anlage.ha.schreibvorgaenge) == schreibaufrufe
+    anlage.vergehen(600, SERVER_ANDERS, fuehler=4.9)  # ueber 15 Minuten unter 5 Grad: der Kaelteschutz hebt an
+    assert stand(anlage) == KAELTESCHUTZ
+    anlage.vergehen(600, SERVER_ANDERS, fuehler=6.0)  # der Lauf haelt bis zur Ankunft
+    assert stand(anlage) == KAELTESCHUTZ
+    anlage.raum(7.0)  # der Raum ist wieder bei 7 Grad: der Lauf endet auf den Ursprungswerten
+    anlage.runde(2)
+    assert stand(anlage) == ENDZUSTAND
+    fertig = len(anlage.ha.schreibvorgaenge)
+    anlage.vergehen(3600, SERVER_ANDERS, fuehler=8.0)
+    assert len(anlage.ha.schreibvorgaenge) == fertig  # kein neuer Lauf ohne neue Frostnaehe
+
+
+@pytest.mark.akzeptanz("AK-G9-11")
+def test_ak_g9_11_ausser_betrieb_sendet_nur_raumwerte(welt):
+    anlage = boost_anlage(welt, heizgrenze=URSPRUNG_HEIZGRENZE)
+    _zustand_setzen(anlage, 2, "ausser_betrieb")
+    snapshots, telemetrie = len(anlage.link.of("up/snapshot")), len(anlage.link.of("telemetry"))
+    anlage.wunsch(23.0)  # ein Wunsch loest sonst einen Snapshot aus
+    anlage.vergehen(3600, SERVER_ANDERS, fuehler=20.0)
+    neu = anlage.link.of("telemetry")[telemetrie:]
+    assert neu and all(set(paket) == TELEMETRIE_NUR_RAUM for paket in neu)  # keine Hebel- und Regelungsdaten
+    assert all(paket["boost_active"] is False and paket["failsafe_active"] is False for paket in neu)
+    assert len(anlage.link.of("up/snapshot")) == snapshots
+    _zustand_setzen(anlage, 3, "in_betrieb")  # zurueck ohne Neustart: Snapshots laufen wieder
+    _server_antwortet_auf_neuen_wunsch(anlage, SERVER_NORMAL)
+    assert len(anlage.link.of("up/snapshot")) > snapshots and stand(anlage) == SERVER_NORMAL

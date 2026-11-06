@@ -16,7 +16,7 @@ from smartheat_core.emergency_boost import (
     kaelteschutz_entscheiden,
 )
 from smartheat_core.logtext import lesbar
-from smartheat_runtime import testphase
+from smartheat_runtime import kreiszustand, testphase
 from smartheat_runtime.plausibility import ROOM_ACTUAL_RANGE, is_plausible
 from smartheat_runtime.ports import SignalUngueltig
 from smartheat_runtime.runtime import Runtime
@@ -84,8 +84,13 @@ def run_local_check(rt: Runtime) -> None:
     auch ausserhalb des Notbetriebs) bei langer Abweichung oder Frostnaehe. room_target kommt aus dem
     Stable-Target-Cache, damit ein Zwischenwert beim Verstellen keinen Boost ausloest. I/O-Fehler gehen an den
     Aufrufer. In der Testphase ohne Setwell stellt der Check beim Eintritt die Hebel zurueck und startet keinen
-    Comfort-Boost; der Kaelteschutz und der Notfall-Boost des Notbetriebs gelten weiter."""
+    Comfort-Boost; der Kaelteschutz und der Notfall-Boost des Notbetriebs gelten weiter. Steht der Kreis ausser Betrieb,
+    stellt der Check beim Eintritt die Hebel zurueck und entscheidet danach nur den Kaelteschutz (Frostnaehe, ohne Soll)."""
     testphase.pruefen(rt)
+    kreiszustand.pruefen(rt)
+    if kreiszustand.ausser_betrieb(rt):
+        _ausser_betrieb_pruefen(rt)
+        return
     manifest = rt.manifest
     if "room_actual" not in manifest.refs or "room_target" not in manifest.refs:
         return
@@ -142,6 +147,20 @@ def run_local_check(rt: Runtime) -> None:
     refused = comfort and not comfort_set and not rt.override.comfort_start_heute_gesperrt
     remembered = state.last_room_target if refused else room_target
     rt.store.update_saved(last_room_target=remembered)
+
+
+def _ausser_betrieb_pruefen(rt: Runtime) -> None:
+    """Ein Kreis ausser Betrieb: nur der Kaelteschutz mit dem Frostnaehe-Ausloeser (kein Soll, es wird auch nicht gelesen).
+    Kein Comfort-Boost und kein Notfall-Boost des Notbetriebs; ein Lauf endet bei jedem gueltigen Raum ab 7 Grad oder nach
+    der Hoechstdauer. Ohne gueltigen Fuehler passiert nichts. Nach `abo_finished` des ganzen Geraets gilt auch das nicht."""
+    state = rt.store.state
+    if state.abo_finished:
+        return
+    if not rt.config.referenzraeume and "room_actual" not in rt.manifest.refs:
+        return
+    now = wallclock.now()
+    schutz = _kaelteschutz_entscheiden(rt, now, None)
+    _boosts_setzen(rt, schutz, now, comfort=False, notfall=False)
 
 
 class _Schutz:

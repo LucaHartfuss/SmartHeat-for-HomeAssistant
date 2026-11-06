@@ -60,7 +60,10 @@ def konfiguration_aus_optionen(options: dict) -> dict:
         "bindungsparameter": options["bindungsparameter"] if "bindungsparameter" in options
         else bindung_beispiele.parameter(hebelsatz if hebelsatz in bindung_beispiele.PARAMETER else "vaillant_vrc720"),
     }
-    return konfig_form.nach_form(konfiguration)
+    dokument = konfig_form.nach_form(konfiguration)
+    if "zustand" in options:  # Zustand des (ersten) Kreises: in_betrieb, ausser_betrieb, testphase_ohne
+        dokument["kreise"][0]["zustand"] = options["zustand"]
+    return dokument
 
 
 class Sent:
