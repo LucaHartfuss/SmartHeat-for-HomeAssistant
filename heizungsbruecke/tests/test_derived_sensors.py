@@ -366,3 +366,16 @@ def test_a_foreign_tracking_key_is_dropped_without_deleting(tmp_path):
     entfernen(ha_api, "t1", state)
 
     ha_api.delete_helper.assert_called_once_with("sensor.x", tenant_id="t1")
+
+
+def test_ensure_entity_without_a_sensor_list_remembers_only_the_source(tmp_path):
+    """Ohne Fuehlerliste merkt das Tracking nur die Quelle; ein spaeteres Neuanlegen meldet dann keinen Wechsel."""
+    from heizungsbruecke.derived_sensors import _ensure_entity
+
+    pfad = tmp_path / "d.json"
+    tracking: dict = {}
+
+    entity_id, meldung = _ensure_entity(_ha_api(), tracking, "k", "vorlage", pfad, lambda: ROOM_ID, "t1")
+
+    assert (entity_id, meldung) == (ROOM_ID, False)
+    assert load_backup(pfad)["k"] == {"entity_id": ROOM_ID, "source": "vorlage"}
