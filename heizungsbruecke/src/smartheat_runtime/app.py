@@ -532,6 +532,7 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
         datenfehler=datenfehler, room_target=state.stable_target,
         energy=telemetry.energy_normalizer(rt.store, rt.override.binding.description.energy_counters),
         einheiten=rt.override.binding.description.energie, kreis=rt.config.kreis,
+        testphase_ohne=testphase.aktiv(rt), kaelteschutz=state.kaelteschutz_art or telemetry.KAELTESCHUTZ_AUS,
     )
 
 

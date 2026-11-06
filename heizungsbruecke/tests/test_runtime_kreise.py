@@ -13,7 +13,7 @@ from heizungsbruecke.host import HaHost
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import app, entitlement, kreise
 from smartheat_runtime.app import EV_RECHECK, StartFailure
-from smartheat_runtime.runtime import EV_LOCAL_CHECK, Runtime
+from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_TELEMETRY, Runtime
 from smartheat_runtime.worker import Event, WorkerBeendet
 
 
@@ -786,3 +786,17 @@ def test_ohne_zustandswechsel_bleibt_der_lokale_check_ungestossen(env):
     laufzeit.konfiguration_geaendert(_zwei_kreise_dokument(), _zwei_kreise_dokument())
 
     assert angestossen == []
+
+
+def test_die_kennzeichen_der_telemetrie_gelten_je_kreis(env):
+    anlage = Anlage(env)
+    laufzeit = _laufzeit(anlage, env)
+    eins, zwei = laufzeit.kreise()[1], laufzeit.kreise()[2]
+    eins.store.update(kaelteschutz_art="frost", kaelteschutz_seit=datetime.now().astimezone().isoformat())
+
+    for runtime in (eins, zwei):
+        app._on_telemetry(runtime, Event(EV_TELEMETRY))
+
+    gesendet = {paket["kreis"]: paket for paket in anlage.sent.of("telemetry")}
+    assert (gesendet[1]["kaelteschutz"], gesendet[2]["kaelteschutz"]) == ("frost", "aus")
+    assert gesendet[1]["testphase_ohne"] is False and gesendet[2]["testphase_ohne"] is False

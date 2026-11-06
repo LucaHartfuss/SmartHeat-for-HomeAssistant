@@ -555,3 +555,36 @@ def test_der_start_sendet_einen_offenen_tick_nur_in_betrieb_erneut(env, zustand,
     })
     _start(env, zustand=zustand)
     assert [snapshot["seq"] for snapshot in _mqtt(env).snapshots] == erwartet
+
+
+# --- V1b-Kennzeichen in der Telemetrie des Kreises ---
+
+def _kennzeichen(env, bridge):
+    vorher = len(_mqtt(env).telemetry)
+    app._on_telemetry(bridge, Event(EV_TELEMETRY))
+    neu = _mqtt(env).telemetry[vorher:]
+    assert len(neu) == 1
+    return neu[0]["testphase_ohne"], neu[0]["kaelteschutz"]
+
+
+def test_die_telemetrie_nennt_testphase_und_kaelteschutz_des_kreises(env):
+    bridge = _lauf_mit_serverwerten(env)
+    assert _kennzeichen(env, bridge) == (False, "aus")
+    _zustand(env, "testphase_ohne")
+    assert _kennzeichen(env, bridge) == (True, "aus")
+    _zustand(env, BETRIEB)
+    for art in ("soll", "frost"):
+        bridge.store.update(kaelteschutz_art=art, kaelteschutz_seit=datetime.now().astimezone().isoformat())
+        assert _kennzeichen(env, bridge) == (False, art)
+    bridge.store.update(kaelteschutz_art=None, kaelteschutz_seit=None)
+    assert _kennzeichen(env, bridge) == (False, "aus")
+
+
+def test_ausser_betrieb_traegt_auch_mit_laufendem_frostlauf_keine_kennzeichen(env):
+    bridge = _lauf_mit_serverwerten(env)
+    _zustand(env, AUSSER)
+    bridge.store.update(kaelteschutz_art="frost", kaelteschutz_seit=datetime.now().astimezone().isoformat())
+    vorher = len(_mqtt(env).telemetry)
+    app._on_telemetry(bridge, Event(EV_TELEMETRY))
+    neu = _mqtt(env).telemetry[vorher:]
+    assert len(neu) == 1 and set(neu[0]) == TELEMETRIE_FELDER

@@ -18,6 +18,11 @@ from smartheat_runtime.ports import SignalUngueltig, SourceUnavailable
 
 logger = logging.getLogger(__name__)
 
+#: Kennzeichen `kaelteschutz` der Telemetrie: kein Lauf, oder die Art des laufenden Kaelteschutz-Laufs. Gegenstueck:
+#: heizungsserver regelung/history.KAELTESCHUTZ_WERTE (Contract-Check (Vertrag V1b)).
+KAELTESCHUTZ_AUS = "aus"
+KAELTESCHUTZ_WERTE = (KAELTESCHUTZ_AUS, "soll", "frost")
+
 # Optionale KPI-Rollen, nur wenn gemappt. Nicht lesbare Sensoren werden weggelassen, nie als
 # null/0 gesendet: der Server speichert fuer fehlende Felder NULL.
 KPI_NUMERIC_ROLES = (
@@ -65,12 +70,13 @@ def run_telemetry_tick(
     manifest, signals, mqtt_client, boost_active: bool, failsafe_active: bool,
     datenfehler: DataFault | None = None, room_target: float | None = None,
     energy: Callable[[dict, dict], dict] | None = None, einheiten: Mapping[str, str] | None = None, *, kreis: int,
-    nur_raeume: bool = False,
+    nur_raeume: bool = False, testphase_ohne: bool = False, kaelteschutz: str = KAELTESCHUTZ_AUS,
 ) -> None:
     """Liest room_actual selbst (lokaler HA-REST-Aufruf, kein Cloud-Roundtrip). `energy` normalisiert die
     Energie-Rohwerte (Tageszaehler, None = unveraendert), `einheiten` ist je Energiekanal die erwartete
     Einheit (ohne Eintrag kein Kanal). `nur_raeume` (Kreis ausser Betrieb) sendet ueber dasselbe Paket nur die
-    Raumwerte: keine KPI-, Energie- und Regelfelder. Wirft nie."""
+    Raumwerte: keine KPI-, Energie- und Regelfelder und keine Kennzeichen `testphase_ohne`, `kaelteschutz` (der Kreis
+    ist ausser Betrieb, nichts davon gilt dort). Wirft nie."""
     if "room_actual" not in manifest.refs:
         return
     try:
@@ -94,6 +100,7 @@ def run_telemetry_tick(
             mqtt_client=mqtt_client, room_actual=room_actual,
             boost_active=boost_active, failsafe_active=failsafe_active,
             kpi_fields=kpi_fields, datenfehler=datenfehler, regulation_fields=regulation_fields, kreis=kreis,
+            testphase_ohne=testphase_ohne, kaelteschutz=kaelteschutz, mit_kennzeichen=not nur_raeume,
         )
         if "room_actual" in _AUSFALL_GEWARNT:  # erst nach dem gelungenen Senden
             _AUSFALL_GEWARNT.discard("room_actual")
@@ -113,7 +120,13 @@ def run_telemetry_tick(
 def publish_telemetry(
     mqtt_client, room_actual: float, boost_active: bool, failsafe_active: bool, kpi_fields: dict | None = None,
     datenfehler: DataFault | None = None, regulation_fields: dict | None = None, *, kreis: int,
+    testphase_ohne: bool = False, kaelteschutz: str = KAELTESCHUTZ_AUS, mit_kennzeichen: bool = True,
 ) -> None:
+    """Sendet ein Telemetrie-Paket des Kreises. `testphase_ohne` und `kaelteschutz` kennzeichnen Zeiten, die der Server
+    nicht lernen darf; `mit_kennzeichen=False` laesst beide Felder weg (Paket nur mit Raumwerten). Ein Wert ausserhalb
+    von KAELTESCHUTZ_WERTE wuerde der Server ablehnen: ValueError am Absender statt einer verlorenen Telemetrie."""
+    if mit_kennzeichen and kaelteschutz not in KAELTESCHUTZ_WERTE:
+        raise ValueError(f"kaelteschutz: unbekannter Wert {kaelteschutz!r}")
     payload = {
         "kreis": kreis,
         "room_actual": room_actual,
@@ -123,6 +136,9 @@ def publish_telemetry(
         **(kpi_fields or {}),
         **(regulation_fields or {}),
     }
+    if mit_kennzeichen:
+        payload["testphase_ohne"] = testphase_ohne
+        payload["kaelteschutz"] = kaelteschutz
     if datenfehler is not None:
         payload[DATENFEHLER_KEY] = {"source": datenfehler.source, "detail": list(datenfehler.detail)}
     mqtt_client.publish_telemetry(payload)

@@ -746,3 +746,69 @@ def test_der_telemetrie_takt_reicht_den_kreis_durch():
     telemetry.run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False, kreis=2)
 
     assert mqtt_client.publish_telemetry.call_args.args[0]["kreis"] == 2
+
+
+# --- V1b-Kennzeichen je Kreis: testphase_ohne, kaelteschutz ---
+
+@pytest.mark.parametrize("testphase_ohne, kaelteschutz", [
+    (False, "aus"), (False, "soll"), (False, "frost"), (True, "aus"), (True, "frost"),
+])
+def test_die_telemetrie_traegt_testphase_und_kaelteschutz(testphase_ohne, kaelteschutz):
+    mqtt_client = MagicMock(spec=MqttChannel)
+
+    telemetry.publish_telemetry(mqtt_client=mqtt_client, room_actual=20.5, boost_active=False, failsafe_active=False,
+                                kreis=1, testphase_ohne=testphase_ohne, kaelteschutz=kaelteschutz)
+
+    payload = mqtt_client.publish_telemetry.call_args.args[0]
+    assert payload["testphase_ohne"] is testphase_ohne
+    assert payload["kaelteschutz"] == kaelteschutz
+
+
+def test_ohne_angabe_gilt_kein_kennzeichen():
+    mqtt_client = MagicMock(spec=MqttChannel)
+
+    telemetry.publish_telemetry(mqtt_client=mqtt_client, room_actual=20.5, boost_active=False, failsafe_active=False,
+                                kreis=1)
+
+    payload = mqtt_client.publish_telemetry.call_args.args[0]
+    assert payload["testphase_ohne"] is False and payload["kaelteschutz"] == "aus"
+
+
+def test_die_wertemenge_des_kaelteschutzes():
+    assert telemetry.KAELTESCHUTZ_WERTE == ("aus", "soll", "frost")
+
+
+def test_ein_unbekannter_kaelteschutz_wird_am_absender_abgelehnt():
+    mqtt_client = MagicMock(spec=MqttChannel)
+
+    with pytest.raises(ValueError, match="kaelteschutz"):
+        telemetry.publish_telemetry(mqtt_client=mqtt_client, room_actual=20.5, boost_active=False,
+                                    failsafe_active=False, kreis=1, kaelteschutz="warm")
+
+    mqtt_client.publish_telemetry.assert_not_called()
+
+
+def test_der_telemetrie_takt_reicht_die_kennzeichen_durch():
+    mqtt_client = MagicMock(spec=MqttChannel)
+    ha_api = MagicMock(spec=SignalSource)
+    ha_api.get_state.return_value = 20.5
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
+
+    telemetry.run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False, kreis=2,
+                                 testphase_ohne=True, kaelteschutz="soll")
+
+    payload = mqtt_client.publish_telemetry.call_args.args[0]
+    assert payload["testphase_ohne"] is True and payload["kaelteschutz"] == "soll"
+
+
+def test_der_raumwerte_takt_sendet_keine_kennzeichen():
+    mqtt_client = MagicMock(spec=MqttChannel)
+    ha_api = MagicMock(spec=SignalSource)
+    ha_api.get_state.return_value = 20.5
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
+
+    telemetry.run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False, kreis=1,
+                                 nur_raeume=True, testphase_ohne=True, kaelteschutz="frost")
+
+    payload = mqtt_client.publish_telemetry.call_args.args[0]
+    assert set(payload) == {"kreis", "room_actual", "boost_active", "failsafe_active", "ts", "raeume"}
