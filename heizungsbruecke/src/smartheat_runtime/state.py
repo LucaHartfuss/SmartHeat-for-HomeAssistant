@@ -6,7 +6,7 @@ Inhalt aendert: jeder Schreibvorgang geht auf den Datentraeger des Pi."""
 import logging
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -46,9 +46,13 @@ _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
 _PLAN3B_FIELDS = ("lifetime_writes", "deferred_levers", "aux_originals", "energy_state")
 BACKUP_FIELDS = (
     _NUMBER_FIELDS + _FLAG_FIELDS + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + _OVERRIDE_FIELDS
-    + ("write_budget",) + _PLAN3B_FIELDS
+    + ("write_budget",) + _PLAN3B_FIELDS + ("kaelteschutz_zaehlung",)
 )
 _OMITTED_WHEN_EMPTY = _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + ("write_budget",) + _PLAN3B_FIELDS + _OMITTED_FLAGS
+#: Raster, auf das der Zeitpunkt der letzten Kaelteschutz-Pruefung beim Schreiben abgerundet wird: die Datei aendert
+#: sich hoechstens alle fuenf Minuten, nicht bei jeder Pruefung. Die Abrundung verkuerzt die Luecke nach einem Neustart
+#: um hoechstens diese Spanne, die Zaehlung beginnt dann eher von vorn (nie zu spaet einen Lauf).
+_ZULETZT_RASTER_SEKUNDEN = 300
 
 
 @dataclass(frozen=True)
@@ -72,10 +76,12 @@ class BridgeState:
     # Beginn des laufenden Comfort-Boosts (ISO), fuer die Hoechstdauer; None ohne Boost.
     boost_since: str | None = None
     # Laufender Kaelteschutz (regulation.py): Art ("soll" oder "frost") und Beginn (ISO mit Zeitzone); beide None ohne
-    # Lauf. Der Lauf ueberlebt einen Neustart, die Zaehlung der Ausloeser nicht (kaelteschutz_zaehlung).
+    # Lauf. Lauf und Zaehlung ueberleben einen Neustart (kaelteschutz_zaehlung).
     kaelteschutz_art: str | None = None
     kaelteschutz_seit: str | None = None
-    # Zaehlzustand der Kaelteschutz-Ausloeser (nur Laufzeit): ein Neustart zaehlt neu, nie aus einem Fehler heraus.
+    # Zaehlzustand der Kaelteschutz-Ausloeser ohne Lauf (soll_seit, frost_seit, zuletzt; der Lauf steht in den zwei Feldern
+    # davor). In backup.json steht er nur, solange eine Zaehlung laeuft, mit `zuletzt` im Fuenf-Minuten-Raster; die
+    # Luecken-Regel (KAELTESCHUTZ_LUECKE_MAX) entscheidet nach einem Neustart, ob die Zaehlung weiterlaeuft.
     kaelteschutz_zaehlung: KaelteschutzZustand = field(default_factory=KaelteschutzZustand)
     # Aufeinanderfolgende lokale Checks ohne lesbaren Raumwert (nur Laufzeit).
     room_actual_misses: int = 0
@@ -247,8 +253,59 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
         else:
             values["write_budget"] = budget
     _parse_plan3b(raw, values, _invalid)
+    if "kaelteschutz_zaehlung" in raw:
+        zaehlung = _parse_zaehlung(raw["kaelteschutz_zaehlung"])
+        if zaehlung is None:
+            _invalid("kaelteschutz_zaehlung")
+        else:
+            values["kaelteschutz_zaehlung"] = zaehlung
     extra = {key: value for key, value in raw.items() if key not in BACKUP_FIELDS}
     return values, extra
+
+
+def _parse_zaehlung(raw) -> KaelteschutzZustand | None:
+    """Zaehlzustand der Kaelteschutz-Ausloeser aus backup.json (Zeiten ISO mit Zeitzone, intern UTC). None bei jedem
+    Formfehler: dann gilt keine Zaehlung."""
+    if not isinstance(raw, dict):
+        return None
+    zeiten = {}
+    for key in ("soll_seit", "zuletzt"):
+        if raw.get(key) is None:
+            zeiten[key] = None
+            continue
+        zeit = parse_since(raw[key])
+        if zeit is None:
+            return None
+        zeiten[key] = zeit.astimezone(UTC)
+    frost = raw.get("frost_seit", [])
+    if not isinstance(frost, list):
+        return None
+    paare = []
+    for paar in frost:
+        if not (isinstance(paar, list) and len(paar) == 2):
+            return None
+        raum, seit = paar
+        zeit = parse_since(seit)
+        if not isinstance(raum, int) or isinstance(raum, bool) or zeit is None:
+            return None
+        paare.append((raum, zeit.astimezone(UTC)))
+    return KaelteschutzZustand(soll_seit=zeiten["soll_seit"], frost_seit=tuple(paare), zuletzt=zeiten["zuletzt"])
+
+
+def _zaehlung_content(zustand: KaelteschutzZustand) -> dict | None:
+    """Die Zaehlung fuer backup.json; None, solange keine Zaehlung laeuft (Normalbetrieb schreibt nichts). `zuletzt`
+    steht abgerundet im Raster (`_ZULETZT_RASTER_SEKUNDEN`), die Beginne auf die Sekunde genau."""
+    if zustand.soll_seit is None and not zustand.frost_seit:
+        return None
+    content = {}
+    if zustand.soll_seit is not None:
+        content["soll_seit"] = zustand.soll_seit.isoformat()
+    if zustand.frost_seit:
+        content["frost_seit"] = [[raum, seit.isoformat()] for raum, seit in zustand.frost_seit]
+    if zustand.zuletzt is not None:
+        raster = int(zustand.zuletzt.timestamp()) // _ZULETZT_RASTER_SEKUNDEN * _ZULETZT_RASTER_SEKUNDEN
+        content["zuletzt"] = datetime.fromtimestamp(raster, UTC).isoformat()
+    return content
 
 
 def _parse_plan3b(raw: dict, values: dict, invalid) -> None:
@@ -279,6 +336,8 @@ def _backup_content(state: BridgeState, extra: dict) -> dict:
     content = dict(extra)
     for key in BACKUP_FIELDS:
         value = getattr(state, key)
+        if key == "kaelteschutz_zaehlung":
+            value = _zaehlung_content(value)
         if value is None or (key in _OMITTED_WHEN_EMPTY and not value):
             continue
         content[key] = list(value) if isinstance(value, tuple) else value
@@ -426,7 +485,8 @@ class StateStore:
 # Einrichtung (bei jeder neuen Einrichtung zurueckgesetzt: Erstkontakt-Tick, frische Zustellung).
 _PLANT_BOUND = (
     "restore_point", "originals", "aux_originals", "learned", "boost_active", "emergency_boost_active", "boost_since",
-    "testphase_rueckgestellt", "ausser_betrieb_rueckgestellt", "kaelteschutz_art", "kaelteschutz_seit", "manual_override", "manual_override_pending", "write_budget", "deferred_levers", "energy_state",
+    "testphase_rueckgestellt", "ausser_betrieb_rueckgestellt", "kaelteschutz_art", "kaelteschutz_seit",
+    "kaelteschutz_zaehlung", "manual_override", "manual_override_pending", "write_budget", "deferred_levers", "energy_state",
     "lifetime_writes", "last_room_target",
 )
 _SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")

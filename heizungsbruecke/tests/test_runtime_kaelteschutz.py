@@ -26,7 +26,7 @@ from smartheat_runtime.backup_store import save_backup
 from smartheat_runtime.delivery import DeliveryState
 from smartheat_runtime.ports import SignalUngueltig
 from smartheat_runtime.roles import ChannelManifest
-from smartheat_runtime.state import StateStore
+from smartheat_runtime.state import StateStore, StorageError
 
 SAFETY = LocalSafety(
     ranges={"curve": (0.2, 0.8), "room_setpoint": (0.0, 5.0), "heat_limit": (5.0, 20.0), "min_flow": (20.0, 30.0)},
@@ -570,20 +570,135 @@ def test_ein_neustart_haelt_den_lauf_und_beendet_ihn_bei_ankunft(make_store, wal
     assert not _lauft(neu) and _writes(neu) == RESTORE and neu.store.state.kaelteschutz_art is None
 
 
-def test_ein_neustart_zaehlt_die_ausloeser_neu(make_store, wall, uhr):
+def test_ein_neustart_setzt_die_soll_zaehlung_nicht_zurueck(make_store, wall, uhr):
     rt = _neu(make_store, wall, uhr, {1: 18.0})
     _pruefen(rt)
     _lauf(rt, 2 * STUNDE + 50 * MINUTE)
 
     neu = _kreis(make_store(), wall, uhr, {1: 18.0})
-    _pruefen(neu)
-    _lauf(neu, 2 * STUNDE + 50 * MINUTE)
+    _lauf(neu, 5 * MINUTE)
 
     assert not _lauft(neu) and not _lauft(rt)
 
-    _lauf(neu, 10 * MINUTE)
+    _lauf(neu, 5 * MINUTE)
+
+    assert _lauft(neu) and _writes(neu) == EMERGENCY
+
+
+def test_ein_neustart_setzt_die_frost_zaehlung_nicht_zurueck(make_store, wall, uhr):
+    rt = _neu(make_store, wall, uhr, {1: 4.0})
+    _pruefen(rt)
+    _lauf(rt, 10 * MINUTE)
+    assert not _lauft(rt)
+
+    neu = _kreis(make_store(), wall, uhr, {1: 4.0})
+    _lauf(neu, 5 * MINUTE)
+
+    assert _lauft(neu) and neu.store.state.kaelteschutz_art == "frost" and _writes(neu) == EMERGENCY
+
+
+def test_eine_luecke_ueber_fuenfzehn_minuten_beginnt_die_zaehlung_nach_dem_neustart_von_vorn(make_store, wall, uhr):
+    rt = _neu(make_store, wall, uhr, {1: 4.0})
+    _pruefen(rt)
+    _lauf(rt, 10 * MINUTE)
+    wall.advance(16 * MINUTE)  # der Prozess steht still: keine Pruefung
+    uhr.advance(16 * MINUTE)
+
+    neu = _kreis(make_store(), wall, uhr, {1: 4.0})
+    _pruefen(neu)
+    _lauf(neu, 14 * MINUTE, schritt=MINUTE)
+
+    assert not _lauft(neu)
+
+    _lauf(neu, MINUTE, schritt=MINUTE)
 
     assert _lauft(neu)
+
+
+def test_der_start_zaehler_des_tages_ueberlebt_einen_neustart(make_store, wall, uhr):
+    rt = _gestartet(make_store, wall, uhr)
+    assert _starts(rt) == 1
+
+    neu = _kreis(make_store(), wall, uhr, {1: 18.0})
+
+    assert _starts(neu) == 1 and _lauft(neu)
+
+
+def test_im_normalbetrieb_steht_keine_zaehlung_in_der_datei_und_es_wird_nichts_geschrieben(
+    make_store, wall, uhr, tmp_path, monkeypatch,
+):
+    rt = _neu(make_store, wall, uhr, {1: 21.0})
+    _pruefen(rt)
+    speichern = []
+    original = StateStore._save
+    monkeypatch.setattr(StateStore, "_save", staticmethod(lambda p, c: (speichern.append(c), original(p, c))[1]))
+
+    _lauf(rt, 2 * STUNDE, schritt=MINUTE)
+
+    assert speichern == []
+    assert "kaelteschutz_zaehlung" not in (tmp_path / "backup.json").read_text()
+
+
+def test_die_zaehlung_schreibt_hoechstens_im_fuenf_minuten_raster_und_nie_je_pruefung(
+    make_store, wall, uhr, tmp_path, monkeypatch,
+):
+    rt = _neu(make_store, wall, uhr, {1: 4.0}, soll=None)
+    speichern = []
+    original = StateStore._save
+    monkeypatch.setattr(StateStore, "_save", staticmethod(lambda p, c: (speichern.append(c), original(p, c))[1]))
+    _pruefen(rt)
+
+    _lauf(rt, 14 * MINUTE, schritt=MINUTE)  # 15 Pruefungen
+
+    zaehlungen = [c["kaelteschutz_zaehlung"] for c in speichern if "kaelteschutz_zaehlung" in c]
+    assert [z["zuletzt"][11:16] for z in zaehlungen] == ["10:00", "10:05", "10:10"]  # UTC; Beginn 10:00
+    assert all(z["frost_seit"] == [[1, "2026-10-03T10:00:00+00:00"]] and "soll_seit" not in z for z in zaehlungen)
+    assert "2026-10-03T10:10:00+00:00" in (tmp_path / "backup.json").read_text()
+
+
+def test_ein_schreibfehler_der_zaehlung_bricht_den_check_nicht_ab(make_store, wall, uhr, monkeypatch):
+    rt = _neu(make_store, wall, uhr, {1: 4.0}, soll=None)
+
+    def _scheitert(pfad, inhalt):
+        raise StorageError("Datentraeger voll")
+
+    monkeypatch.setattr(rt.store, "_save", _scheitert)
+    _pruefen(rt)
+    _lauf(rt, 10 * MINUTE, schritt=MINUTE)  # wirft nicht
+
+    assert rt.store.storage_failed and rt.store.state.kaelteschutz_zaehlung.frost_seit  # die Zaehlung lief im Speicher
+
+
+def test_ein_neustart_nach_dem_lauf_beginnt_ohne_zaehlung(make_store, wall, uhr, tmp_path):
+    rt = _gestartet(make_store, wall, uhr)
+
+    assert rt.store.state.kaelteschutz_zaehlung == KaelteschutzZustand()
+    assert "kaelteschutz_zaehlung" not in (tmp_path / "backup.json").read_text()
+
+
+@pytest.mark.parametrize("zaehlung", [
+    "text", {"soll_seit": "kein Datum"}, {"soll_seit": "2026-10-03T10:00:00"}, {"frost_seit": [[1]]},
+    {"frost_seit": [["x", "2026-10-03T10:00:00+00:00"]]}, {"frost_seit": [[True, "2026-10-03T10:00:00+00:00"]]},
+    {"frost_seit": "2026-10-03T10:00:00+00:00"}, {"zuletzt": 5},
+], ids=["kein_dict", "datum_unlesbar", "ohne_zeitzone", "paar_kurz", "raum_text", "raum_bool", "frost_kein_paar",
+        "zuletzt_zahl"])
+def test_eine_kaputte_zaehlung_in_der_datei_gilt_als_keine_zaehlung(make_store, zaehlung):
+    store = make_store(backup={"last_room_target": 21.0, **RESTORE_POINT, "kaelteschutz_zaehlung": zaehlung})
+
+    assert store.state.kaelteschutz_zaehlung == KaelteschutzZustand()
+
+
+def test_eine_gueltige_zaehlung_wird_gelesen_und_die_zeit_in_utc_gefuehrt(make_store):
+    store = make_store(backup={"last_room_target": 21.0, **RESTORE_POINT, "kaelteschutz_zaehlung": {
+        "soll_seit": "2026-10-03T12:00:00+02:00", "frost_seit": [[2, "2026-10-03T12:30:00+02:00"]],
+        "zuletzt": "2026-10-03T12:35:00+02:00",
+    }})
+
+    zaehlung = store.state.kaelteschutz_zaehlung
+    utc = ZoneInfo("UTC")
+    assert zaehlung.soll_seit == datetime(2026, 10, 3, 10, 0, tzinfo=utc)
+    assert zaehlung.frost_seit == ((2, datetime(2026, 10, 3, 10, 30, tzinfo=utc)),)
+    assert zaehlung.zuletzt == datetime(2026, 10, 3, 10, 35, tzinfo=utc)
 
 
 def test_ein_altbestand_ohne_die_neuen_felder_laedt_ohne_lauf(make_store):

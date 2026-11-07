@@ -153,3 +153,15 @@ def test_ak_g2_08_frost_im_kontrollraum_bei_warmem_referenzraum_haelt_den_lauf_b
     anlage.ha.states[KONTROLLRAUM] = 7.0  # alle Raeume mindestens 7 Grad: zurueck auf die Werte des Servers
     anlage.vergehen(10 * 60, SERVER, 21.0)
     assert _stand(anlage, satz) == SERVER
+
+
+@pytest.mark.akzeptanz("AK-G2-09")
+def test_ak_g2_09_neustart_zwischendurch_setzt_die_frostnaehe_zaehlung_nicht_zurueck(welt):
+    anlage, satz = _warm_gestartet(welt)
+    anlage.raum(4.0)
+    anlage.laufen(10 * 60, takt=60)  # zehn Minuten unter 5 Grad: noch kein Lauf
+    assert _stand(anlage, satz) == SERVER
+    anlage.neu_starten()  # der Prozess startet mitten in der Zaehlung neu, der Fuehler meldet weiter 4 Grad
+    anlage.raum(4.0)
+    anlage.laufen(10 * 60, takt=60)  # 20 Minuten seit dem Beginn der Kaelte, aber nur 10 seit dem Neustart
+    assert _stand(anlage, satz) == COMFORT_BOOST

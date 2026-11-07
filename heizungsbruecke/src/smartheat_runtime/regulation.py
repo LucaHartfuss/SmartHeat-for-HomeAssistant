@@ -20,7 +20,7 @@ from smartheat_runtime import kreiszustand, testphase
 from smartheat_runtime.plausibility import ROOM_ACTUAL_RANGE, is_plausible
 from smartheat_runtime.ports import SignalUngueltig
 from smartheat_runtime.runtime import Runtime
-from smartheat_runtime.state import parse_since
+from smartheat_runtime.state import StorageError, parse_since
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +261,7 @@ def _kaelteschutz_buchen(rt: Runtime, schutz: _Schutz, now: datetime, notfall_la
     entscheidung = schutz.entscheidung
     if entscheidung.gestartet:
         if not notfall_laeuft:
-            rt.store.update(kaelteschutz_zaehlung=replace(schutz.vorher, zuletzt=entscheidung.zustand.zuletzt))
+            _zaehlung_merken(rt, replace(schutz.vorher, zuletzt=entscheidung.zustand.zuletzt))
             return
         logger.warning("Kaelteschutz startet (%s)", entscheidung.grund)
         rt.store.update(
@@ -269,16 +269,29 @@ def _kaelteschutz_buchen(rt: Runtime, schutz: _Schutz, now: datetime, notfall_la
             kaelteschutz_zaehlung=KaelteschutzZustand(),
         )
     elif not schutz.lauf:
-        merker = {}
-        if schutz.lief:
-            logger.info("Kaelteschutz endet (%s)", entscheidung.grund)
-            # Der Lauf hat die Zone auf Manuell gestellt und die Hilfswerte neu gemerkt; sein Ende schreibt nur die
-            # Hebel zurueck. Steht der Kreis ausser Betrieb oder in der Testphase, stellt der naechste Check darum
-            # Hebel und Hilfswerte noch einmal zurueck (in Betrieb sind beide Merker ohnehin nicht gesetzt).
-            merker = {"ausser_betrieb_rueckgestellt": False, "testphase_rueckgestellt": False}
+        if not schutz.lief:
+            # Eine Art ohne Lauf (unlesbarer Beginn aus einer fremden Datei) gilt nicht als Lauf und wird geloescht.
+            _zaehlung_merken(rt, entscheidung.zustand, lauf_loeschen=True)
+            return
+        logger.info("Kaelteschutz endet (%s)", entscheidung.grund)
+        # Der Lauf hat die Zone auf Manuell gestellt und die Hilfswerte neu gemerkt; sein Ende schreibt nur die
+        # Hebel zurueck. Steht der Kreis ausser Betrieb oder in der Testphase, stellt der naechste Check darum
+        # Hebel und Hilfswerte noch einmal zurueck (in Betrieb sind beide Merker ohnehin nicht gesetzt).
         rt.store.update(
-            kaelteschutz_art=None, kaelteschutz_seit=None, kaelteschutz_zaehlung=entscheidung.zustand, **merker,
+            kaelteschutz_art=None, kaelteschutz_seit=None, kaelteschutz_zaehlung=entscheidung.zustand,
+            ausser_betrieb_rueckgestellt=False, testphase_rueckgestellt=False,
         )
+
+
+def _zaehlung_merken(rt: Runtime, zustand: KaelteschutzZustand, *, lauf_loeschen: bool = False) -> None:
+    """Merkt den Zaehlzustand der Ausloeser. backup.json aendert sich dabei nur, solange eine Zaehlung laeuft (und dann
+    hoechstens alle fuenf Minuten, state._ZULETZT_RASTER_SEKUNDEN). Ein Schreibfehler bricht den Check nicht ab: der Wert
+    bleibt im Speicher, die Datentraeger-Meldung kommt ueber den Health-Takt (`flush`); ohne Datei zaehlt ein Neustart neu."""
+    lauf = {"kaelteschutz_art": None, "kaelteschutz_seit": None} if lauf_loeschen else {}
+    try:
+        rt.store.update(kaelteschutz_zaehlung=zustand, **lauf)
+    except StorageError:
+        logger.debug("Kaelteschutz: Zaehlung nicht gespeichert (Datentraeger)")
 
 
 def _track_boost_since(rt: Runtime, now: datetime, was_active: bool) -> None:
