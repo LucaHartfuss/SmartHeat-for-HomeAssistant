@@ -905,6 +905,10 @@
     },
     "aux_originals": {
      "mode_select": "auto"
+    },
+    "kaelteschutz_zaehlung": {
+     "soll_seit": "2026-01-15T11:01:00+00:00",
+     "zuletzt": "2026-01-15T11:00:00+00:00"
     }
    },
    "runtime/kreis-1/failsafe_state.json": {
@@ -1339,6 +1343,10 @@
     },
     "aux_originals": {
      "mode_select": "auto"
+    },
+    "kaelteschutz_zaehlung": {
+     "soll_seit": "2026-01-15T11:02:00+00:00",
+     "zuletzt": "2026-01-15T11:00:00+00:00"
     }
    },
    "runtime/kreis-1/failsafe_state.json": {
