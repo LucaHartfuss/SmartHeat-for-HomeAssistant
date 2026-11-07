@@ -19,15 +19,18 @@ from runtime_helpers import (
     _trigger,
 )
 from test_runtime_kaelteschutz import (
+    DAY,
     EMERGENCY,
     MINUTE,
     RESTORE,
     STUNDE,
     _ist,
+    _kreis,
     _lauf,
     _lauft,
     _neu,
     _pruefen,
+    _store_in,
     _writes,
     uhr,  # noqa: F401 - Fixture
     wall,  # noqa: F401 - Fixture
@@ -215,11 +218,24 @@ def test_altbestand_ohne_zustandsfeld_ist_in_betrieb_und_regelt(env):
 
 # --- Kaelteschutz in der Testphase (Kreis von Hand gebaut, Zustand ueber die Config) ---
 
-def _kreis_ohne(make_store, wall, uhr, ist, **optionen):  # noqa: F811
-    rt = _neu(make_store, wall, uhr, ist, **optionen)
-    rt.config = dataclasses.replace(rt.config, zustand_source=lambda: OHNE)
-    rt.testphase_rueckgestellt = False
+def _mit_zustand(rt, zustand=OHNE):
+    """Macht den Kreis zu einem mit wechselbarem Zustand (`rt.zustand[0]`)."""
+    rt.zustand = [zustand]
+    rt.config = dataclasses.replace(rt.config, zustand_source=lambda: rt.zustand[0])
     return rt
+
+
+def _kreis_ohne(make_store, wall, uhr, ist, **optionen):  # noqa: F811
+    return _mit_zustand(_neu(make_store, wall, uhr, ist, **optionen))
+
+
+def _neustart_ohne(make_store, wall, uhr, ist, zustand=OHNE):  # noqa: F811
+    """Derselbe Kreis nach einem Prozessneustart: neuer Speicher aus denselben Dateien, neue Laufzeit."""
+    return _mit_zustand(_kreis(make_store(), wall, uhr, ist, soll=21.0), zustand)
+
+
+def _rueckgestellt(rt):
+    return rt.store.state.testphase_rueckgestellt
 
 
 def test_der_eintritt_stellt_zurueck_und_ruht_dann_im_kreis_von_hand(make_store, wall, uhr):  # noqa: F811
@@ -228,7 +244,71 @@ def test_der_eintritt_stellt_zurueck_und_ruht_dann_im_kreis_von_hand(make_store,
     assert _writes(rt) == RESTORE
     _lauf(rt, 2 * STUNDE)
     assert _writes(rt) == RESTORE
-    assert rt.testphase_rueckgestellt is True
+    assert _rueckgestellt(rt) is True
+
+
+def test_ein_neustart_in_der_testphase_stellt_nicht_erneut_zurueck(make_store, wall, uhr):  # noqa: F811
+    rt = _kreis_ohne(make_store, wall, uhr, {1: 21.0})
+    _pruefen(rt)
+    assert _writes(rt) == RESTORE
+    neu = _neustart_ohne(make_store, wall, uhr, {1: 21.0})
+    assert _rueckgestellt(neu) is True
+    _lauf(neu, 2 * STUNDE)
+    assert _writes(neu) == []  # die Handaenderung eines Bewohners bleibt stehen
+
+
+def test_ein_zustandswechsel_zwischendurch_stellt_nach_dem_neustart_noch_einmal_zurueck(make_store, wall, uhr):  # noqa: F811
+    rt = _kreis_ohne(make_store, wall, uhr, {1: 21.0})
+    _pruefen(rt)
+    rt.zustand[0] = BETRIEB
+    _pruefen(rt)
+    assert _rueckgestellt(rt) is False
+    neu = _neustart_ohne(make_store, wall, uhr, {1: 21.0}, zustand=OHNE)  # neuer Eintritt nach dem Neustart
+    _lauf(neu, 10 * MINUTE)
+    assert _writes(neu) == RESTORE
+    assert _rueckgestellt(neu) is True
+    spaeter = _neustart_ohne(make_store, wall, uhr, {1: 21.0})
+    _lauf(spaeter, 10 * MINUTE)
+    assert _writes(spaeter) == []
+
+
+def test_ein_bestandsstand_ohne_merker_stellt_einmal_zurueck(make_store, wall, uhr):  # noqa: F811
+    rt = _kreis_ohne(make_store, wall, uhr, {1: 21.0}, backup={"last_daily_trigger_date": DAY})
+    assert _rueckgestellt(rt) is False
+    _pruefen(rt)
+    assert _writes(rt) == RESTORE
+    _lauf(rt, STUNDE)
+    assert _writes(rt) == RESTORE
+
+
+def test_der_merker_fehlt_in_backup_json_solange_er_nicht_gesetzt_ist(make_store, wall, uhr, tmp_path):  # noqa: F811
+    rt = _kreis_ohne(make_store, wall, uhr, {1: 21.0})
+    rt.zustand[0] = BETRIEB
+    _lauf(rt, 10 * MINUTE)
+    assert "testphase_rueckgestellt" not in (tmp_path / "backup.json").read_text()
+    rt.zustand[0] = OHNE
+    _pruefen(rt)
+    assert '"testphase_rueckgestellt": true' in (tmp_path / "backup.json").read_text()
+
+
+def test_zwei_kreise_fuehren_ihren_merker_getrennt(tmp_path, wall, uhr):  # noqa: F811
+    def kreis(name, zustand):
+        store = _store_in(tmp_path / name, {"restore_point": {"curve": 0.3, "room_setpoint": 1.0}, "last_room_target": 21.0})
+        return _mit_zustand(_kreis(store, wall, uhr, {1: 21.0}, soll=21.0), zustand)
+
+    a, b = kreis("a", OHNE), kreis("b", OHNE)
+    _pruefen(a)
+    _pruefen(b)
+    assert _writes(a) == RESTORE and _writes(b) == RESTORE
+    b.zustand[0] = BETRIEB
+    _pruefen(b)
+    assert _rueckgestellt(a) is True and _rueckgestellt(b) is False
+    a2 = _mit_zustand(_kreis(_store_in(tmp_path / "a"), wall, uhr, {1: 21.0}, soll=21.0))
+    b2 = _mit_zustand(_kreis(_store_in(tmp_path / "b"), wall, uhr, {1: 21.0}, soll=21.0))
+    _pruefen(a2)
+    _pruefen(b2)
+    assert _writes(a2) == []  # Kreis A ruht seit dem Eintritt
+    assert _writes(b2) == RESTORE  # Kreis B tritt neu ein
 
 
 def test_der_soll_kaelteschutz_startet_in_der_testphase_und_endet_wieder_in_der_ruhe(make_store, wall, uhr):  # noqa: F811
@@ -267,10 +347,11 @@ def test_der_frostnaehe_kaelteschutz_startet_in_der_testphase(make_store, wall, 
 def _stub(zustand, *, abo_finished=False, rueckgestellt=False, restore_ok=True):
     aufrufe = []
     override = types.SimpleNamespace(restore_for_pause=lambda: aufrufe.append(1) or restore_ok)
+    state = types.SimpleNamespace(abo_finished=abo_finished, testphase_rueckgestellt=rueckgestellt)
+    store = types.SimpleNamespace(state=state, update=lambda **felder: state.__dict__.update(felder))
     rt = types.SimpleNamespace(
-        config=types.SimpleNamespace(zustand_source=lambda: zustand),
-        store=types.SimpleNamespace(state=types.SimpleNamespace(abo_finished=abo_finished)),
-        override=override, testphase_rueckgestellt=rueckgestellt, zone_prepared=True)
+        config=types.SimpleNamespace(zustand_source=lambda: zustand), store=store, override=override,
+        zone_prepared=True)
     return rt, aufrufe
 
 
@@ -283,19 +364,19 @@ def test_nach_dem_abo_ende_gibt_es_nichts_zurueckzustellen():
 def test_ausserhalb_der_testphase_ist_der_kreis_nicht_in_ruhe_und_der_merker_faellt():
     rt, aufrufe = _stub(BETRIEB, rueckgestellt=True)
     assert testphase.pruefen(rt) is False
-    assert rt.testphase_rueckgestellt is False
+    assert rt.store.state.testphase_rueckgestellt is False
     assert aufrufe == []
 
 
 def test_der_kreis_ruht_erst_nach_erfolgreicher_rueckstellung():
     rt, aufrufe = _stub(OHNE)
     assert testphase.pruefen(rt) is True
-    assert rt.testphase_rueckgestellt is True
+    assert rt.store.state.testphase_rueckgestellt is True
     assert testphase.pruefen(rt) is True
     assert aufrufe == [1]  # nur beim Eintritt
     offen, _ = _stub(OHNE, restore_ok=False)
     assert testphase.pruefen(offen) is False
-    assert offen.testphase_rueckgestellt is False
+    assert offen.store.state.testphase_rueckgestellt is False
 
 
 def test_nach_der_rueckstellung_gilt_die_zone_als_nicht_vorbereitet():

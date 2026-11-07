@@ -269,15 +269,15 @@ def _kaelteschutz_buchen(rt: Runtime, schutz: _Schutz, now: datetime, notfall_la
             kaelteschutz_zaehlung=KaelteschutzZustand(),
         )
     elif not schutz.lauf:
+        merker = {}
         if schutz.lief:
             logger.info("Kaelteschutz endet (%s)", entscheidung.grund)
             # Der Lauf hat die Zone auf Manuell gestellt und die Hilfswerte neu gemerkt; sein Ende schreibt nur die
             # Hebel zurueck. Steht der Kreis ausser Betrieb oder in der Testphase, stellt der naechste Check darum
             # Hebel und Hilfswerte noch einmal zurueck (in Betrieb sind beide Merker ohnehin nicht gesetzt).
-            rt.ausser_betrieb_rueckgestellt = False
-            rt.testphase_rueckgestellt = False
+            merker = {"ausser_betrieb_rueckgestellt": False, "testphase_rueckgestellt": False}
         rt.store.update(
-            kaelteschutz_art=None, kaelteschutz_seit=None, kaelteschutz_zaehlung=entscheidung.zustand,
+            kaelteschutz_art=None, kaelteschutz_seit=None, kaelteschutz_zaehlung=entscheidung.zustand, **merker,
         )
 
 

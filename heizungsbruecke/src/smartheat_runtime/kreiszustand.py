@@ -22,19 +22,21 @@ def pruefen(rt: Runtime) -> bool:
     """Fuehrt den Eintritt nach und gibt zurueck, ob der Kreis ruht (ausser Betrieb und Rueckstellung erledigt). Beim
     Eintritt wird einmal zurueckgestellt, auch der Comfort-Boost endet; scheitert das, bleibt die Rueckstellung offen und
     der naechste Check versucht es erneut. Ein laufender Kaelteschutz schiebt sie bis zu seinem Ende auf (er schuetzt
-    weiter). Ein Wechsel zurueck nach `in_betrieb` setzt den Merker zurueck, damit ein weiterer Eintritt wieder
-    zurueckstellt. Nach `abo_finished` des ganzen Geraets gibt es nichts zurueckzustellen."""
+    weiter). Der Merker steht in backup.json: ein Neustart mitten im Zustand wiederholt die Rueckstellung nicht und
+    ueberschreibt keine Handaenderung. Ein Wechsel zurueck nach `in_betrieb` setzt den Merker zurueck, damit ein
+    weiterer Eintritt wieder zurueckstellt. Nach `abo_finished` des ganzen Geraets gibt es nichts zurueckzustellen."""
     state = rt.store.state
     if state.abo_finished:
         return False
     if not ausser_betrieb(rt):
-        rt.ausser_betrieb_rueckgestellt = False
+        if state.ausser_betrieb_rueckgestellt:
+            rt.store.update(ausser_betrieb_rueckgestellt=False)
         return False
-    if not rt.ausser_betrieb_rueckgestellt and state.kaelteschutz_art is None:
+    if not state.ausser_betrieb_rueckgestellt and state.kaelteschutz_art is None:
         if rt.override.restore_and_clear(True):
-            rt.ausser_betrieb_rueckgestellt = True
             rt.zone_prepared = False  # die Zone steht wieder auf dem Zeitprogramm: die Rueckkehr bereitet sie neu vor
+            rt.store.update(ausser_betrieb_rueckgestellt=True)
             logger.info("Kreis ausser Betrieb: Hebel auf die Ursprungswerte zurueckgestellt")
         else:
             logger.info("Kreis ausser Betrieb: Rueckstellung offen, naechster Check versucht es erneut")
-    return rt.ausser_betrieb_rueckgestellt
+    return rt.store.state.ausser_betrieb_rueckgestellt

@@ -79,7 +79,6 @@ def _zonen_kreis(make_store, wall, uhr, zustand):  # noqa: F811
     rt.override.capture_originals()
     assert rt.store.state.aux_originals == {"mode_select": ZEITPROGRAMM}
     rt.config = dataclasses.replace(rt.config, zustand_source=lambda: zustand)
-    rt.ausser_betrieb_rueckgestellt = rt.testphase_rueckgestellt = False
     uhr.advance(VAILLANT_MYPYLLANT.settle_seconds + 1)
     return rt
 

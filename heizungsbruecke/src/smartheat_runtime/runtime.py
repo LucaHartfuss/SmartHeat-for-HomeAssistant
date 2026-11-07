@@ -74,11 +74,6 @@ class Runtime:
     # Start: Zone auf Manuell mit brauchbarer Parallelverschiebung. Bis es
     # einmal geklappt hat, versucht es jeder lokale Check erneut. Nicht persistiert.
     zone_prepared: bool = False
-    # Testphase ohne Setwell: die Rueckstellung beim Eintritt ist erledigt. Nach einem Prozessstart mitten in der Phase
-    # stellt der erste Check einmal erneut zurueck. Nicht persistiert.
-    testphase_rueckgestellt: bool = False
-    # Kreis ausser Betrieb: die Rueckstellung beim Eintritt ist erledigt (wie testphase_rueckgestellt). Nicht persistiert.
-    ausser_betrieb_rueckgestellt: bool = False
     # Soll-Quelle aus (Thermostat aus oder Frostschutz-Stellung, soll_eingang.SollEingang.aus): der Speicher haelt dann
     # den alten Wunsch, der Kaelteschutz rechnet ohne Soll. Gesetzt vom Ereignis EV_SOLL_QUELLE (app). Nicht persistiert.
     soll_quelle_aus: bool = False

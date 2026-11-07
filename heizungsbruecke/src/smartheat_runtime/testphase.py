@@ -19,18 +19,21 @@ def aktiv(rt: Runtime) -> bool:
 def pruefen(rt: Runtime) -> bool:
     """Fuehrt den Eintritt in die Testphase nach und gibt zurueck, ob der Kreis in Ruhe ist (Testphase und Rueckstellung
     erledigt). Beim Eintritt wird einmal zurueckgestellt; scheitert das, bleibt die Rueckstellung offen und der naechste
-    Check versucht es erneut. Ein Wechsel zurueck nach `in_betrieb` setzt den Merker zurueck, damit eine weitere Phase
-    wieder zurueckstellt. Nach einem Abo-Ende gibt es nichts zurueckzustellen."""
-    if rt.store.state.abo_finished:
+    Check versucht es erneut. Der Merker steht in backup.json: ein Neustart mitten in der Phase wiederholt die
+    Rueckstellung nicht und ueberschreibt keine Handaenderung. Ein Wechsel zurueck nach `in_betrieb` setzt den Merker
+    zurueck, damit eine weitere Phase wieder zurueckstellt. Nach einem Abo-Ende gibt es nichts zurueckzustellen."""
+    state = rt.store.state
+    if state.abo_finished:
         return False
     if not aktiv(rt):
-        rt.testphase_rueckgestellt = False
+        if state.testphase_rueckgestellt:
+            rt.store.update(testphase_rueckgestellt=False)
         return False
-    if not rt.testphase_rueckgestellt:
+    if not state.testphase_rueckgestellt:
         if rt.override.restore_for_pause():
-            rt.testphase_rueckgestellt = True
             rt.zone_prepared = False  # die Zone steht wieder auf dem Zeitprogramm: die Rueckkehr bereitet sie neu vor
+            rt.store.update(testphase_rueckgestellt=True)
             logger.info("Testphase ohne Setwell: Hebel auf die Ursprungswerte zurueckgestellt")
         else:
             logger.info("Testphase ohne Setwell: Rueckstellung offen, naechster Check versucht es erneut")
-    return rt.testphase_rueckgestellt
+    return rt.store.state.testphase_rueckgestellt

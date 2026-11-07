@@ -19,6 +19,7 @@ from runtime_helpers import (
     _start,
 )
 from test_runtime_kaelteschutz import (
+    DAY,
     EMERGENCY,
     MINUTE,
     RESTORE,
@@ -227,7 +228,6 @@ def _kreis_ausser(rt, zustand=AUSSER):
     """Macht den Kreis zu einem mit wechselbarem Zustand (`rt.zustand[0]`)."""
     rt.zustand = [zustand]
     rt.config = dataclasses.replace(rt.config, zustand_source=lambda: rt.zustand[0])
-    rt.ausser_betrieb_rueckgestellt = False
     return rt
 
 
@@ -241,8 +241,81 @@ def test_der_eintritt_stellt_zurueck_und_ruht_dann_im_kreis_von_hand(make_store,
     assert _writes(rt) == RESTORE
     _lauf(rt, 2 * STUNDE)
     assert _writes(rt) == RESTORE
-    assert rt.ausser_betrieb_rueckgestellt is True
+    assert rt.store.state.ausser_betrieb_rueckgestellt is True
     assert rt.store.state.abo_finished is False
+
+
+def _neustart_ausser(make_store, wall, uhr, ist, zustand=AUSSER):  # noqa: F811
+    """Derselbe Kreis nach einem Prozessneustart: neuer Speicher aus denselben Dateien, neue Laufzeit."""
+    return _kreis_ausser(_kreis(make_store(), wall, uhr, ist, soll=21.0), zustand)
+
+
+def test_ein_neustart_ausser_betrieb_stellt_nicht_erneut_zurueck(make_store, wall, uhr):  # noqa: F811
+    rt = _ausser(make_store, wall, uhr, {1: 21.0})
+    _pruefen(rt)
+    assert _writes(rt) == RESTORE
+    neu = _neustart_ausser(make_store, wall, uhr, {1: 21.0})
+    assert neu.store.state.ausser_betrieb_rueckgestellt is True
+    _lauf(neu, 2 * STUNDE)
+    assert _writes(neu) == []  # die Handaenderung eines Bewohners bleibt stehen
+
+
+def test_ein_zustandswechsel_zwischendurch_stellt_nach_dem_neustart_noch_einmal_zurueck(make_store, wall, uhr):  # noqa: F811
+    rt = _ausser(make_store, wall, uhr, {1: 21.0})
+    _pruefen(rt)
+    rt.zustand[0] = BETRIEB
+    _pruefen(rt)
+    assert rt.store.state.ausser_betrieb_rueckgestellt is False
+    neu = _neustart_ausser(make_store, wall, uhr, {1: 21.0})  # neuer Eintritt nach dem Neustart
+    _lauf(neu, 10 * MINUTE)
+    assert _writes(neu) == RESTORE
+    spaeter = _neustart_ausser(make_store, wall, uhr, {1: 21.0})
+    _lauf(spaeter, 10 * MINUTE)
+    assert _writes(spaeter) == []
+
+
+def test_ein_bestandsstand_ohne_merker_stellt_einmal_zurueck(make_store, wall, uhr):  # noqa: F811
+    rt = _ausser(make_store, wall, uhr, {1: 21.0}, backup={"last_daily_trigger_date": DAY})
+    assert rt.store.state.ausser_betrieb_rueckgestellt is False
+    _lauf(rt, STUNDE)
+    assert _writes(rt) == RESTORE
+
+
+def test_der_merker_testphase_und_ausser_betrieb_sind_getrennt(make_store, wall, uhr):  # noqa: F811
+    rt = _ausser(make_store, wall, uhr, {1: 21.0})
+    _pruefen(rt)
+    assert rt.store.state.testphase_rueckgestellt is False
+    assert rt.store.state.ausser_betrieb_rueckgestellt is True
+
+
+def test_zwei_kreise_fuehren_ihren_merker_getrennt(tmp_path, wall, uhr):  # noqa: F811
+    def kreis(name, zustand):
+        store = _store_in(tmp_path / name, {"restore_point": {"curve": 0.3, "room_setpoint": 1.0}, "last_room_target": 21.0})
+        return _kreis_ausser(_kreis(store, wall, uhr, {1: 21.0}, soll=21.0), zustand)
+
+    a, b = kreis("a", AUSSER), kreis("b", AUSSER)
+    _pruefen(a)
+    _pruefen(b)
+    b.zustand[0] = BETRIEB
+    _pruefen(b)
+    a2 = _kreis_ausser(_kreis(_store_in(tmp_path / "a"), wall, uhr, {1: 21.0}, soll=21.0))
+    b2 = _kreis_ausser(_kreis(_store_in(tmp_path / "b"), wall, uhr, {1: 21.0}, soll=21.0))
+    _pruefen(a2)
+    _pruefen(b2)
+    assert _writes(a2) == [] and _writes(b2) == RESTORE
+
+
+def test_eine_gescheiterte_rueckstellung_laesst_den_merker_aus_und_der_naechste_check_wiederholt_sie(make_store, wall, uhr):  # noqa: F811
+    rt = _ausser(make_store, wall, uhr, {1: 21.0})
+    echt = rt.override.restore_and_clear
+    rt.override.restore_and_clear = lambda immer: False
+    _pruefen(rt)
+    assert rt.store.state.ausser_betrieb_rueckgestellt is False
+    neu = _neustart_ausser(make_store, wall, uhr, {1: 21.0})  # auch nach einem Neustart steht sie offen
+    assert neu.store.state.ausser_betrieb_rueckgestellt is False
+    rt.override.restore_and_clear = echt
+    _pruefen(rt)
+    assert rt.store.state.ausser_betrieb_rueckgestellt is True and _writes(rt) == RESTORE
 
 
 def test_der_soll_ausloeser_startet_im_ausser_betrieb_nicht(make_store, wall, uhr):  # noqa: F811
@@ -350,7 +423,7 @@ def test_nach_dem_abo_ende_des_geraets_laeuft_auch_im_ausser_betrieb_kein_kaelte
     rt.store.update(abo_finished=True)
     _lauf(rt, 2 * STUNDE, schritt=MINUTE)
     assert _writes(rt) == [] and rt.store.state.kaelteschutz_art is None
-    assert rt.ausser_betrieb_rueckgestellt is False
+    assert rt.store.state.ausser_betrieb_rueckgestellt is False
 
 
 def test_ein_laufender_frostlauf_schiebt_die_rueckstellung_bis_zu_seinem_ende_auf(make_store, wall, uhr):  # noqa: F811
@@ -361,10 +434,10 @@ def test_ein_laufender_frostlauf_schiebt_die_rueckstellung_bis_zu_seinem_ende_au
     rt.zustand[0] = AUSSER
     _lauf(rt, 30 * MINUTE)
     assert rt.store.state.kaelteschutz_art == "frost"  # der Lauf schuetzt weiter, nichts wird zurueckgestellt
-    assert _writes(rt) == EMERGENCY and rt.ausser_betrieb_rueckgestellt is False
+    assert _writes(rt) == EMERGENCY and rt.store.state.ausser_betrieb_rueckgestellt is False
     _ist(rt, r1=9.0)
     _lauf(rt, 10 * MINUTE)
-    assert rt.store.state.kaelteschutz_art is None and rt.ausser_betrieb_rueckgestellt is True
+    assert rt.store.state.kaelteschutz_art is None and rt.store.state.ausser_betrieb_rueckgestellt is True
     # Das Ende des Laufs stellt zurueck, danach der Eintritt auf dieselben Werte (die Anlage-Attrappe merkt sich ihren
     # Stand nicht; eine echte Anlage ueberspringt das zweite Schreiben).
     assert _writes(rt) == EMERGENCY + RESTORE + RESTORE
@@ -381,7 +454,7 @@ def test_die_rueckkehr_beendet_einen_laufenden_frostlauf_nach_den_ankunftsregeln
     rt.zustand[0] = BETRIEB
     _ist(rt, r1=21.0)
     _lauf(rt, 10 * MINUTE)
-    assert not _lauft(rt) and rt.ausser_betrieb_rueckgestellt is False  # der Merker faellt mit der Rueckkehr
+    assert not _lauft(rt) and rt.store.state.ausser_betrieb_rueckgestellt is False  # der Merker faellt mit der Rueckkehr
 
 
 def test_zwei_kreise_laufen_unabhaengig(tmp_path, wall, uhr):  # noqa: F811
@@ -406,10 +479,12 @@ def test_zwei_kreise_laufen_unabhaengig(tmp_path, wall, uhr):  # noqa: F811
 def _stub(zustand, *, abo_finished=False, rueckgestellt=False, restore_ok=True):
     aufrufe = []
     override = types.SimpleNamespace(restore_and_clear=lambda immer: aufrufe.append(immer) or restore_ok)
+    state = types.SimpleNamespace(abo_finished=abo_finished, kaelteschutz_art=None,
+                                  ausser_betrieb_rueckgestellt=rueckgestellt)
+    store = types.SimpleNamespace(state=state, update=lambda **felder: state.__dict__.update(felder))
     rt = types.SimpleNamespace(
-        config=types.SimpleNamespace(zustand_source=lambda: zustand),
-        store=types.SimpleNamespace(state=types.SimpleNamespace(abo_finished=abo_finished, kaelteschutz_art=None)),
-        override=override, ausser_betrieb_rueckgestellt=rueckgestellt, zone_prepared=True)
+        config=types.SimpleNamespace(zustand_source=lambda: zustand), store=store, override=override,
+        zone_prepared=True)
     return rt, aufrufe
 
 
@@ -422,7 +497,7 @@ def test_nach_dem_abo_ende_gibt_es_nichts_zurueckzustellen():
 def test_ausserhalb_des_ausser_betriebs_faellt_der_merker():
     rt, aufrufe = _stub(BETRIEB, rueckgestellt=True)
     assert kreiszustand.pruefen(rt) is False
-    assert rt.ausser_betrieb_rueckgestellt is False
+    assert rt.store.state.ausser_betrieb_rueckgestellt is False
     assert aufrufe == []
 
 
@@ -434,12 +509,12 @@ def test_ein_anderer_zustand_ist_nicht_ausser_betrieb():
 def test_der_kreis_ruht_erst_nach_erfolgreicher_rueckstellung_und_die_rueckstellung_leert():
     rt, aufrufe = _stub(AUSSER)
     assert kreiszustand.pruefen(rt) is True
-    assert rt.ausser_betrieb_rueckgestellt is True
+    assert rt.store.state.ausser_betrieb_rueckgestellt is True
     assert kreiszustand.pruefen(rt) is True
     assert aufrufe == [True]  # nur beim Eintritt, immer auch den Comfort-Boost zurueck
     offen, _ = _stub(AUSSER, restore_ok=False)
     assert kreiszustand.pruefen(offen) is False
-    assert offen.ausser_betrieb_rueckgestellt is False
+    assert offen.store.state.ausser_betrieb_rueckgestellt is False
 
 
 def test_nach_der_rueckstellung_gilt_die_zone_als_nicht_vorbereitet():

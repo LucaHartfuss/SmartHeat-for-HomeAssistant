@@ -265,3 +265,21 @@ def test_ak_g9_12_status_zeigt_testphase_ausser_betrieb_und_kaelteschutz_je_krei
     assert _kreis_im_status(anlage)["kaelteschutz"] == "aus"
     _zustand_setzen(anlage, 4, "in_betrieb")
     assert _kreis_im_status(anlage)["zustand"] == "regelt"
+
+
+@pytest.mark.akzeptanz("AK-G9-13")
+@pytest.mark.parametrize("zustand", ["testphase_ohne", "ausser_betrieb"])
+def test_ak_g9_13_neustart_in_ausser_betrieb_oder_testphase_ohne_schreibt_nichts(welt, zustand):
+    anlage = boost_anlage(welt, heizgrenze=URSPRUNG_HEIZGRENZE)
+    _zustand_setzen(anlage, 2, zustand)
+    assert stand(anlage) == ENDZUSTAND  # einmal zurueckgestellt
+    anlage.app_verstellt(schreibziel(SATZ, "heat_limit"), 12.0)  # der Bewohner stellt einen Hebel von Hand
+    schreibaufrufe = len(anlage.ha.schreibvorgaenge)
+    anlage.neu_starten()
+    anlage.raum(20.0)
+    anlage.laufen(3600, takt=60)  # nach dem Neustart gibt es keinen Snapshot: der Server hat nichts zu antworten
+    assert len(anlage.ha.schreibvorgaenge) == schreibaufrufe  # der Neustart stellt nicht erneut zurueck
+    assert anlage.ha.states[schreibziel(SATZ, "heat_limit")] == 12.0
+    _zustand_setzen(anlage, 3, "in_betrieb")  # ein neuer Eintritt stellt wieder einmal zurueck
+    _zustand_setzen(anlage, 4, zustand)
+    assert anlage.ha.states[schreibziel(SATZ, "heat_limit")] == URSPRUNG_HEIZGRENZE

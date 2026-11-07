@@ -28,7 +28,9 @@ class StorageError(OSError):
     bleiben gueltig."""
 
 _NUMBER_FIELDS = ("last_room_target", "last_published_target_rt")
-_FLAG_FIELDS = ("boost_active", "emergency_boost_active")
+_FLAG_FIELDS = ("boost_active", "emergency_boost_active", "testphase_rueckgestellt", "ausser_betrieb_rueckgestellt")
+#: Merker, die nur gesetzt in backup.json stehen (ein Bestandsstand bleibt gleich und gilt als "nicht zurueckgestellt").
+_OMITTED_FLAGS = ("testphase_rueckgestellt", "ausser_betrieb_rueckgestellt")
 _TEXT_FIELDS = (
     "last_daily_trigger_date", "last_ack_at", "boost_since", "tenant_id", "plant_id", "kaelteschutz_art",
     "kaelteschutz_seit",
@@ -46,7 +48,7 @@ BACKUP_FIELDS = (
     _NUMBER_FIELDS + _FLAG_FIELDS + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + _OVERRIDE_FIELDS
     + ("write_budget",) + _PLAN3B_FIELDS
 )
-_OMITTED_WHEN_EMPTY = _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + ("write_budget",) + _PLAN3B_FIELDS
+_OMITTED_WHEN_EMPTY = _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + ("write_budget",) + _PLAN3B_FIELDS + _OMITTED_FLAGS
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,11 @@ class BridgeState:
     learned: dict = field(default_factory=dict)
     boost_active: bool = False
     emergency_boost_active: bool = False
+    # Die Rueckstellung beim Eintritt in `testphase_ohne` bzw. `ausser_betrieb` ist erledigt (testphase.py,
+    # kreiszustand.py). Ein Neustart mitten im Zustand wiederholt sie nicht; ein Wechsel des Zustands, auch die Rueckkehr
+    # nach `in_betrieb`, setzt den Merker zurueck. Fehlt er (Bestandsstand), gilt: nicht zurueckgestellt.
+    testphase_rueckgestellt: bool = False
+    ausser_betrieb_rueckgestellt: bool = False
     # Beginn des laufenden Comfort-Boosts (ISO), fuer die Hoechstdauer; None ohne Boost.
     boost_since: str | None = None
     # Laufender Kaelteschutz (regulation.py): Art ("soll" oder "frost") und Beginn (ISO mit Zeitzone); beide None ohne
@@ -419,7 +426,7 @@ class StateStore:
 # Einrichtung (bei jeder neuen Einrichtung zurueckgesetzt: Erstkontakt-Tick, frische Zustellung).
 _PLANT_BOUND = (
     "restore_point", "originals", "aux_originals", "learned", "boost_active", "emergency_boost_active", "boost_since",
-    "kaelteschutz_art", "kaelteschutz_seit", "manual_override", "manual_override_pending", "write_budget", "deferred_levers", "energy_state",
+    "testphase_rueckgestellt", "ausser_betrieb_rueckgestellt", "kaelteschutz_art", "kaelteschutz_seit", "manual_override", "manual_override_pending", "write_budget", "deferred_levers", "energy_state",
     "lifetime_writes", "last_room_target",
 )
 _SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")
