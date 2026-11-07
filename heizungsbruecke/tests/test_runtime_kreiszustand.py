@@ -272,7 +272,9 @@ def test_der_frostnaehe_kaelteschutz_startet_im_ausser_betrieb_und_endet_bei_all
     _ist(rt, r2=7.0)
     _lauf(rt, 10 * MINUTE)
     assert not _lauft(rt) and rt.store.state.kaelteschutz_art is None
-    assert _writes(rt) == EMERGENCY + RESTORE
+    # Das Ende des Laufs stellt die Hebel zurueck, der naechste Check stellt noch einmal zurueck (Zone und Hilfswerte;
+    # die Anlage-Attrappe merkt sich ihren Stand nicht, eine echte Anlage ueberspringt das zweite Schreiben).
+    assert _writes(rt) == EMERGENCY + RESTORE + RESTORE
     rt.ha_api.set_number_value.reset_mock()
     _lauf(rt, 2 * STUNDE)
     assert _writes(rt) == []

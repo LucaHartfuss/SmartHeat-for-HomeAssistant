@@ -243,7 +243,9 @@ def test_der_soll_kaelteschutz_startet_in_der_testphase_und_endet_wieder_in_der_
     _lauf(rt, STUNDE)
     assert not _lauft(rt) and rt.store.state.kaelteschutz_art is None
     assert rt.store.state.abo_finished is False
-    assert _writes(rt) == EMERGENCY + RESTORE  # Rueckweg = Ursprungswerte
+    # Rueckweg = Ursprungswerte: das Ende des Laufs stellt die Hebel zurueck, der naechste Check noch einmal (Zone und
+    # Hilfswerte; die Attrappe merkt sich ihren Stand nicht, eine echte Anlage ueberspringt das zweite Schreiben).
+    assert _writes(rt) == EMERGENCY + RESTORE + RESTORE
     rt.ha_api.set_number_value.reset_mock()
     _lauf(rt, 2 * STUNDE)
     assert _writes(rt) == []  # danach wieder Ruhe
