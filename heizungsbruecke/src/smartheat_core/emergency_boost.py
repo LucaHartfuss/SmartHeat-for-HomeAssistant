@@ -109,8 +109,14 @@ def kaelteschutz_entscheiden(
     delta: float | None,
     zustand: KaelteschutzZustand,
     arrival_threshold_k: float,
+    lauf_dauer: timedelta | None = None,
 ) -> KaelteschutzEntscheidung:
     """Kaelteschutz eines Kreises, rein (keine Uhr, kein I/O, keine Eingabe wird veraendert).
+
+    `lauf_dauer`: die Laufzeit eines laufenden Laufs nach einer monotonen Uhr, die der Aufrufer fuehrt (nur fuer einen
+    Lauf, den dieser Prozess gestartet hat). Mit ihr zaehlt die Hoechstdauer nach dieser Spanne und nicht nach
+    `jetzt - lauf_seit`: ein Sprung der Wanduhr beendet den Lauf weder zu frueh noch zu spaet. Ohne sie (None, etwa bei
+    einem Lauf aus einem frueheren Prozess) gilt die Wanduhr, und ein Zurueckspringen beendet den Lauf.
 
     `ist`: das Ist je Raum des Kreises, Referenz- und Kontrollraeume. `soll`: Soll effektiv oder None (kein Soll).
     `delta`: Abweichung der Referenzraeume (`raum_delta.delta`, nur aus Werten von `gueltige_ist`) oder None;
@@ -125,7 +131,7 @@ def kaelteschutz_entscheiden(
     einer gueltig; ein Frost-Lauf endet auch mit Soll nur so) oder nach KAELTESCHUTZ_HOECHSTDAUER; ein Fuehlerausfall beendet ihn nicht. Nach dem Ende beginnt
     alles von vorn."""
     if zustand.lauf_art is not None and zustand.lauf_seit is not None:
-        return _laufend(jetzt, ist, soll, delta, zustand, arrival_threshold_k)
+        return _laufend(jetzt, ist, soll, delta, zustand, arrival_threshold_k, lauf_dauer)
     return _zaehlen(jetzt, ist, soll, delta, zustand)
 
 
@@ -140,8 +146,8 @@ def _angekommen(jetzt, ist, soll, delta, arrival_threshold_k) -> bool:
     return bool(gueltig) and all(wert >= KAELTESCHUTZ_ENDE_OHNE_SOLL_C for wert in gueltig.values())
 
 
-def _laufend(jetzt, ist, soll, delta, zustand, arrival_threshold_k) -> KaelteschutzEntscheidung:
-    dauer = jetzt - zustand.lauf_seit
+def _laufend(jetzt, ist, soll, delta, zustand, arrival_threshold_k, lauf_dauer) -> KaelteschutzEntscheidung:
+    dauer = jetzt - zustand.lauf_seit if lauf_dauer is None else lauf_dauer
     if dauer < timedelta(0):
         return KaelteschutzEntscheidung("aus", "uhr_zurueck", False, KaelteschutzZustand())
     if dauer >= KAELTESCHUTZ_HOECHSTDAUER:

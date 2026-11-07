@@ -55,7 +55,7 @@ def _runtime(
         store.update(stable_target=room_target)
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, config=runtime_config(), store=store,
-        states=values, clock=clock or time.monotonic, boost_mono_start=None, soll_quelle_aus=False,
+        states=values, clock=clock or time.monotonic, boost_mono_start=None, kaelteschutz_mono_start=None, soll_quelle_aus=False,
         override=LeverPipeline(
             store, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), safety, **({} if clock is None else {"clock": clock}),
         ),

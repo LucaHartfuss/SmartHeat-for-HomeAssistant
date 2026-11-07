@@ -82,6 +82,10 @@ class Runtime:
     # stehen, jeder neue Start ueberschreibt ihn. Die 4-h-Grenze zaehlt auch hier, falls die Wanduhr zurueckspringt.
     # Nicht persistiert.
     boost_mono_start: float | None = None
+    # Kaelteschutz: Stand der monotonen Uhr (clock) beim Start des Laufs in diesem Prozess, None bei einem Lauf aus
+    # einem frueheren Prozess (der gilt nach der Wanduhr). Die 4-h-Grenze zaehlt nach dieser Marke, ein Sprung der
+    # Wanduhr aendert sie nicht. Gilt nur bei laufendem Lauf, jeder neue Start ueberschreibt sie. Nicht persistiert.
+    kaelteschutz_mono_start: float | None = None
     # Verbindungswaechter: seit wann (clock) die MQTT-Verbindung ununterbrochen
     # fehlt, None bei Verbindung. Nicht persistiert.
     mqtt_down_since: float | None = None

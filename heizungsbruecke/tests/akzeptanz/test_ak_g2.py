@@ -165,3 +165,18 @@ def test_ak_g2_09_neustart_zwischendurch_setzt_die_frostnaehe_zaehlung_nicht_zur
     anlage.raum(4.0)
     anlage.laufen(10 * 60, takt=60)  # 20 Minuten seit dem Beginn der Kaelte, aber nur 10 seit dem Neustart
     assert _stand(anlage, satz) == COMFORT_BOOST
+
+
+@pytest.mark.akzeptanz("AK-G2-10")
+def test_ak_g2_10_sprung_der_wanduhr_verlaengert_oder_verkuerzt_den_kaelteschutz_nicht(welt):
+    anlage, satz = _warm_gestartet(welt)
+    anlage.vergehen(3 * STUNDE + 10 * 60, SERVER, 18.5)  # 2,5 K zu kalt, drei Stunden: der Lauf beginnt
+    assert _stand(anlage, satz) == COMFORT_BOOST
+    anlage.wanduhr_vor(5 * STUNDE)  # die Systemzeit springt um fuenf Stunden vor: kein Ende nach der Wanduhr
+    anlage.vergehen(60, SERVER, 18.5)
+    assert _stand(anlage, satz) == COMFORT_BOOST
+    anlage.wanduhr_zurueck(8 * STUNDE)  # und danach weit zurueck: auch das beendet den Lauf nicht
+    anlage.vergehen(3 * STUNDE + 20 * 60, SERVER, 18.5)  # etwa 3 h 30 min nach dem Start des Laufs
+    assert _stand(anlage, satz) == COMFORT_BOOST
+    anlage.vergehen(40 * 60, SERVER, 18.5)  # vier Stunden nach dem Start, gemessen an der laufenden Uhr
+    assert _stand(anlage, satz) == SERVER

@@ -3,7 +3,7 @@ entscheiden, ob ein neuer Tick faellig ist. Welche Werte dann auf der Anlage ste
 entscheidet die Hebel-Pipeline (LeverPipeline.set_boosts)."""
 import logging
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from smartheat_core import raum_delta, wallclock
 from smartheat_core.boost import UNREADABLE_ROOM_CHECKS, comfort_boost_expired, decide_boost
@@ -220,9 +220,14 @@ def _kaelteschutz_entscheiden(rt: Runtime, now: datetime, soll: float | None) ->
     if soll is not None:
         gueltig = gueltige_ist(jetzt, ist)
         delta = raum_delta.delta(soll, {raum: wert for raum, wert in gueltig.items() if raum in referenz}, referenz)
+    # Ein Lauf dieses Prozesses wird fuer die Hoechstdauer nach der monotonen Uhr gemessen, ein Lauf aus einem frueheren
+    # Prozess (keine Marke) nach der Wanduhr.
+    lauf_dauer = None
+    if lief and rt.kaelteschutz_mono_start is not None:
+        lauf_dauer = timedelta(seconds=rt.clock() - rt.kaelteschutz_mono_start)
     entscheidung = kaelteschutz_entscheiden(
         jetzt, ist=ist, soll=soll, delta=delta, zustand=zustand,
-        arrival_threshold_k=rt.override.safety.arrival_threshold_k,
+        arrival_threshold_k=rt.override.safety.arrival_threshold_k, lauf_dauer=lauf_dauer,
     )
     return _Schutz(entscheidung, lief, vorher)
 
@@ -264,6 +269,7 @@ def _kaelteschutz_buchen(rt: Runtime, schutz: _Schutz, now: datetime, notfall_la
             _zaehlung_merken(rt, replace(schutz.vorher, zuletzt=entscheidung.zustand.zuletzt))
             return
         logger.warning("Kaelteschutz startet (%s)", entscheidung.grund)
+        rt.kaelteschutz_mono_start = rt.clock()  # vor dem Schreiben: bei einem Schreibfehler bleibt der Lauf im Speicher
         rt.store.update(
             kaelteschutz_art=entscheidung.art, kaelteschutz_seit=now.isoformat(),
             kaelteschutz_zaehlung=KaelteschutzZustand(),
@@ -274,6 +280,7 @@ def _kaelteschutz_buchen(rt: Runtime, schutz: _Schutz, now: datetime, notfall_la
             _zaehlung_merken(rt, entscheidung.zustand, lauf_loeschen=True)
             return
         logger.info("Kaelteschutz endet (%s)", entscheidung.grund)
+        rt.kaelteschutz_mono_start = None
         # Der Lauf hat die Zone auf Manuell gestellt und die Hilfswerte neu gemerkt; sein Ende schreibt nur die
         # Hebel zurueck. Steht der Kreis ausser Betrieb oder in der Testphase, stellt der naechste Check darum
         # Hebel und Hilfswerte noch einmal zurueck (in Betrieb sind beide Merker ohnehin nicht gesetzt).

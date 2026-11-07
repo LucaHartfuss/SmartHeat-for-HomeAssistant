@@ -83,7 +83,7 @@ def _kreis(store, wall, clock, ist, *, soll=21.0, referenz=((1, 0.0),), beschrei
         store.set_delivery(DeliveryState(notbetrieb=True))
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, store=store, clock=clock, boost_mono_start=None,
-        soll_quelle_aus=False,
+        kaelteschutz_mono_start=None, soll_quelle_aus=False,
         config=runtime_config(referenzraeume=tuple(referenz)), werte=werte, raum_refs=raum_refs, wand=wall,
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest, beschreibung), SAFETY, clock=clock),
     )
@@ -829,3 +829,90 @@ def test_ein_aufgeschobenes_ende_haelt_auch_den_lauf_mit_soll_und_den_comfort_bo
 
     assert not _lauft(rt) and rt.store.state.kaelteschutz_art is None
     assert _writes(rt) == EMERGENCY + RESTORE
+
+
+# --- Monotone Uhr der Vier-Stunden-Grenze -----------------------------------------------------------------------
+
+def _sprung(rt, *, wand, mono):
+    """Ein Check, nachdem die Wanduhr um `wand` und die monotone Uhr um `mono` Sekunden weitergingen."""
+    rt.wand.advance(wand)
+    rt.clock.advance(mono)
+    _pruefen(rt)
+
+
+def test_ein_wanduhr_sprung_vor_beendet_einen_lauf_dieses_prozesses_nicht(make_store, wall, uhr):
+    rt = _gestartet(make_store, wall, uhr)
+
+    _sprung(rt, wand=5 * STUNDE, mono=STUNDE)
+
+    assert _lauft(rt) and rt.store.state.kaelteschutz_art == "soll" and _writes(rt) == EMERGENCY
+
+
+def test_ein_wanduhr_sprung_zurueck_beendet_einen_lauf_dieses_prozesses_nicht(make_store, wall, uhr):
+    rt = _gestartet(make_store, wall, uhr)
+
+    _sprung(rt, wand=-2 * STUNDE, mono=STUNDE)
+
+    assert _lauft(rt) and _writes(rt) == EMERGENCY
+
+
+def test_der_lauf_dieses_prozesses_endet_nach_vier_stunden_der_monotonen_uhr_trotz_wanduhr_sprung(make_store, wall, uhr):
+    rt = _gestartet(make_store, wall, uhr)
+
+    _sprung(rt, wand=-2 * STUNDE, mono=4 * STUNDE)
+
+    assert not _lauft(rt) and _writes(rt) == EMERGENCY + RESTORE and rt.store.state.kaelteschutz_art is None
+
+
+@pytest.mark.parametrize("wand_sprung", [-2 * STUNDE, 0, 5 * STUNDE])
+def test_die_grenze_liegt_bei_vier_stunden_monotoner_zeit(make_store, wall, uhr, wand_sprung):
+    rt = _gestartet(make_store, wall, uhr)
+
+    _sprung(rt, wand=wand_sprung, mono=4 * STUNDE - MINUTE)
+
+    assert _lauft(rt)
+
+    _sprung(rt, wand=0, mono=MINUTE)
+
+    assert not _lauft(rt)
+
+
+def test_ein_lauf_aus_einem_frueheren_prozess_wird_nach_der_wanduhr_beurteilt(make_store, wall, uhr):
+    rt = _gestartet(make_store, wall, uhr)
+    backup = {"restore_point": RESTORE_POINT["restore_point"], "last_room_target": 21.0,
+              "emergency_boost_active": True, "kaelteschutz_art": "soll",
+              "kaelteschutz_seit": rt.store.state.kaelteschutz_seit}
+
+    neu = _neu(make_store, wall, uhr, {1: 18.0}, backup=backup)
+    assert neu.boost_mono_start is None and neu.kaelteschutz_mono_start is None
+    _sprung(neu, wand=5 * STUNDE, mono=MINUTE)  # nach der Wanduhr laenger als vier Stunden
+
+    assert not neu.store.state.emergency_boost_active and neu.store.state.kaelteschutz_art is None
+
+
+def test_ein_lauf_aus_einem_frueheren_prozess_endet_bei_zurueckspringender_wanduhr(make_store, wall, uhr):
+    rt = _gestartet(make_store, wall, uhr)
+    backup = {"restore_point": RESTORE_POINT["restore_point"], "last_room_target": 21.0,
+              "emergency_boost_active": True, "kaelteschutz_art": "soll",
+              "kaelteschutz_seit": rt.store.state.kaelteschutz_seit}
+
+    neu = _neu(make_store, wall, uhr, {1: 18.0}, backup=backup)
+    _sprung(neu, wand=-2 * STUNDE, mono=MINUTE)
+
+    assert neu.store.state.kaelteschutz_art is None
+
+
+def test_nach_dem_ende_ist_die_monotone_marke_weg_und_ein_neuer_lauf_setzt_sie_neu(make_store, wall, uhr):
+    rt = _gestartet(make_store, wall, uhr)
+    erste = rt.kaelteschutz_mono_start
+    assert erste is not None
+
+    _ist(rt, r1=21.0)
+    _lauf(rt, 5 * MINUTE)
+
+    assert rt.kaelteschutz_mono_start is None and not _lauft(rt)
+
+    _ist(rt, r1=18.0)
+    _lauf(rt, 3 * STUNDE + 5 * MINUTE)
+
+    assert _lauft(rt) and rt.kaelteschutz_mono_start is not None and rt.kaelteschutz_mono_start > erste

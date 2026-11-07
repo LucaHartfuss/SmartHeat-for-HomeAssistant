@@ -408,6 +408,34 @@ def test_springt_die_uhr_zurueck_endet_der_lauf():
     assert (e.art, e.grund) == ("aus", "uhr_zurueck")
 
 
+def _mit_dauer(wand, lauf_dauer, zustand):
+    return kaelteschutz_entscheiden(wand, ist=ist(18.5, wand), soll=21.0, delta=2.5, zustand=zustand,
+                                    arrival_threshold_k=ANKUNFT_K, lauf_dauer=lauf_dauer)
+
+
+def test_mit_laufdauer_zaehlt_die_hoechstdauer_nach_der_laufdauer_und_nicht_nach_der_wanduhr():
+    e = laufender_soll()
+    assert _mit_dauer(stunden(3) + timedelta(hours=5), timedelta(hours=1), e.zustand).grund == "laeuft"  # Wanduhr vor
+    assert _mit_dauer(stunden(3) - timedelta(hours=2), timedelta(hours=1), e.zustand).grund == "laeuft"  # Wanduhr zurueck
+    assert _mit_dauer(stunden(3) + MIN, timedelta(hours=4) - MIN, e.zustand).grund == "laeuft"
+    e = _mit_dauer(stunden(3) + MIN, timedelta(hours=4), e.zustand)
+    assert (e.art, e.grund) == ("aus", "hoechstdauer")
+
+
+def test_mit_laufdauer_gilt_die_wanduhr_nicht_mehr_fuer_das_ende_bei_ankunft_und_ausfall():
+    e = laufender_soll()
+    jetzt = stunden(3) - timedelta(hours=2)
+    e = kaelteschutz_entscheiden(jetzt, ist=ist(21.0, jetzt), soll=21.0, delta=0.0, zustand=e.zustand,
+                                 arrival_threshold_k=ANKUNFT_K, lauf_dauer=timedelta(hours=1))
+    assert (e.art, e.grund) == ("aus", "ankunft")
+
+
+def test_ohne_laufdauer_bleibt_es_bei_der_wanduhr():
+    e = laufender_soll()
+    assert _mit_dauer(stunden(3) + timedelta(hours=5), None, e.zustand).grund == "hoechstdauer"
+    assert _mit_dauer(stunden(3) - timedelta(hours=2), None, e.zustand).grund == "uhr_zurueck"
+
+
 def test_springt_die_uhr_zurueck_beginnt_die_zaehlung_von_vorn():
     zustand = lauf(T0, stunden(1), soll_eingang(2.5))[0].zustand
     jetzt = T0 - 5 * MIN
