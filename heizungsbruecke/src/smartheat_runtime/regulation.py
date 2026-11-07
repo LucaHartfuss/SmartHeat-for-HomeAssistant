@@ -233,6 +233,11 @@ def _boosts_setzen(
     """`set_boosts` mit dem Kaelteschutz: ein aktiver Lauf ist ein Notfall-Boost (neben dem des Notbetriebs); danach
     bucht `_kaelteschutz_buchen` den Lauf."""
     ergebnis = rt.override.set_boosts(comfort=comfort, emergency=notfall or schutz.lauf, kaelteschutz=schutz.lauf)
+    if schutz.beendet and not notfall and ergebnis[1]:
+        # Das Schreibbudget hat das Ende zurueckgestellt: der Notfall-Boost laeuft noch, der Lauf bleibt gemerkt, und der
+        # naechste Check versucht das Ende erneut (sonst bliebe der Boost ohne Lauf stehen, ausser Betrieb ohne Ende).
+        logger.info("Kaelteschutz-Ende zurueckgestellt (%s), naechster Check versucht es", schutz.entscheidung.grund)
+        return ergebnis
     _kaelteschutz_buchen(rt, schutz, now, ergebnis[1])
     return ergebnis
 

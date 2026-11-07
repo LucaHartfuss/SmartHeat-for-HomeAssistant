@@ -153,6 +153,7 @@ def test_ak_g9_07_testphase_ohne_stellt_einmal_zurueck_und_schreibt_dann_nichts(
     _zustand_setzen(anlage, 2, "testphase_ohne")
     assert stand(anlage) == ENDZUSTAND  # einmal zurueckgestellt, der Boost ist beendet
     schreibaufrufe, starts = len(anlage.ha.schreibvorgaenge), len(boost_starts(anlage))
+    snapshots, telemetrie = len(anlage.link.of("up/snapshot")), len(anlage.link.of("telemetry"))
     anlage.wunsch(23.0)  # der Wunsch steigt bei kaltem Raum: sonst ein Comfort-Boost
     anlage.app_verstellt(schreibziel(SATZ, "heat_limit"), 12.0)  # ein Hebel wird von aussen verstellt: kein Durchsetzen
     anlage.vergehen(3600, SERVER_ANDERS, fuehler=20.0)  # der Server antwortet jedes Mal mit anderen Werten
@@ -160,7 +161,9 @@ def test_ak_g9_07_testphase_ohne_stellt_einmal_zurueck_und_schreibt_dann_nichts(
     assert len(boost_starts(anlage)) == starts
     assert anlage.ha.states[schreibziel(SATZ, "heat_limit")] == 12.0
     assert any(m[0] == "ereignis" and m[1] == "smartheat_status" for m in anlage.ha.meldungen)  # die Meldungen laufen
-    assert [s for s in anlage.link.of("up/snapshot")]  # Snapshots und Telemetrie laufen weiter
+    assert len(anlage.link.of("up/snapshot")) > snapshots  # Snapshots und Telemetrie laufen in der Testphase weiter
+    neu = anlage.link.of("telemetry")[telemetrie:]
+    assert neu and all(paket["testphase_ohne"] is True for paket in neu)  # der Server nimmt die Zeiten aus der Auswertung
 
 
 @pytest.mark.akzeptanz("AK-G9-08")

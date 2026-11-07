@@ -224,7 +224,7 @@ def abo_wiederaufnahme(alt, neu, kreis: int) -> bool:
 
 def _laufzeit_wert(konfiguration: Mapping, feld: str):
     """Wert eines Laufzeitfeldes; die Kreise ohne die gespiegelten Ursprungswerte (ihr Eintreffen startet nichts neu) und
-    ohne den Zustand (er wirkt noch nicht)."""
+    ohne den Zustand (er wechselt ohne Neustart, die Laufzeit liest ihn bei jedem Check)."""
     wert = konfiguration.get(feld)
     if feld == "kreise" and isinstance(wert, list):
         return [{k: v for k, v in kreis.items() if k not in ("ursprungswerte", "zustand")}

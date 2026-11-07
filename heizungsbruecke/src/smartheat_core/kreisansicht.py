@@ -77,8 +77,9 @@ def fuer(konfiguration, nummer: int) -> dict:
 
 def zustand(konfiguration, kreis: int | None = None) -> str:
     """Zustand des Kreises (`kreise[n].zustand`; ohne Nummer der erste Kreis). Ein fehlendes oder fremdes Feld, ein
-    unbekannter Kreis und Fremdinhalt lesen sich als `in_betrieb`; die Pruefung lehnt ein fremdes Feld davor ab. Der
-    Zustand steht bereit, hat aber noch keine Wirkung."""
+    unbekannter Kreis und Fremdinhalt lesen sich als `in_betrieb`; die Pruefung lehnt ein fremdes Feld davor ab. Die
+    Laufzeit liest ihn bei jedem Check; ausser Betrieb und in der Testphase ohne Setwell ruht die Regelung, nur der
+    Kaelteschutz bleibt."""
     if not isinstance(konfiguration, Mapping):
         return IN_BETRIEB
     eintraege = kreise(konfiguration)

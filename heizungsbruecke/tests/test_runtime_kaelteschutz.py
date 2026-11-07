@@ -680,3 +680,22 @@ def test_zwei_kreise_zaehlen_und_laufen_unabhaengig(tmp_path, wall, uhr):
 
     assert _lauft(kalt) and kalt.store.state.kaelteschutz_art == "soll"
     assert not _lauft(warm) and _writes(warm) == [] and warm.store.state.kaelteschutz_art is None
+
+
+def test_ein_vom_schreibbudget_aufgeschobenes_ende_haelt_den_lauf_bis_zum_naechsten_versuch(make_store, wall, uhr):
+    rt = _neu(make_store, wall, uhr, {1: 4.0}, soll=None)
+    _pruefen(rt)
+    _lauf(rt, 15 * MINUTE, schritt=MINUTE)
+    assert _lauft(rt)
+    write_budget.after_failure(rt.store, write_budget.BOOST_END, write_budget.RETURN_STAIRCASE, rt.clock())
+
+    _ist(rt, r1=9.0)
+    _lauf(rt, MINUTE)
+
+    assert _lauft(rt) and rt.store.state.kaelteschutz_art == "frost"  # das Ende ist nicht gebucht, der Lauf nicht verloren
+    assert _writes(rt) == EMERGENCY
+
+    _lauf(rt, 10 * MINUTE)
+
+    assert not _lauft(rt) and rt.store.state.kaelteschutz_art is None
+    assert _writes(rt) == EMERGENCY + RESTORE

@@ -29,6 +29,7 @@ def pruefen(rt: Runtime) -> bool:
     if not rt.testphase_rueckgestellt:
         if rt.override.restore_for_pause():
             rt.testphase_rueckgestellt = True
+            rt.zone_prepared = False  # die Zone steht wieder auf dem Zeitprogramm: die Rueckkehr bereitet sie neu vor
             logger.info("Testphase ohne Setwell: Hebel auf die Ursprungswerte zurueckgestellt")
         else:
             logger.info("Testphase ohne Setwell: Rueckstellung offen, naechster Check versucht es erneut")

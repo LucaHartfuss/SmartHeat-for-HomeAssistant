@@ -409,7 +409,7 @@ def _stub(zustand, *, abo_finished=False, rueckgestellt=False, restore_ok=True):
     rt = types.SimpleNamespace(
         config=types.SimpleNamespace(zustand_source=lambda: zustand),
         store=types.SimpleNamespace(state=types.SimpleNamespace(abo_finished=abo_finished, kaelteschutz_art=None)),
-        override=override, ausser_betrieb_rueckgestellt=rueckgestellt)
+        override=override, ausser_betrieb_rueckgestellt=rueckgestellt, zone_prepared=True)
     return rt, aufrufe
 
 
@@ -440,6 +440,15 @@ def test_der_kreis_ruht_erst_nach_erfolgreicher_rueckstellung_und_die_rueckstell
     offen, _ = _stub(AUSSER, restore_ok=False)
     assert kreiszustand.pruefen(offen) is False
     assert offen.ausser_betrieb_rueckgestellt is False
+
+
+def test_nach_der_rueckstellung_gilt_die_zone_als_nicht_vorbereitet():
+    rt, _ = _stub(AUSSER)
+    assert kreiszustand.pruefen(rt) is True
+    assert rt.zone_prepared is False
+    offen, _ = _stub(AUSSER, restore_ok=False)
+    kreiszustand.pruefen(offen)
+    assert offen.zone_prepared is True
 
 
 # --- Laufzeit: der Kreis nimmt den Wechsel ohne Prozessneustart auf ---

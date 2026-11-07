@@ -33,6 +33,7 @@ def pruefen(rt: Runtime) -> bool:
     if not rt.ausser_betrieb_rueckgestellt and state.kaelteschutz_art is None:
         if rt.override.restore_and_clear(True):
             rt.ausser_betrieb_rueckgestellt = True
+            rt.zone_prepared = False  # die Zone steht wieder auf dem Zeitprogramm: die Rueckkehr bereitet sie neu vor
             logger.info("Kreis ausser Betrieb: Hebel auf die Ursprungswerte zurueckgestellt")
         else:
             logger.info("Kreis ausser Betrieb: Rueckstellung offen, naechster Check versucht es erneut")

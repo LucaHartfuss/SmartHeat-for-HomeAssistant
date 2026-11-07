@@ -270,7 +270,7 @@ def _stub(zustand, *, abo_finished=False, rueckgestellt=False, restore_ok=True):
     rt = types.SimpleNamespace(
         config=types.SimpleNamespace(zustand_source=lambda: zustand),
         store=types.SimpleNamespace(state=types.SimpleNamespace(abo_finished=abo_finished)),
-        override=override, testphase_rueckgestellt=rueckgestellt)
+        override=override, testphase_rueckgestellt=rueckgestellt, zone_prepared=True)
     return rt, aufrufe
 
 
@@ -296,3 +296,14 @@ def test_der_kreis_ruht_erst_nach_erfolgreicher_rueckstellung():
     offen, _ = _stub(OHNE, restore_ok=False)
     assert testphase.pruefen(offen) is False
     assert offen.testphase_rueckgestellt is False
+
+
+def test_nach_der_rueckstellung_gilt_die_zone_als_nicht_vorbereitet():
+    """Die Rueckstellung bringt die Zone auf das Zeitprogramm; nach der Rueckkehr in den Betrieb bereitet der lokale Check
+    sie neu vor, statt die Betriebsart als Eingriff von Hand zu werten."""
+    rt, _ = _stub(OHNE)
+    assert testphase.pruefen(rt) is True
+    assert rt.zone_prepared is False
+    offen, _ = _stub(OHNE, restore_ok=False)
+    testphase.pruefen(offen)
+    assert offen.zone_prepared is True  # nichts zurueckgestellt, die Zone steht noch auf Manuell
