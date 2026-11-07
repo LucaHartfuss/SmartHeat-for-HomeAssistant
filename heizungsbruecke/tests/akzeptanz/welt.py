@@ -236,8 +236,9 @@ class Anlage(Handgriffe):
         mp.setattr(main_module.status_holder, "host", None)
         mp.setattr("smartheat_core.wallclock._now", self.uhr.wand)
         mp.setattr("heizungsbruecke.derived_sensors.ensure_all",
-                   lambda **kwargs: DerivedSensors({"room_actual": RAUMFUEHLER}, (), "fp",
-                                                   raeume={n: RAUMFUEHLER for n, _ in kwargs["raeume"]}))
+                   lambda **kwargs: DerivedSensors(
+                       {"room_actual": RAUMFUEHLER}, (), "fp",
+                       raeume={n: RAUMFUEHLER if n == 1 else f"{RAUMFUEHLER}_{n}" for n, _ in kwargs["raeume"]}))
         mp.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient",
                    type("FakeTrigger", (FakeTrigger,), {"erzeugt": self.trigger}))
 

@@ -333,17 +333,67 @@ def test_ohne_soll_zaehlt_ein_ungueltiger_raum_nicht_mit_aber_ohne_gueltigen_rau
 
 @pytest.mark.parametrize("delta, endet", [(0.6, False), (0.5, True), (0.0, True), (-1.0, True)])
 def test_mit_soll_endet_der_lauf_bei_ist_ab_soll_minus_ankunftsschwelle(delta, endet):
-    e = laufender_frost(soll=21.0, delta=3.0)
-    jetzt = T0 + 20 * MIN
+    e = lauf(T0, stunden(3), soll_eingang(3.0))[0]
+    assert e.art == "soll"
+    jetzt = stunden(3, 5)
     e = kaelteschutz_entscheiden(jetzt, ist=ist(21.0 - delta, jetzt), soll=21.0, delta=delta, zustand=e.zustand,
                                  arrival_threshold_k=ANKUNFT_K)
     assert (e.art == "aus") is endet
 
 
 def test_mit_soll_aber_ohne_delta_keine_ankunft():
-    e = laufender_frost(soll=21.0, delta=3.0)
-    jetzt = T0 + 20 * MIN
+    e = lauf(T0, stunden(3), soll_eingang(3.0))[0]
+    jetzt = stunden(3, 5)
     e = kaelteschutz_entscheiden(jetzt, ist=ist(30.0, jetzt), soll=21.0, delta=None, zustand=e.zustand,
+                                 arrival_threshold_k=ANKUNFT_K)
+    assert e.art == "soll"
+
+
+# --- Frost-Lauf mit Soll: Ende nur nach der Regel ohne Soll -------------------------------------------------------
+
+def frost_lauf_mit_soll():
+    """Soll 21, Referenzraum 21 (delta 0), Kontrollraum 4,9: nach 15 min beginnt ein Frost-Lauf."""
+    def eingang(jetzt):
+        return dict(ist={1: Messwert(21.0, jetzt), 2: Messwert(4.9, jetzt)}, soll=21.0, delta=0.0)
+    letzte, _ = lauf(T0, T0 + 15 * MIN, eingang)
+    assert (letzte.art, letzte.gestartet) == ("frost", True)
+    return letzte
+
+
+def pruefen_frost_mit_soll(zustand, jetzt, kontrollraum):
+    return kaelteschutz_entscheiden(
+        jetzt, ist={1: Messwert(21.0, jetzt), 2: Messwert(kontrollraum, jetzt)}, soll=21.0, delta=0.0,
+        zustand=zustand, arrival_threshold_k=ANKUNFT_K)
+
+
+def test_frost_lauf_mit_soll_bleibt_bei_warmem_referenzraum_bestehen_solange_der_kontrollraum_kalt_ist():
+    e = frost_lauf_mit_soll()
+    for minute in range(20, 120, 5):
+        e = pruefen_frost_mit_soll(e.zustand, T0 + minute * MIN, 4.9)
+        assert (e.art, e.grund, e.gestartet) == ("frost", "laeuft", False)
+
+
+@pytest.mark.parametrize("kontrollraum, endet", [(6.9, False), (7.0, True)])
+def test_frost_lauf_mit_soll_endet_erst_wenn_alle_raeume_sieben_grad_haben(kontrollraum, endet):
+    e = pruefen_frost_mit_soll(frost_lauf_mit_soll().zustand, T0 + 20 * MIN, kontrollraum)
+    assert (e.art == "aus") is endet
+    if endet:
+        assert e.grund == "ankunft"
+
+
+def test_frost_lauf_mit_soll_endet_nach_der_hoechstdauer():
+    e = frost_lauf_mit_soll()
+    ende = T0 + 15 * MIN + boost_dauer()
+    e = pruefen_frost_mit_soll(e.zustand, ende - MIN, 4.9)
+    assert e.art == "frost"
+    e = pruefen_frost_mit_soll(e.zustand, ende, 4.9)
+    assert (e.art, e.grund) == ("aus", "hoechstdauer")
+
+
+def test_frost_lauf_mit_soll_endet_nicht_ohne_gueltigen_raum():
+    e = frost_lauf_mit_soll()
+    jetzt = T0 + 20 * MIN
+    e = kaelteschutz_entscheiden(jetzt, ist={1: Messwert(None, None)}, soll=21.0, delta=None, zustand=e.zustand,
                                  arrival_threshold_k=ANKUNFT_K)
     assert e.art == "frost"
 

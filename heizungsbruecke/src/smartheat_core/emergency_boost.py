@@ -122,7 +122,7 @@ def kaelteschutz_entscheiden(
     Abweichung unter der Schwelle oder eine Luecke ueber KAELTESCHUTZ_LUECKE_MAX beginnt die Zaehlung von vorn;
     bei beiden Ausloesern zugleich gilt Frost. Ein Lauf endet bei Ankunft (mit Soll: Ist mindestens
     Soll minus Ankunftsschwelle; ohne Soll: jeder gueltige Raum mindestens KAELTESCHUTZ_ENDE_OHNE_SOLL_C, mindestens
-    einer gueltig) oder nach KAELTESCHUTZ_HOECHSTDAUER; ein Fuehlerausfall beendet ihn nicht. Nach dem Ende beginnt
+    einer gueltig; ein Frost-Lauf endet auch mit Soll nur so) oder nach KAELTESCHUTZ_HOECHSTDAUER; ein Fuehlerausfall beendet ihn nicht. Nach dem Ende beginnt
     alles von vorn."""
     if zustand.lauf_art is not None and zustand.lauf_seit is not None:
         return _laufend(jetzt, ist, soll, delta, zustand, arrival_threshold_k)
@@ -146,7 +146,10 @@ def _laufend(jetzt, ist, soll, delta, zustand, arrival_threshold_k) -> Kaeltesch
         return KaelteschutzEntscheidung("aus", "uhr_zurueck", False, KaelteschutzZustand())
     if dauer >= KAELTESCHUTZ_HOECHSTDAUER:
         return KaelteschutzEntscheidung("aus", "hoechstdauer", False, KaelteschutzZustand())
-    if _angekommen(jetzt, ist, soll, delta, arrival_threshold_k):
+    # Ein Frost-Lauf schuetzt den kaeltesten Raum, nicht den Soll-Vergleich der Referenzraeume: er endet auch mit Soll
+    # nur nach der Regel ohne Soll (jeder Raum mit gueltigem Ist warm genug).
+    soll_fuer_ende = None if zustand.lauf_art == "frost" else soll
+    if _angekommen(jetzt, ist, soll_fuer_ende, delta, arrival_threshold_k):
         return KaelteschutzEntscheidung("aus", "ankunft", False, KaelteschutzZustand())
     return KaelteschutzEntscheidung(zustand.lauf_art, "laeuft", False, zustand)
 

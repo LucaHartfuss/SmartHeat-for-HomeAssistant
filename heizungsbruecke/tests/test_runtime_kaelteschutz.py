@@ -205,6 +205,28 @@ def test_ein_kontrollraum_in_frostnaehe_loest_aus_obwohl_der_referenzraum_warm_i
     assert _lauft(rt) and rt.store.state.kaelteschutz_art == "frost"
 
 
+def test_ein_frost_lauf_mit_soll_haelt_bei_warmem_referenzraum_bis_alle_raeume_sieben_grad_haben(make_store, wall, uhr):
+    rt = _neu(make_store, wall, uhr, {1: 21.0, 2: 4.9})
+    _pruefen(rt)
+    _lauf(rt, 15 * MINUTE, schritt=MINUTE)
+    assert _lauft(rt) and rt.store.state.kaelteschutz_art == "frost" and _starts(rt) == 1
+
+    _lauf(rt, 30 * MINUTE)  # sechs Checks mit warmem Referenzraum (Abweichung 0): kein Ende, kein neuer Start
+
+    assert _lauft(rt) and rt.store.state.kaelteschutz_art == "frost"
+    assert _starts(rt) == 1 and _writes(rt) == EMERGENCY
+
+    _ist(rt, r2=6.9)
+    _lauf(rt, 5 * MINUTE)
+
+    assert _lauft(rt) and _writes(rt) == EMERGENCY
+
+    _ist(rt, r2=7.0)
+    _lauf(rt, 5 * MINUTE)
+
+    assert not _lauft(rt) and _writes(rt) == EMERGENCY + RESTORE and _starts(rt) == 1
+
+
 def test_genau_fuenf_grad_ist_keine_frostnaehe(make_store, wall, uhr):
     rt = _neu(make_store, wall, uhr, {1: 5.0, 2: 21.0}, soll=None)
 

@@ -121,3 +121,35 @@ def test_ak_g2_06_ausgefallener_fuehler_loest_nichts_aus_und_beendet_nichts(welt
     anlage.raum(21.0)  # der Fuehler ist zurueck und zeigt die Ankunft
     anlage.runde(2)
     assert _stand(anlage, satz) == SERVER
+
+
+KONTROLLRAUM = "sensor.room_actual_2"
+
+
+@pytest.mark.akzeptanz("AK-G2-08")
+def test_ak_g2_08_frost_im_kontrollraum_bei_warmem_referenzraum_haelt_den_lauf_bis_alle_raeume_7_grad_haben(welt):
+    satz = "vaillant_vrc720"
+    anlage: Anlage = welt(satz, "Heizkoerper")
+    anlage.konfiguration["kreise"][0]["raeume"].append(
+        {"raum": 2, "name": "Schlafzimmer", "rolle": "kontroll", "fuehler": [KONTROLLRAUM], "soll_quelle": False,
+         "versatz_k": 0.0, "ziel_fest": None})
+    anlage.ha.states[RAUMFUEHLER] = 21.0
+    anlage.ha.states[KONTROLLRAUM] = 21.0
+    anlage.ha.states[f"{KONTROLLRAUM}::device_class"] = "temperature"
+    anlage.starten()  # Soll 21,0, beide Raeume warm
+    anlage.server_antwortet(SERVER)
+    anlage.runde(2)
+    assert _stand(anlage, satz) == SERVER
+    anlage.ha.states[KONTROLLRAUM] = 4.9  # der Kontrollraum friert, der Referenzraum bleibt bei Soll
+    anlage.vergehen(20 * 60, SERVER, 21.0)
+    assert _stand(anlage, satz) == COMFORT_BOOST  # nach 15 Minuten unter 5 Grad hebt der Kaelteschutz an
+    geschrieben = _schreibungen(anlage, satz)
+    for _ in range(6):  # eine Stunde: der Lauf bleibt, ohne Rueckkehr und neuen Start
+        anlage.vergehen(10 * 60, SERVER, 21.0)
+        assert _stand(anlage, satz) == COMFORT_BOOST and _schreibungen(anlage, satz) == geschrieben
+    anlage.ha.states[KONTROLLRAUM] = 6.9  # noch unter 7 Grad
+    anlage.vergehen(10 * 60, SERVER, 21.0)
+    assert _stand(anlage, satz) == COMFORT_BOOST
+    anlage.ha.states[KONTROLLRAUM] = 7.0  # alle Raeume mindestens 7 Grad: zurueck auf die Werte des Servers
+    anlage.vergehen(10 * 60, SERVER, 21.0)
+    assert _stand(anlage, satz) == SERVER
