@@ -5,6 +5,7 @@ Kreis wieder (kein Schreibvorgang). Der Kreis ist von Hand gebaut wie in test_ru
 import dataclasses
 
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT
 from test_runtime_kaelteschutz import (
     MINUTE,
     REFS,
@@ -19,7 +20,6 @@ from test_runtime_kaelteschutz import (
     wall,  # noqa: F401 - Fixture
 )
 
-from bindung_beispiele import VAILLANT_MYPYLLANT
 from heizungsbruecke.ha_binding import MANUAL_HVAC_MODE, HaPlantBinding
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_runtime.roles import ChannelManifest
