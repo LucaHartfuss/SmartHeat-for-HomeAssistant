@@ -13,7 +13,7 @@ from smartheat_gateway.triggers import EV_TARGET_INPUT, BusTriggerSource, local_
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
-from smartheat_runtime.soll_eingang import FROSTSCHUTZ_BIS
+from smartheat_runtime.soll_eingang import EV_SOLL_QUELLE, FROSTSCHUTZ_BIS
 from smartheat_runtime.soll_speicher import TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
 
@@ -316,6 +316,7 @@ def mit_geraet(tmp_path, clock):
     welt = SimpleNamespace(bus=bus, z2m=z2m, worker=worker, checks=[], wuensche=[], aus=[])
     worker.register(EV_LOCAL_CHECK, lambda event: welt.checks.append(event.data.get("room_target_fired", False)))
     worker.register(EV_SOURCE_CONNECTED, lambda event: None)
+    worker.register(EV_SOLL_QUELLE, lambda event: None)  # in der Laufzeit registriert ihn app, hier gibt es sie nicht
 
     def wunsch(value):
         welt.wuensche.append(value)
@@ -596,6 +597,7 @@ def mit_w100(tmp_path, clock):
     welt = SimpleNamespace(bus=bus, z2m=z2m, mirror=mirror, worker=worker, wuensche=[], aus=[])
     worker.register(EV_LOCAL_CHECK, lambda event: None)
     worker.register(EV_SOURCE_CONNECTED, lambda event: None)
+    worker.register(EV_SOLL_QUELLE, lambda event: None)  # in der Laufzeit registriert ihn app, hier gibt es sie nicht
 
     def wunsch(value):
         welt.wuensche.append(value)

@@ -100,8 +100,9 @@ def run_local_check(rt: Runtime) -> None:
     room_target = state.stable_target
     now = wallclock.now()
     # Der Kaelteschutz laeuft auch ohne Soll (dann nur die Frostnaehe) und ohne lesbaren Referenzraum. Eine Bedingung
-    # fuer seine Wirksamkeit gehoert vor diesen Aufruf.
-    schutz = _kaelteschutz_entscheiden(rt, now, room_target)
+    # fuer seine Wirksamkeit gehoert vor diesen Aufruf. Bei Soll-Quelle aus (Thermostat aus, Frostschutz-Stellung) haelt
+    # der Speicher nur den alten Wunsch: der Kaelteschutz rechnet dann ohne Soll.
+    schutz = _kaelteschutz_entscheiden(rt, now, None if rt.soll_quelle_aus else room_target)
     if room_target is None:
         logger.warning("Lokaler Check uebersprungen: Stable-Target-Cache noch nicht befuellt (room_target=None)")
         _kaelteschutz_allein(rt, schutz, now)

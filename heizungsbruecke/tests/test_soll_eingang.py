@@ -6,7 +6,7 @@ import pytest
 from fakes import FakeClock
 
 from smartheat_runtime.runtime import EV_LOCAL_CHECK
-from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_TARGET_INPUT, SollEingang
+from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_SOLL_QUELLE, EV_TARGET_INPUT, SollEingang
 from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_PORTAL, SOURCE_THERMOSTAT, TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
 
@@ -347,3 +347,40 @@ def test_a_frost_value_also_counts_as_usable_for_the_warning(tmp_path, caplog):
         a.post(7.0, SOURCE_THERMOSTAT)  # Frostschutz-Stellung: brauchbar
         a.post("abc", SOURCE_THERMOSTAT)
     assert len(_warnungen(caplog)) == 2 and "abc" not in caplog.text
+
+
+def test_jeder_wechsel_von_soll_quelle_aus_geht_als_ereignis_an_die_laufzeit(tmp_path):
+    a = Aufbau(tmp_path)
+    gemeldet = []
+    a.worker.register(EV_SOLL_QUELLE, lambda event: gemeldet.append(event.data["aus"]))
+
+    a.post(7.0, SOURCE_THERMOSTAT, herkunft="soll_entity")  # Frostschutz-Stellung
+    a.post(7.0, SOURCE_THERMOSTAT, herkunft="soll_entity")  # unveraendert: kein weiterer Wechsel
+    a.worker.post(Event(EV_SOLL_MODUS, {"mode": "off"}))  # zweiter Grund: die Quelle bleibt aus
+    a.worker.run_pending()
+    assert gemeldet == [True]
+
+    a.post(22.0, SOURCE_THERMOSTAT, herkunft="soll_entity")  # nur der Modus haelt sie noch aus
+    a.worker.post(Event(EV_SOLL_MODUS, {"mode": "heat"}))
+    a.worker.run_pending()
+
+    assert gemeldet == [True, False]
+
+
+def test_die_laufzeit_merkt_soll_quelle_aus_aus_dem_ereignis():
+    from types import SimpleNamespace
+
+    from smartheat_runtime import app
+
+    clock = FakeClock()
+    rt = SimpleNamespace(worker=RegulationWorker(clock), soll_quelle_aus=False, idle=False)
+    rt.worker.after_each = lambda *args: None  # nur die Zuordnung der Ereignisse
+    app._register_handlers(rt, lambda: None)  # type: ignore[arg-type]
+
+    rt.worker.post(Event(EV_SOLL_QUELLE, {"aus": True}))
+    rt.worker.run_pending()
+    assert rt.soll_quelle_aus is True
+
+    rt.worker.post(Event(EV_SOLL_QUELLE, {"aus": False}))
+    rt.worker.run_pending()
+    assert rt.soll_quelle_aus is False

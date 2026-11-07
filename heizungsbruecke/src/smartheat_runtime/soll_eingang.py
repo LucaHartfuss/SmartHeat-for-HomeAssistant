@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 EV_TARGET_INPUT = "shg_target_input"
 EV_SOLL_MODUS = "shg_soll_modus"
+#: Meldet der Laufzeit jeden Wechsel von Soll-Quelle aus/an ({"aus": bool}); der Kaelteschutz rechnet dann ohne Soll.
+EV_SOLL_QUELLE = "shg_soll_quelle"
 DEBOUNCE_KIND = "shg_target_debounce"
 #: Ein Soll bis zu diesem Wert ist die Frostschutz-Stellung der Soll-Quelle, kein Bedienwunsch.
 FROSTSCHUTZ_BIS = 7.0
@@ -76,6 +78,7 @@ class SollEingang:
         if bool(self._aus) != vorher:
             if self._aus:
                 self._wunsch_verwerfen()  # Soll-Quelle aus ist kein Wunsch: auch ein offener nicht
+            self._worker.post(Event(EV_SOLL_QUELLE, {"aus": bool(self._aus)}))
             self._soll_quelle_aus(bool(self._aus), self._store.value if self._aus else None)
         if grund == "modus" and war_aus and not self._aus:
             self._wieder_an()

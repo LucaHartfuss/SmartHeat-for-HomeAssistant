@@ -63,6 +63,7 @@ from smartheat_runtime.runtime import (
     Runtime,
 )
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
+from smartheat_runtime.soll_eingang import EV_SOLL_QUELLE
 from smartheat_runtime.state import StateStore, StorageError, bind_to_tenant
 from smartheat_runtime.status import (
     ABO_AKTIV,
@@ -604,6 +605,11 @@ def _on_heartbeat(rt: Runtime, event: Event) -> None:
     status.publish()
 
 
+def _on_soll_quelle(rt: Runtime, event: Event) -> None:
+    """Soll-Quelle aus oder wieder an (soll_eingang.EV_SOLL_QUELLE): der Kaelteschutz folgt im naechsten Check."""
+    rt.soll_quelle_aus = bool(event.data["aus"])
+
+
 def _unless_idle(rt: Runtime, handler, event: Event) -> None:
     """Im Ruhezustand (Fristende im Betrieb) laufen alle Handler ausser dem Lebenszeichen leer;
     sie planen sich dann auch nicht neu ein."""
@@ -628,6 +634,7 @@ def _register_handlers(rt: Runtime, melder: Callable[[], None]) -> None:
     for kind, handler in handlers.items():
         rt.worker.register(kind, functools.partial(_unless_idle, rt, handler))
     rt.worker.register(EV_HEARTBEAT, functools.partial(_on_heartbeat, rt))
+    rt.worker.register(EV_SOLL_QUELLE, functools.partial(_on_soll_quelle, rt))
     rt.worker.after_each(functools.partial(_after_each, rt, melder))
 
 

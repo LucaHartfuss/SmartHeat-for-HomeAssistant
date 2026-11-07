@@ -83,6 +83,7 @@ def _kreis(store, wall, clock, ist, *, soll=21.0, referenz=((1, 0.0),), beschrei
         store.set_delivery(DeliveryState(notbetrieb=True))
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, store=store, clock=clock, boost_mono_start=None,
+        soll_quelle_aus=False,
         config=runtime_config(referenzraeume=tuple(referenz)), werte=werte, raum_refs=raum_refs, wand=wall,
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest, beschreibung), SAFETY, clock=clock),
     )
@@ -348,6 +349,45 @@ def test_ohne_soll_endet_der_lauf_erst_ab_sieben_grad(make_store, wall, uhr):
     _ist(rt, r1=6.9)
     _lauf(rt, 5 * MINUTE)
 
+    assert _lauft(rt)
+
+    _ist(rt, r1=7.0)
+    _lauf(rt, 5 * MINUTE)
+
+    assert not _lauft(rt) and _writes(rt) == EMERGENCY + RESTORE
+
+
+def test_bei_soll_quelle_aus_loest_die_abweichung_vom_alten_wunsch_nicht_aus_und_nach_der_rueckkehr_wieder(
+        make_store, wall, uhr):
+    rt = _neu(make_store, wall, uhr, {1: 18.0})  # 3 K unter dem letzten Wunsch
+    rt.soll_quelle_aus = True  # Thermostat aus oder Frostschutz-Stellung: der alte Wunsch bleibt im Speicher stehen
+
+    _pruefen(rt)
+    _lauf(rt, 6 * STUNDE)
+
+    assert not _lauft(rt) and _writes(rt) == [] and _starts(rt) == 0
+
+    rt.soll_quelle_aus = False
+    _pruefen(rt)
+    _lauf(rt, 3 * STUNDE - MINUTE)
+    assert not _lauft(rt)
+
+    _lauf(rt, MINUTE)
+
+    assert _lauft(rt) and rt.store.state.kaelteschutz_art == "soll" and _starts(rt) == 1
+
+
+def test_bei_soll_quelle_aus_bleibt_die_frostnaehe_wirksam_und_der_lauf_endet_bei_sieben_grad(make_store, wall, uhr):
+    rt = _neu(make_store, wall, uhr, {1: 4.0})
+    rt.soll_quelle_aus = True
+
+    _pruefen(rt)
+    _lauf(rt, 15 * MINUTE, schritt=MINUTE)
+
+    assert _lauft(rt) and rt.store.state.kaelteschutz_art == "frost" and _writes(rt) == EMERGENCY
+
+    _ist(rt, r1=6.9)
+    _lauf(rt, 5 * MINUTE)
     assert _lauft(rt)
 
     _ist(rt, r1=7.0)

@@ -79,6 +79,9 @@ class Runtime:
     testphase_rueckgestellt: bool = False
     # Kreis ausser Betrieb: die Rueckstellung beim Eintritt ist erledigt (wie testphase_rueckgestellt). Nicht persistiert.
     ausser_betrieb_rueckgestellt: bool = False
+    # Soll-Quelle aus (Thermostat aus oder Frostschutz-Stellung, soll_eingang.SollEingang.aus): der Speicher haelt dann
+    # den alten Wunsch, der Kaelteschutz rechnet ohne Soll. Gesetzt vom Ereignis EV_SOLL_QUELLE (app). Nicht persistiert.
+    soll_quelle_aus: bool = False
     # Comfort-Boost: Stand der monotonen Uhr (clock) beim Start des Boosts in diesem Prozess, None bei einem
     # Boost aus einem frueheren Lauf. Gilt nur bei aktivem Boost: ein Boost-Ende ueber die Pipeline laesst den Wert
     # stehen, jeder neue Start ueberschreibt ihn. Die 4-h-Grenze zaehlt auch hier, falls die Wanduhr zurueckspringt.
