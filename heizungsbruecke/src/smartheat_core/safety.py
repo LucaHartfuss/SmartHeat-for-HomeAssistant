@@ -27,6 +27,9 @@ class LocalSafety:
 LOCAL_SAFETY: dict[tuple[str, str], LocalSafety] = {
     # Vaillant x Heizkoerper: Regel 4, Nutzer-Freigaben 2026-09-29 (Steigung, Wunschtemperatur, Mindestvorlauf,
     # Boost), 2026-09-30 (Heizgrenze) und 2026-10-01 (Heizgrenze bis 23 °C).
+    # Die Heizgrenze lokal liegt bei allen Profilen ab 10 Grad (Untergrenze, der Server kann sie nicht tiefer setzen).
+    # Der Kaelteschutz (emergency_boost.kaelteschutz_entscheiden) hebt auf das Maximum dieser Bereiche; als Raum-Ist
+    # gilt -10 bis 35 Grad (smartheat_runtime.plausibility), alles andere ist ein Fuehlerfehler.
     ("vaillant_vrc720", "Heizkoerper"): LocalSafety(
         ranges={
             "curve": (0.4, 1.5), "room_setpoint": (15.0, 25.0), "heat_limit": (10.0, 23.0), "min_flow": (20.0, 30.0),
