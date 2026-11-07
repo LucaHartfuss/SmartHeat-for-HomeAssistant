@@ -699,3 +699,18 @@ def test_ein_vom_schreibbudget_aufgeschobenes_ende_haelt_den_lauf_bis_zum_naechs
 
     assert not _lauft(rt) and rt.store.state.kaelteschutz_art is None
     assert _writes(rt) == EMERGENCY + RESTORE
+
+
+def test_ein_aufgeschobenes_ende_haelt_auch_den_lauf_mit_soll_und_den_comfort_boost_unberuehrt(make_store, wall, uhr):
+    rt = _gestartet(make_store, wall, uhr)
+    write_budget.after_failure(rt.store, write_budget.BOOST_END, write_budget.RETURN_STAIRCASE, rt.clock())
+
+    _ist(rt, r1=20.5)  # Ankunft
+    _lauf(rt, MINUTE)
+
+    assert _lauft(rt) and rt.store.state.kaelteschutz_art == "soll" and not rt.store.state.boost_active
+
+    _lauf(rt, 10 * MINUTE)
+
+    assert not _lauft(rt) and rt.store.state.kaelteschutz_art is None
+    assert _writes(rt) == EMERGENCY + RESTORE
