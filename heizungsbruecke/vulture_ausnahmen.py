@@ -42,3 +42,7 @@ _.delta  # Contract-Check 89 (tools/contracts/raum_delta.json) rechnet Server un
 # --- Feldlisten des Status-Ereignisses (V5) und des flachen Kreis-Ereignisses (V1): Leser auf der Gegenseite ---
 _.EVENT_FIELDS  # geraet_status/status/geraet_nachweis: Contract-Check 14 und 88 vergleichen sie mit der Integration bzw. der Fixture
 _.KREIS_EVENT_FIELDS  # geraet_status: Contract-Check 14 und 88 vergleichen die Kreisfelder mit STATUS_KREIS_FIELDS der Integration
+
+# --- Vertrauen in die Uhr (smartheat_core/wallclock.py): die Verdrahtung in die Betriebsarten folgt, bis dahin ruft nur der Test ---
+_.beleg_fortschreiben  # smartheat_core/wallclock.py: noch ohne Aufrufer in den Hosts (tests/test_core_wallclock.py)
+_.vertrauenswuerdig  # smartheat_core/wallclock.py: noch ohne Aufrufer in den Hosts (tests/test_core_wallclock.py)
