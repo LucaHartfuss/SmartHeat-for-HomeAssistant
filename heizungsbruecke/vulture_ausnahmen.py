@@ -43,5 +43,23 @@ _.delta  # Contract-Check 89 (tools/contracts/raum_delta.json) rechnet Server un
 _.EVENT_FIELDS  # geraet_status/status/geraet_nachweis: Contract-Check 14 und 88 vergleichen sie mit der Integration bzw. der Fixture
 _.KREIS_EVENT_FIELDS  # geraet_status: Contract-Check 14 und 88 vergleichen die Kreisfelder mit STATUS_KREIS_FIELDS der Integration
 
+# --- Hausmodell-Kern (smartheat_core/hausmodell.py): woertliche Kopie der Quelle im Server, Leser auf der Gegenseite der Kopie ---
+# Die Kopie bleibt unveraendert (der Vertragscheck des Dev-Roots vergleicht sie zeichengleich); der Server nutzt den ganzen Kern
+# (Abnahme: Haeuser, Wetter, Sonne, Bilanz, Zaehler), das Geraet braucht nur den Anlagenschritt im Simulationstreiber.
+_.STEPS_PER_DAY  # Server: tests/generic (Abnahme rechnet Tage in 5-min-Schritten)
+_.balance_temperature  # Server: tests/generic (Bilanztemperatur der Haeuser)
+_.required_flow  # Server: tests/generic (Bedarfsvorlauf der Haeuser)
+_.HOUSES  # Server: tests/generic (die drei Abnahme-Haeuser)
+_.FBH_HOUSE  # Server: tests/generic (Fussbodenheizung der Abnahme)
+_.weather  # Server: tests/generic (Tagesmittel der Aussentemperatur)
+_.WEATHER  # Server: tests/generic (benannte Wetterlagen)
+_.outdoor_at  # Server: tests/generic (Tagesgang der Aussentemperatur)
+_.sun_at  # Server: tests/generic (Sonneneinstrahlung)
+_.burner_hours  # Server: tests/generic (Brennerzaehler im Anlagenzustand); im Geraet erst mit dem Simulationstreiber gelesen
+_.burner_starts  # Server: tests/generic (Brennerzaehler im Anlagenzustand); im Geraet erst mit dem Simulationstreiber gelesen
+_.brenner  # Server: tests/generic (Feld des Anlagenschritts); im Geraet erst mit dem Simulationstreiber gelesen
+_.leistung  # Server: tests/generic (Feld des Anlagenschritts); im Geraet erst mit dem Simulationstreiber gelesen
+_.anlage_schritt  # Server: tests/generic (Abnahme); im Geraet ruft ihn der Simulationstreiber
+
 # --- Kritische Mindestversion (smartheat_runtime/entitlement.py): der Zeitpunkt "wirksam ab" kommt mit dem Versionspruefer; bis dahin ruft nur der Test ---
 _.kritische_mindestversion_abgelaufen  # smartheat_runtime/entitlement.py: Haken fuer das Ende der Regelung 30 Tage nach dem lokalen ersten Empfang (tests/test_entitlement.py), noch ohne Aufrufer in den Hosts
