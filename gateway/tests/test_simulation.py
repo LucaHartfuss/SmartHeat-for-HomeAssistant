@@ -1,10 +1,11 @@
 import json
+import math
 import random
 
 import pytest
 from bindung_beispiele import BINDINGS, VIESSMANN_VICARE_BINDING
 
-from smartheat_core import hausmodell
+from smartheat_core import hausmodell, zeitquelle
 from smartheat_device import wire
 from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers.base import DriverError
@@ -362,3 +363,152 @@ def test_eine_unbrauchbare_kreiszahl_der_steuerdatei_gilt_als_ein_kreis(paths, c
 def test_ein_unbrauchbarer_heizkreis_wird_abgelehnt(paths, clock, wert):
     with pytest.raises(ValueError, match="heizkreis"):
         create("simulation", {"lever_set": "viessmann_vicare", "heizkreis": wert}, paths, clock=clock)
+
+
+# --- Zeitverhalten: das Haus rechnet auf der monotonen Uhr, der Tagesgang der Aussentemperatur folgt der fachlichen Zeit ---
+
+MITTEL = 5.0
+AMPLITUDE = 5.0
+
+
+def _tagesgang(wall, mittel=MITTEL, amplitude=AMPLITUDE):
+    """Aussentemperatur nach der Vorgabe: Mittelwert plus Sinus ueber 24 h, Nullstelle um 9 Uhr."""
+    stunden = (wall / 3600.0) % 24
+    return mittel + amplitude * math.sin(2 * math.pi * (stunden - 9) / 24)
+
+
+def _sim_zeit(paths, clock, walls, hebelsatz="vaillant_vrc720", hebel=None, **parameter):
+    """Treiber mit steuerbarer Wanduhr (`walls[0]`) und dem Tagesgang (Mittel 5, Amplitude 5)."""
+    driver = create("simulation", {"lever_set": hebelsatz, "aussen_amplitude": AMPLITUDE, "aussen_mittel": MITTEL, **parameter},
+                    paths, clock=clock, writer=True, description=BINDINGS[hebelsatz], wall=lambda: walls[0])
+    driver.poll_once()
+    for name, wert in (hebel or {}).items():
+        driver.write(name, wert)
+    return driver
+
+
+def _kern_folge(erzeuger, hebel, ziel, aussen_je_schritt):
+    zustand = hausmodell.Anlagenzustand(room=20.0, burner_hours=1000.0)
+    for aussen in aussen_je_schritt:
+        hausmodell.anlage_schritt(
+            zustand, hausmodell.HOUSES["H1"], hausmodell.Potenzgesetz(*erzeuger), hebel, aussen, 0.0, 12.0, ziel,
+            hausmodell.Betriebsflags(liefert=True), None)
+    return zustand
+
+
+@pytest.mark.parametrize("versatz", [0.0, 3 * 3600.0, 86400.0 + 5 * 3600.0])
+def test_the_daily_course_of_the_outdoor_temperature_moves_with_the_offset(paths, paths_zwei, clock, versatz):
+    echt = [10 * 3600.0]
+    ohne = _sim_zeit(paths, clock, echt)
+    verschoben = _sim_zeit(paths_zwei, clock, [echt[0] + versatz])
+    assert ohne.read_signal("outdoor_temp") == round(_tagesgang(echt[0]), 2)
+    assert verschoben.read_signal("outdoor_temp") == round(_tagesgang(echt[0] + versatz), 2)
+
+
+def test_without_an_injected_clock_the_driver_follows_the_functional_time(paths, clock, monkeypatch):
+    echte = [10 * 3600.0]
+    monkeypatch.setattr(zeitquelle, "echte_epoche", lambda: echte[0])
+    monkeypatch.setattr(zeitquelle, "_VERSATZ_S", 6 * 3600.0)
+    driver = create("simulation", {"lever_set": "vaillant_vrc720", "aussen_amplitude": AMPLITUDE, "aussen_mittel": MITTEL},
+                    paths, clock=clock, writer=True, description=BINDINGS["vaillant_vrc720"])
+    driver.poll_once()
+    assert driver.read_signal("outdoor_temp") == round(_tagesgang(16 * 3600.0), 2)
+    assert driver.read_signal("outdoor_temp") != round(_tagesgang(10 * 3600.0), 2)
+
+
+def test_every_step_of_a_poll_uses_the_outdoor_temperature_of_its_own_time(paths, paths_zwei, clock):
+    geschrieben, erzeuger, hebel, ziel = ABBILDUNG["vaillant_vrc720"]
+    start = 6 * 3600.0
+    walls = [start]
+    einmal = _sim_zeit(paths, clock, walls, hebel=geschrieben)
+    clock.advance(96 * SCHRITT)
+    walls[0] = start + 96 * SCHRITT
+    einmal.poll_once()
+    erwartet = _kern_folge(erzeuger, hebel, ziel, [_tagesgang(start + k * SCHRITT) for k in range(1, 97)])
+    assert einmal.read_signal("room_temperature") == round(erwartet.room, 2)
+    assert einmal.read_signal("generator_hours") == round(erwartet.burner_hours, 3)
+
+
+def test_polling_in_between_gives_the_same_room_as_one_long_poll(paths, paths_zwei, clock):
+    geschrieben = ABBILDUNG["vaillant_vrc720"][0]
+    start = 6 * 3600.0
+    walls_a, walls_b = [start], [start]
+    uhr_b = type(clock)()
+    oft = _sim_zeit(paths, clock, walls_a, hebel=geschrieben)
+    einmal = _sim_zeit(paths_zwei, uhr_b, walls_b, hebel=geschrieben)
+    for k in range(1, 25):
+        clock.advance(SCHRITT)
+        walls_a[0] = start + k * SCHRITT
+        oft.poll_once()
+    uhr_b.advance(24 * SCHRITT)
+    walls_b[0] = start + 24 * SCHRITT
+    einmal.poll_once()
+    assert oft.read_signal("room_temperature") == einmal.read_signal("room_temperature")
+    assert oft.read_signal("generator_hours") == einmal.read_signal("generator_hours")
+
+
+def test_the_remainder_keeps_the_time_of_the_steps_of_the_daily_course(paths, clock):
+    geschrieben, erzeuger, hebel, ziel = ABBILDUNG["vaillant_vrc720"]
+    start = 6 * 3600.0
+    walls = [start]
+    driver = _sim_zeit(paths, clock, walls, hebel=geschrieben)
+    for gesamt in range(700, 35001, 700):
+        clock.advance(700)
+        walls[0] = start + gesamt
+        driver.poll_once()
+        erwartet = _kern_folge(erzeuger, hebel, ziel, [_tagesgang(start + k * SCHRITT) for k in range(1, gesamt // 300 + 1)])
+        assert driver.read_signal("room_temperature") == round(erwartet.room, 2), gesamt
+
+
+def test_a_jump_of_the_wall_clock_does_not_change_the_room(paths, paths_zwei, clock):
+    geschrieben, erzeuger, hebel, ziel = ABBILDUNG["vaillant_vrc720"]
+    walls = [WALL]
+    sprung = _sim_zeit(paths, clock, walls, hebel=geschrieben, aussen_amplitude=0.0)
+    for delta in (86400.0, -5 * 3600.0, 40 * 86400.0):
+        walls[0] += delta
+        sprung.poll_once()
+    assert sprung.read_signal("room_temperature") == 20.0
+    clock.advance(12 * SCHRITT)
+    walls[0] -= 30 * 86400.0
+    sprung.poll_once()
+    erwartet = _kern_folge(erzeuger, hebel, ziel, [MITTEL] * 12)
+    assert sprung.read_signal("room_temperature") == round(erwartet.room, 2)
+    assert sprung.read_signal("generator_hours") == round(erwartet.burner_hours, 3)
+
+
+def test_the_wall_clock_alone_runs_no_step(paths, clock):
+    walls = [WALL]
+    driver = _sim_zeit(paths, clock, walls, hebel=ABBILDUNG["vaillant_vrc720"][0])
+    walls[0] += 3 * 86400.0
+    driver.poll_once()
+    assert driver.read_signal("room_temperature") == 20.0
+    assert driver.read_signal("generator_hours") == 1000.0
+
+
+@pytest.mark.parametrize("heizkreis", [0, 1, 7])
+def test_the_plant_files_keep_their_form_and_keys(paths, clock, heizkreis):
+    walls = [1234.0]
+    driver = _sim_zeit(paths, clock, walls, heizkreis=heizkreis, settle_delay=60)
+    driver.write("curve", 1.3)
+    datei = paths.sim_dir / ("plant.json" if heizkreis == 0 else f"plant-{heizkreis}.json")
+    plant = json.loads(datei.read_text())
+    assert sorted(plant) == ["geschrieben_um", "hebel", "hilfswerte", "vorbereitet", "vorher"]
+    assert plant["hebel"]["curve"] == 1.3
+    assert plant["geschrieben_um"] == {"curve": 1234.0}
+
+
+def test_every_heating_circuit_has_its_own_house(paths, clock):
+    erzeuger, hebel_a, hebel_b = ABBILDUNG["vaillant_vrc720"][1], (0.5, 18.0, 16.0), (2.0, 24.0, 16.0)
+    walls = [WALL]
+    kreis0 = _sim_zeit(paths, clock, walls, aussen_amplitude=0.0, heizkreis=0)
+    kreis1 = _sim_zeit(paths, clock, walls, aussen_amplitude=0.0, heizkreis=1)
+    kreis0.write("curve", 0.5), kreis0.write("room_setpoint", 18.0), kreis0.write("min_flow", 18.0)
+    kreis1.write("curve", 2.0), kreis1.write("room_setpoint", 24.0), kreis1.write("min_flow", 24.0)
+    clock.advance(36 * SCHRITT)
+    kreis0.poll_once()
+    kreis1.poll_once()
+    for kreis, hebel in ((kreis0, hebel_a), (kreis1, hebel_b)):
+        erwartet = _kern_folge(erzeuger, hebel, hebel[1], [MITTEL] * 36)
+        assert kreis.read_signal("room_temperature") == round(erwartet.room, 2)
+        assert kreis.read_signal("generator_hours") == round(erwartet.burner_hours, 3)
+    assert kreis0.read_signal("room_temperature") != kreis1.read_signal("room_temperature")

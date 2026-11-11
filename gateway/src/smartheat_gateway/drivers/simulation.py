@@ -2,7 +2,9 @@
 Anlagenzustand in /data/sim/plant.json (schreibt nur die Laufzeit, writer=True; der Heizkreis n > 0 hat plant-<n>.json),
 Fehlerinjektion in /data/sim/control.json (bei jeder Abfrage gelesen; `heizkreise: 2` macht auch den zweiten Kreis der
 Erkennung schreibbar). Das Haus rechnet der Hausmodell-Kern (`smartheat_core/hausmodell.py`, Haus H1) in 5-min-Schritten
-der monotonen Uhr; die Tageszeit bestimmt die Lieferung nicht (feste Stunde ausserhalb der Warmwasserpausen)."""
+der monotonen Uhr; die Tageszeit bestimmt die Lieferung nicht (feste Stunde ausserhalb der Warmwasserpausen). Die
+fachliche Zeit (`wall`, Vorgabe `zeitquelle.fachliche_epoche`) bestimmt nur den Tagesgang der Aussentemperatur und die
+Wartezeit, bis ein geschriebener Hebel sichtbar wird; ein Sprung der Wanduhr ruehrt den Raum nicht an."""
 import logging
 import math
 import random
@@ -15,6 +17,7 @@ from smartheat_core.binding import BindingDescription
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.verfahren import VERFAHREN
 from smartheat_core.zahlen import ist_endliche_zahl
+from smartheat_core.zeitquelle import fachliche_epoche
 from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers.base import CACHE_MAX_POLLS, KIND_LOCAL, LEVER_ROLES, DriverError, erkennung_daten
 from smartheat_gateway.paths import Paths
@@ -95,7 +98,7 @@ class SimulationDriver:
     IDENTITY_PARAMETERS = ("lever_set", "heizkreis")
 
     def __init__(
-        self, parameter: dict, paths: Paths, *, clock=time.monotonic, writer: bool = False, wall=time.time,
+        self, parameter: dict, paths: Paths, *, clock=time.monotonic, writer: bool = False, wall=fachliche_epoche,
         description: BindingDescription | None = None,
     ) -> None:
         self._p = {**DEFAULTS, **(parameter or {})}
@@ -182,14 +185,15 @@ class SimulationDriver:
             return  # kein Abruf: der Cache altert
         plant = self._plant()
         now = self._clock()
-        outdoor = self._outdoor()
+        wall = self._wall()
+        outdoor = self._outdoor(wall)
         levers = {lever: self._visible(plant, lever) for lever in self._levers()}
         hebel, mindestvorlauf = self._kern_eingaenge(levers)
         # Ohne Liefer-Signal lernt der Server nicht; `keine_waerme` in der Steuerdatei bildet einen
         # Waermeausfall nach.
         flags = hausmodell.Betriebsflags(liefert=not control.get("keine_waerme"))
         erzeuger = ERZEUGER[self.lever_set_id]
-        gemessen = self._rechne(now, erzeuger, hebel, mindestvorlauf, outdoor, flags)
+        gemessen = self._rechne(now, wall, erzeuger, hebel, mindestvorlauf, flags)
         # Sollvorlauf aus den aktuellen Hebeln (wie der Kern ihn im Heizbetrieb bildet); geliefert wird, wenn die Anlage
         # weder ausgefallen ist noch im letzten Schritt ohne Heizbetrieb war.
         flow = max(erzeuger.flow(hebel[0], hebel[1], outdoor), mindestvorlauf)
@@ -212,26 +216,31 @@ class SimulationDriver:
         hebel = (levers.get("curve", START_LEVERS["curve"]), verschiebung, levers.get("heat_limit", START_LEVERS["heat_limit"]))
         return hebel, levers.get("min_flow", raum_soll)
 
-    def _rechne(self, jetzt, erzeuger, hebel, mindestvorlauf, outdoor, flags) -> float:
+    def _rechne(self, jetzt, wall, erzeuger, hebel, mindestvorlauf, flags) -> float:
         """Rechnet die vollen 5-min-Schritte seit der letzten Abfrage (der Rest bleibt fuer die naechste liegen, hoechstens
-        ein Tag je Abfrage) und liefert den Fuehlerwert des Raums."""
+        ein Tag je Abfrage) und liefert den Fuehlerwert des Raums. Wie viele Schritte laufen, bestimmt allein die
+        monotone Uhr; die Aussentemperatur jedes Schritts folgt dem Tagesgang zu dessen Ende auf der fachlichen Zeit
+        (`wall` ist das Ende des Rechenfensters, der Rest liegt dahinter)."""
         if self._last_model is not None:
             self._rest += max(jetzt - self._last_model, 0.0)
         self._last_model = jetzt
         schritte = int(self._rest // hausmodell.DT)
         self._rest -= schritte * hausmodell.DT
         rauschen = float(self._p["rauschen"])
-        for _ in range(min(schritte, hausmodell.STEPS_PER_DAY)):
+        ende_letzter = wall - self._rest
+        gerechnet = min(schritte, hausmodell.STEPS_PER_DAY)
+        for k in range(gerechnet):
+            aussen = self._outdoor(ende_letzter - (gerechnet - 1 - k) * hausmodell.DT)
             self._letzter = hausmodell.anlage_schritt(
-                self._zustand, hausmodell.HOUSES[KERN_HAUS], erzeuger, hebel, outdoor, 0.0, KERN_STUNDE, mindestvorlauf, flags,
+                self._zustand, hausmodell.HOUSES[KERN_HAUS], erzeuger, hebel, aussen, 0.0, KERN_STUNDE, mindestvorlauf, flags,
                 self._random if rauschen else None)
         if not rauschen or self._letzter is None or self._letzter.gemessen is None:
             return self._zustand.room
         # Der Kern rauscht mit fester Staerke; `rauschen` skaliert diese Abweichung.
         return self._zustand.room + (self._letzter.gemessen - self._zustand.room) * rauschen / hausmodell.NOISE_K
 
-    def _outdoor(self) -> float:
-        hours = (self._wall() / 3600.0) % 24
+    def _outdoor(self, wall: float) -> float:
+        hours = (wall / 3600.0) % 24
         swing = math.sin(2 * math.pi * (hours - 9) / 24)
         return float(self._p["aussen_mittel"]) + float(self._p["aussen_amplitude"]) * swing
 

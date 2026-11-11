@@ -34,9 +34,6 @@ ZUORDNUNG: list[tuple[str, str, str, str, str]] = [
     ("smartheat_core/zeitquelle.py", "echte_epoche", "time.time", "echt",
      "die einzige Stelle des Kerns, die die Systemuhr liest; die fachliche Wanduhr (Fristen, Plan, Uhr-Vertrauen) "
      "und die fachliche Epoche addieren den Versatz darauf, echte_epoche bleibt unverschoben"),
-    ("smartheat_gateway/drivers/simulation.py", "SimulationDriver.__init__", "time.time", "fachlich",
-     "Tagesgang der Aussentemperatur und Wartezeit, bis ein geschriebener Hebel sichtbar wird; die Registry reicht "
-     "keine Uhr durch"),
     ("smartheat_gateway/drivers/vicare_cloud/api.py", "ViCareApi.__init__", "time.time", "echt",
      "Sperrzeit nach Retry-After der Hersteller-API"),
     ("smartheat_gateway/drivers/vicare_cloud/oauth.py", "TokenStore.__init__", "time.time", "echt",
