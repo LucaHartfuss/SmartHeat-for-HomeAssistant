@@ -206,6 +206,32 @@ def test_driver_run_equals_direct_run_of_the_core(paths, clock, hebelsatz):
     assert driver.read_signal("outdoor_temp") == AUSSEN
 
 
+# Faelle, in denen der Mindestvorlauf bindet (der Vorlauf der Heizkurve liegt darunter): Hebelsatz, geschriebene Hebel, Erzeuger,
+# Eingaben des Kerns, Mindestvorlauf. Ohne Hebel `min_flow` gilt das Raum-Soll; fehlt er nur ungeschrieben, sein Startwert (20).
+MINDESTVORLAUF = {
+    "mit_min_flow": ("vaillant_vrc720", {"curve": 0.2, "room_setpoint": 21.0, "min_flow": 60.0}, (2.54, 0.78), (0.2, 21.0, 16.0), 60.0),
+    "min_flow_ungeschrieben": ("vaillant_vrc720", {"curve": 0.2, "room_setpoint": 12.0}, (2.54, 0.78), (0.2, 12.0, 16.0), 20.0),
+    # Das negative Niveau senkt die Verschiebung unter das Raum-Soll; ohne Hebel `min_flow` gilt das Raum-Soll.
+    "ohne_min_flow": ("viessmann_vicare", {"curve": 0.2, "room_setpoint": 20.0, "level": -10.0}, (1.0, 1.0), (0.2, 10.0, 16.0), 20.0),
+}
+
+
+@pytest.mark.parametrize("fall", sorted(MINDESTVORLAUF))
+def test_the_minimum_flow_binds_exactly_as_in_the_core(paths, clock, fall):
+    hebelsatz, geschrieben, erzeuger, hebel, ziel = MINDESTVORLAUF[fall]
+    kurve = hausmodell.Potenzgesetz(*erzeuger).flow(hebel[0], hebel[1], AUSSEN)
+    assert kurve < ziel - 1.0  # sonst unterscheidet der Fall den Mindestvorlauf nicht
+    driver = _sim_satz(paths, clock, hebelsatz, geschrieben)
+    clock.advance(12 * SCHRITT)
+    driver.poll_once()
+    zustand, letzter = _kern(erzeuger, hebel, ziel, 12)
+    assert zustand.heating and letzter.geliefert and letzter.flow == ziel
+    assert driver.read_signal("flow_setpoint") == ziel
+    assert driver.read_signal("flow_temperature") == ziel
+    assert driver.read_signal("room_temperature") == round(zustand.room, 2)
+    assert driver.read_signal("generator_hours") == round(zustand.burner_hours, 3)
+
+
 def test_the_start_room_is_the_room_of_the_first_reading(paths, clock):
     driver = _sim_satz(paths, clock, "vaillant_vrc720", raum_start=17.5)
     assert driver.read_signal("room_temperature") == 17.5
