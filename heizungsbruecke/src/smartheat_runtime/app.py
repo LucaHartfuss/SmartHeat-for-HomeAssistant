@@ -178,6 +178,10 @@ class Host(Protocol):
         binnen der Zwischenspeicherzeit sind False. Wirft nie und haelt den Takt nie laenger an (`uhr.UhrPort`)."""
         ...
 
+    def uhr_antwort(self) -> uhr.UhrAntwort:
+        """Wie `uhr_synchron`, mit Wand- und monotoner Zeit der Antwort (`uhr.UhrAntwort`); wirft nie."""
+        ...
+
     def ursprungswerte_melden(self, werte: dict) -> None:
         """Gemerkte Ursprungswerte fuer up/status; im Hauptthread, wirft nie."""
         ...
@@ -879,7 +883,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
             server_originals=host.ursprungswerte_server,
         ),
         notifier=notifier, neustart=neustart, status=status, clock=clock, texts=host.texts,
-        uhr_vertrauen=uhr.UhrVertrauen(host.uhr_synchron, clock=clock),
+        uhr_vertrauen=uhr.UhrVertrauen(host.uhr_antwort, clock=clock),
     )
     # Abo-Status erst hier: Abschluss-Start und lokaler Modus brauchen Manifest und Clamps.
     # "unknown" (accounts-api nicht erreichbar) startet normal -- fail-open.

@@ -49,5 +49,6 @@ def vertrauenswuerdig(beleg: UhrBeleg | None, *, wand_jetzt: datetime, mono_jetz
     Vertrauen. Eine neue synchrone Meldung erneuert den Beleg und gibt es zurueck."""
     if beleg is None:
         return False
-    sprung_s = (wand_jetzt - beleg.wand).total_seconds() - (mono_jetzt - beleg.mono)
+    # Ueber .timestamp(): die Differenz zweier aware datetimes mit demselben tzinfo-Objekt ignoriert die Offsets (Zeitumstellung).
+    sprung_s = (wand_jetzt.timestamp() - beleg.wand.timestamp()) - (mono_jetzt - beleg.mono)
     return abs(sprung_s) <= toleranz_s

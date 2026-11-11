@@ -26,9 +26,11 @@ logger = logging.getLogger(__name__)
 EVENT_SCHEMA = 4
 GERAET_FIELDS = ("geraet_id", "geraet_zustand", "server_verbunden", "geraet_hinweise", "anlage_name",
                  "konfig_version", "mindest_integration")
-#: Form der kritischen Mindestversion der Integration im Ereignis (wie die Pruefung der Integration): drei Zahlen,
-#: hoechstens eine Endung, hoechstens 32 Zeichen; was nicht passt, geht nie ins Ereignis (kein Freitext des Servers).
-MINDEST_INTEGRATION_RE = re.compile(r"(?=.{1,32}\Z)\d{1,6}\.\d{1,6}\.\d{1,6}(?:[.+-][0-9A-Za-z]{1,16})?")
+#: Form der kritischen Mindestversion der Integration im Ereignis (wortgleich mit der Pruefung der Integration): drei
+#: Ziffernfolgen (nur ASCII-Ziffern), hoechstens eine Endung (`-`/`+` mit Buchstaben und Ziffern oder `.dev` mit Zahl),
+#: hoechstens 32 Zeichen; was nicht passt, geht nie ins Ereignis (kein Freitext des Servers, keine Domain-Endung).
+MINDEST_INTEGRATION_RE = re.compile(
+    r"(?=.{1,32}\Z)\d{1,6}\.\d{1,6}\.\d{1,6}(?:[-+][0-9A-Za-z]{1,16}|\.dev\d{1,6})?", re.ASCII)
 #: Felder der Anlage im Ereignis und Felder eines Kreises: die Kreisfelder der Laufzeit plus die lokalen.
 LOKAL_KREIS_FIELDS = ("name", "raum_soll", "raum_ist", "einlernphase_tag", "testphase_bis", "befunde")
 EVENT_FIELDS = (*status.ANLAGE_FELDER, *GERAET_FIELDS, "kreise")

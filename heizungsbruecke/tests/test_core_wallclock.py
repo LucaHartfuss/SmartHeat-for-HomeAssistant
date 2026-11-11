@@ -110,3 +110,21 @@ def test_vertrauen_hat_keine_wanduhr_und_keine_monotone_uhr_im_zugriff(monkeypat
     monkeypatch.setattr(wallclock, "_now", lambda: datetime(1999, 1, 1, tzinfo=BERLIN))
     beleg = wallclock.beleg_fortschreiben(None, synchron=True, wand_jetzt=_wand(0), mono_jetzt=1000.0)
     assert wallclock.vertrauenswuerdig(beleg, wand_jetzt=_wand(10), mono_jetzt=1010.0)
+
+
+def test_am_sommerzeitende_ist_die_vergangene_wanduhrzeit_die_echte_dauer():
+    # Dieselbe Zeitzone, aber andere Offsets: 01:30+02:00 und 02:30+01:00 liegen zwei Stunden auseinander, nicht eine.
+    vorher = datetime(2026, 10, 25, 1, 30, tzinfo=BERLIN)
+    nachher = datetime(2026, 10, 25, 2, 30, tzinfo=BERLIN, fold=1)
+    assert vorher.utcoffset() == timedelta(hours=2) and nachher.utcoffset() == timedelta(hours=1)
+    beleg = wallclock.beleg_fortschreiben(None, synchron=True, wand_jetzt=vorher, mono_jetzt=1000.0)
+    assert wallclock.vertrauenswuerdig(beleg, wand_jetzt=nachher, mono_jetzt=1000.0 + 7200)
+    assert not wallclock.vertrauenswuerdig(beleg, wand_jetzt=nachher, mono_jetzt=1000.0 + 3600)  # Stunde Sprung
+
+
+def test_am_sommerzeitbeginn_ist_die_vergangene_wanduhrzeit_die_echte_dauer():
+    vorher = datetime(2026, 3, 29, 1, 30, tzinfo=BERLIN)  # +01:00
+    nachher = datetime(2026, 3, 29, 3, 30, tzinfo=BERLIN)  # +02:00, eine Stunde spaeter
+    beleg = wallclock.beleg_fortschreiben(None, synchron=True, wand_jetzt=vorher, mono_jetzt=1000.0)
+    assert wallclock.vertrauenswuerdig(beleg, wand_jetzt=nachher, mono_jetzt=1000.0 + 3600)
+    assert not wallclock.vertrauenswuerdig(beleg, wand_jetzt=nachher, mono_jetzt=1000.0 + 7200)

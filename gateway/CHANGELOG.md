@@ -2,6 +2,9 @@
 
 ## Unveroeffentlicht
 
+- Uhrbeurteilung genauer: Ein Sprung der Systemuhr kurz nach einer „synchron“-Meldung des Hosts nimmt jetzt das
+  Vertrauen in die Uhr (Beleg zum Zeitpunkt der Antwort); zur Zeitumstellung gilt die tatsaechlich vergangene Zeit.
+  Die kritische Mindestversion im Status-Ereignis nimmt nur ASCII-Ziffern und als Endung `-…`, `+…` oder `.devN` an.
 - Die erlaubte eigene Zone fuer Geraete-API- und Portal-Adresse im Image (`SHG_OWN_ZONES` in `own_url.sh`) ist jetzt
   `setwell.de` (vorher `hartfussha.org`, die Domain bleibt privat). Es gilt nur diese eine Zone, keine Mischliste:
   ein Image mit Adressen unter `hartfussha.org` wird beim Bau abgelehnt. Bereits gebaute Images behalten ihre Adressen.

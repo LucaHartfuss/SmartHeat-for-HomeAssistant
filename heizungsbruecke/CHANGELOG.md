@@ -5,6 +5,10 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 ## Unveröffentlicht
 
+- Uhrbeurteilung genauer: Ein Sprung der Systemuhr innerhalb von 30 Sekunden nach einer „synchron“-Meldung des
+  Zeitdienstes nimmt jetzt das Vertrauen in die Uhr (der Beleg stammt vom Zeitpunkt der Antwort, nicht des Aufrufs);
+  zur Zeitumstellung gilt die tatsächlich vergangene Zeit, kein Sprung. Die kritische Mindestversion im Status-Ereignis
+  nimmt nur ASCII-Ziffern und als Endung `-…`, `+…` oder `.devN` an.
 - Das Status-Ereignis für die Integration trägt zwei neue Anlagenfelder: die Version des Konfigurationsdokuments
   (`konfig_version`) und dessen kritische Mindestversion der Integration (`mindest_integration`, nur in der Form einer
   Versionsnummer, sonst leer). Die Integration entfernt Kreis-Geräte erst, wenn zwei Ereignisse dieselbe Version tragen.

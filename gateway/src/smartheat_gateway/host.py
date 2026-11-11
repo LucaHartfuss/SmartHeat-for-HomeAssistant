@@ -37,7 +37,7 @@ from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, 
 from smartheat_runtime.soll_ende import SollEnde
 from smartheat_runtime.soll_speicher import DEFAULT_RAUM_SOLL, TargetStore, bedienung_start, gespeicherter_wunsch
 from smartheat_runtime.texts import HostTexts
-from smartheat_runtime.uhr import UhrPort
+from smartheat_runtime.uhr import UhrAntwort, UhrPort
 from smartheat_runtime.worker import RegulationWorker
 
 logger = logging.getLogger(__name__)
@@ -125,6 +125,10 @@ class GatewayHost:
     def uhr_synchron(self) -> bool:
         """Zeitdienst des Hosts (host/status.json) ueber den Geraete-Host; nur ein echtes True gilt."""
         return self._uhr.uhr_synchron()
+
+    def uhr_antwort(self) -> UhrAntwort:
+        """Wie `uhr_synchron`, mit Wand- und monotoner Zeit der Antwort (Beleg der Uhrbeurteilung)."""
+        return self._uhr.antwort()
 
     def ursprungswerte_melden(self, werte: dict) -> None:
         self._geraet.ursprungswerte_merken(werte, self.kreis)

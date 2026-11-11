@@ -435,9 +435,12 @@ def test_eine_version_die_keine_ganze_zahl_ist_gilt_als_nicht_vorhanden():
 
 def test_eine_mindestversion_die_nicht_die_form_einer_versionsnummer_hat_gilt_als_nicht_gesetzt():
     for wert in (None, "", 5, True, ["1.2.0"], "1.2", "v1.2.0", "1.2.0 \n", "https://example.org/x", "ha.cker.com",
-                 "1.2.3." + "a" * 30, "1.2.3-" + "a" * 17, "1.2.3 beta", "1.2.3/x"):
+                 "1.2.3." + "a" * 30, "1.2.3-" + "a" * 17, "1.2.3 beta", "1.2.3/x",
+                 "1.2.3.com", "1.2.3.rc1", "1.2.3.dev", "1.2.3.dev1234567", "١.٢.٣", "1.2.٣",
+                 "123456.123456.123456-abcdefghijkl"):  # die letzte hat 33 Zeichen
         assert _sicht_mit(_dokument(7, {"mindest_integration": wert}))["mindest_integration"] is None, wert
-    for wert in ("1.2.0", "10.20.30", "1.2.3-beta1", "1.2.3+build5", "1.2.3.dev4", "1.2.3-" + "a" * 16):
+    for wert in ("1.2.0", "10.20.30", "1.2.3-beta1", "1.2.3+build5", "1.2.3.dev4", "1.2.3-" + "a" * 16, "1.2.3-rc1",
+                 "1.2.3+b5", "123456.123456.123456-abcdefghijk"):  # die letzte hat genau 32 Zeichen
         assert _sicht_mit(_dokument(7, {"mindest_integration": wert}))["mindest_integration"] == wert, wert
 
 

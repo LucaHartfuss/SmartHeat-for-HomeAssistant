@@ -12,6 +12,8 @@ gilt "nicht synchron"."""
 import logging
 import threading
 from collections.abc import Callable
+from datetime import datetime
+from typing import NamedTuple
 
 from smartheat_core import wallclock
 
@@ -23,6 +25,15 @@ UHR_WARTEZEIT_S = 0.5
 logger = logging.getLogger(__name__)
 
 
+class UhrAntwort(NamedTuple):
+    """Gueltige Antwort des Zeitdienstes. Meldet er synchron, tragen `wand` und `mono` die Wanduhr und die monotone Uhr
+    im Augenblick der Antwort (nicht des Aufrufs, die Antwort kann zwischengespeichert sein); sonst sind sie None."""
+
+    synchron: bool
+    wand: datetime | None
+    mono: float | None
+
+
 class UhrPort:
     def __init__(self, abfrage: Callable[[], object], *, clock: Callable[[], float],
                  zwischenspeicher_s: float = UHR_ZWISCHENSPEICHER_S, wartezeit_s: float = UHR_WARTEZEIT_S) -> None:
@@ -31,21 +42,29 @@ class UhrPort:
         self._wartezeit = min(wartezeit_s, zwischenspeicher_s)
         self._lock = threading.Lock()
         self._wert = False
-        self._stand: float | None = None  # Zeitpunkt der letzten fertigen Antwort
+        self._stand: float | None = None  # monotoner Zeitpunkt der letzten fertigen Antwort
+        self._wand: datetime | None = None  # Wanduhr zum selben Zeitpunkt
         self._laeuft = False
 
     def uhr_synchron(self) -> bool:
+        return self.antwort().synchron
+
+    def antwort(self) -> UhrAntwort:
+        """Wie `uhr_synchron`, mit den Uhrzeiten der Antwort."""
         with self._lock:
             if self._frisch():
-                return self._wert
+                return self._lesen()
             if self._laeuft:
-                return False
+                return _KEINE
             self._laeuft = True
         fertig = threading.Event()
         threading.Thread(target=self._fragen, args=(fertig,), name="uhr-abfrage", daemon=True).start()
         fertig.wait(self._wartezeit)
         with self._lock:
-            return self._wert if self._frisch() else False
+            return self._lesen() if self._frisch() else _KEINE
+
+    def _lesen(self) -> UhrAntwort:
+        return UhrAntwort(True, self._wand, self._stand) if self._wert else _KEINE
 
     def _frisch(self) -> bool:
         return self._stand is not None and self._clock() - self._stand < self._zwischenspeicher
@@ -58,21 +77,27 @@ class UhrPort:
             logger.warning("Uhrzeit des Hosts unbekannt (%s)", type(error).__name__)
         finally:
             with self._lock:
-                self._wert, self._stand, self._laeuft = wert, self._clock(), False
+                self._wert, self._stand, self._wand, self._laeuft = wert, self._clock(), wallclock.now(), False
             fertig.set()
+
+
+_KEINE = UhrAntwort(False, None, None)
 
 
 class UhrVertrauen:
     """Ob die Wanduhr jetzt als Grundlage fuer Fristen gilt (`wallclock.vertrauenswuerdig`). Jeder Aufruf fragt den Zeitdienst
-    (zwischengespeichert, `UhrPort`), fuehrt den Beleg fort und beurteilt die Wanduhr gegen die monotone Uhr. Nur im
-    Worker-Thread aufrufen (der Beleg ist nicht gesperrt)."""
+    (zwischengespeichert, `UhrPort.antwort`), fuehrt den Beleg zum Zeitpunkt der Antwort fort (nicht zum Zeitpunkt des
+    Aufrufs: ein Wanduhrsprung innerhalb der Zwischenspeicherzeit wird sonst zum Beleg) und beurteilt die Wanduhr gegen
+    die monotone Uhr. Nur im Worker-Thread aufrufen (der Beleg ist nicht gesperrt)."""
 
-    def __init__(self, synchron: Callable[[], object], *, clock: Callable[[], float]) -> None:
-        self._synchron, self._clock = synchron, clock
+    def __init__(self, antwort: Callable[[], UhrAntwort], *, clock: Callable[[], float]) -> None:
+        self._antwort, self._clock = antwort, clock
         self._beleg: wallclock.UhrBeleg | None = None
 
     def __call__(self) -> bool:
         wand, mono = wallclock.now(), self._clock()
-        self._beleg = wallclock.beleg_fortschreiben(self._beleg, synchron=self._synchron() is True, wand_jetzt=wand,
-                                                    mono_jetzt=mono)
+        antwort = self._antwort()
+        if antwort.synchron and antwort.wand is not None and antwort.mono is not None:
+            self._beleg = wallclock.beleg_fortschreiben(self._beleg, synchron=True, wand_jetzt=antwort.wand,
+                                                        mono_jetzt=antwort.mono)
         return wallclock.vertrauenswuerdig(self._beleg, wand_jetzt=wand, mono_jetzt=mono)

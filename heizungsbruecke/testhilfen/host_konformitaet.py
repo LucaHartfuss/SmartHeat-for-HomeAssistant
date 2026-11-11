@@ -382,6 +382,13 @@ def die_uhr_der_laufzeit_ist_synchron_wenn_der_zeitdienst_es_meldet(w: Welt) -> 
     assert _laufzeit_host(w).uhr_synchron() is True
 
 
+def die_uhr_der_laufzeit_traegt_die_zeiten_der_synchronen_antwort(w: Welt) -> None:
+    w.zeitdienst_setzen(True)
+    antwort = _laufzeit_host(w).uhr_antwort()
+    assert antwort.synchron is True and antwort.wand is not None and antwort.wand.tzinfo is not None
+    assert isinstance(antwort.mono, float)
+
+
 def die_uhr_der_laufzeit_ist_nicht_synchron_wenn_der_zeitdienst_es_verneint(w: Welt) -> None:
     w.zeitdienst_setzen(False)
     assert _laufzeit_host(w).uhr_synchron() is False
@@ -406,6 +413,7 @@ def die_uhr_der_laufzeit_haelt_den_takt_nicht_laenger_als_die_zwischenspeicherze
     mit "nicht synchron" zurueck; der haengende Aufruf blockiert keinen weiteren."""
     from smartheat_runtime import uhr
 
+    assert uhr.UHR_WARTEZEIT_S == 0.5  # absolute Schranke unten gilt nur fuer diese Wartezeit
     frei, aufrufe = threading.Event(), []
 
     def haengen():
@@ -419,7 +427,7 @@ def die_uhr_der_laufzeit_haelt_den_takt_nicht_laenger_als_die_zwischenspeicherze
         for _ in range(2):
             start = time.monotonic()
             assert host.uhr_synchron() is False
-            assert time.monotonic() - start < min(uhr.UHR_ZWISCHENSPEICHER_S, uhr.UHR_WARTEZEIT_S + 1.0)
+            assert time.monotonic() - start < 2.0  # absolut: ein Takt wartet nie auf den haengenden Zeitdienst (10 s)
         assert len(aufrufe) == 1
     finally:
         frei.set()
@@ -441,6 +449,7 @@ PRUEFUNGEN = (
     ohne_eigene_abmeldung_startet_dieselbe_konfiguration_nicht_neu, wunsch_und_soll_quelle_gehen_an_das_geraet,
     ein_ungueltiger_fuehlerwert_wirft_signal_ungueltig, host_und_version,
     die_uhr_der_laufzeit_ist_synchron_wenn_der_zeitdienst_es_meldet,
+    die_uhr_der_laufzeit_traegt_die_zeiten_der_synchronen_antwort,
     die_uhr_der_laufzeit_ist_nicht_synchron_wenn_der_zeitdienst_es_verneint,
     nur_ein_echtes_true_des_geraete_hosts_macht_die_uhr_der_laufzeit_synchron,
     wirft_der_geraete_host_gilt_die_uhr_der_laufzeit_als_nicht_synchron,

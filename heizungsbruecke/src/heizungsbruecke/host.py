@@ -43,7 +43,7 @@ from smartheat_runtime.soll_speicher import (
     gespeicherter_wunsch,
 )
 from smartheat_runtime.texts import HA_TEXTS, HostTexts
-from smartheat_runtime.uhr import UhrPort
+from smartheat_runtime.uhr import UhrAntwort, UhrPort
 from smartheat_runtime.worker import Event, RegulationWorker
 
 # Das Add-on startet mit `startup: services`, evtl. vor HA Core. Solange HA nicht antwortet,
@@ -147,6 +147,10 @@ class HaHost:
     def uhr_synchron(self) -> bool:
         """Zeitdienst des Supervisors (dt_synchronized) ueber den Geraete-Host; nur ein echtes True gilt."""
         return self._uhr.uhr_synchron()
+
+    def uhr_antwort(self) -> UhrAntwort:
+        """Wie `uhr_synchron`, mit Wand- und monotoner Zeit der Antwort (Beleg der Uhrbeurteilung)."""
+        return self._uhr.antwort()
 
     def ursprungswerte_melden(self, werte: dict) -> None:
         self._geraet.ursprungswerte_merken(werte, self.kreis)
