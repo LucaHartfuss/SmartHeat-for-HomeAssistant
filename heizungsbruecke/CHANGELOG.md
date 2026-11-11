@@ -5,6 +5,8 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 ## Unveröffentlicht
 
+- Neue Abhängigkeit `tzdata` 2026.5 (mit Hash): das Image hat keine Systemzonendaten, die Zone `Europe/Berlin` kommt aus dem
+  Paket.
 - Der Standard der Option `bootstrap_url` ist jetzt `https://accounts.setwell.de` (vorher `https://accounts.hartfussha.org`).
   Ist die Option nicht gesetzt, meldet sich das Add-on nach dem Update dort an. Wer sein Gerät noch am bisherigen Server
   betreibt, setzt `bootstrap_url` vor dem Update ausdrücklich auf `https://accounts.hartfussha.org`.
