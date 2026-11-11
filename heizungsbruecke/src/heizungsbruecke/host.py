@@ -41,6 +41,7 @@ from smartheat_runtime.soll_speicher import (
     bedienung_start,
 )
 from smartheat_runtime.texts import HA_TEXTS, HostTexts
+from smartheat_runtime.uhr import UhrPort
 from smartheat_runtime.worker import Event, RegulationWorker
 
 # Das Add-on startet mit `startup: services`, evtl. vor HA Core. Solange HA nicht antwortet,
@@ -86,6 +87,7 @@ class HaHost:
 
     def __init__(self, geraet, ha_api, *, clock=time.monotonic, kreis: int | None = None) -> None:
         self._geraet, self._ha_api, self._clock = geraet, ha_api, clock
+        self._uhr = UhrPort(lambda: geraet.uhr_synchron(), clock=clock)
         # Steht nach einer leeren Konfiguration das Zuruecksetzen aus, laeuft die Laufzeit
         # mit der alten Konfiguration aus der Aufraeum-Markierung im Modus abgemeldet.
         self._konfiguration, self._leer_abmelden = geraet.laufzeit_konfiguration()
@@ -139,6 +141,10 @@ class HaHost:
     def wait_until_ready(self) -> None:
         _wait_until_reachable(self._ha_api)
         config.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+
+    def uhr_synchron(self) -> bool:
+        """Zeitdienst des Supervisors (dt_synchronized) ueber den Geraete-Host; nur ein echtes True gilt."""
+        return self._uhr.uhr_synchron()
 
     def ursprungswerte_melden(self, werte: dict) -> None:
         self._geraet.ursprungswerte_merken(werte, self.kreis)

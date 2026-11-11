@@ -35,6 +35,7 @@ from smartheat_runtime.runtime import EV_LOCAL_CHECK
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef, BootInfo
 from smartheat_runtime.soll_speicher import DEFAULT_RAUM_SOLL, TargetStore, bedienung_start
 from smartheat_runtime.texts import HostTexts
+from smartheat_runtime.uhr import UhrPort
 from smartheat_runtime.worker import RegulationWorker
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ class GatewayHost:
                  kreis: int | None = None) -> None:
         self._paths, self._bus, self._clock = paths, bus, clock
         self._geraet = geraet
+        self._uhr = UhrPort(lambda: geraet.uhr_synchron(), clock=clock)
         self._devices_wait = devices_wait_seconds
         self._driver_threads = driver_threads
         # Steht nach einer leeren Konfiguration das Zuruecksetzen aus, laeuft die Laufzeit
@@ -117,6 +119,10 @@ class GatewayHost:
         while not self._bus.wait_connected(5):
             logger.info("Lokaler Bus noch nicht erreichbar, warte ...")
         self._paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    def uhr_synchron(self) -> bool:
+        """Zeitdienst des Hosts (host/status.json) ueber den Geraete-Host; nur ein echtes True gilt."""
+        return self._uhr.uhr_synchron()
 
     def ursprungswerte_melden(self, werte: dict) -> None:
         self._geraet.ursprungswerte_merken(werte, self.kreis)

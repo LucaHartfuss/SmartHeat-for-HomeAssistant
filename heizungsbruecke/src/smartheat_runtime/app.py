@@ -170,6 +170,11 @@ class Host(Protocol):
         """Binding und Sicherheitswerte zum Zuruecksetzen; None bei ungueltiger Konfiguration."""
         ...
 
+    def uhr_synchron(self) -> bool:
+        """True nur, wenn der Zeitdienst des Systems die Uhr als abgeglichen meldet; Fehler, unbekannt und keine Antwort
+        binnen der Zwischenspeicherzeit sind False. Wirft nie und haelt den Takt nie laenger an (`uhr.UhrPort`)."""
+        ...
+
     def ursprungswerte_melden(self, werte: dict) -> None:
         """Gemerkte Ursprungswerte fuer up/status; im Hauptthread, wirft nie."""
         ...

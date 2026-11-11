@@ -1,12 +1,16 @@
 """V2-Konformitaet des Gateway-Hosts (heizungsbruecke/testhilfen/host_konformitaet.py)."""
+from datetime import UTC, datetime
+
 import pytest
 from configs import SENSOR, konfiguration
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
 from host_konformitaet import Welt, parameter
 
+from smartheat_core import dateien
 from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_gateway import geraet_host as gh
+from smartheat_gateway.host import GatewayHost
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.signals import GatewaySignalSource
 from smartheat_gateway.zigbee import ZigbeeMirror
@@ -30,9 +34,14 @@ def welt(tmp_path, clock):
         return signale.get_state(f"zigbee:{SENSOR}:temperature")
 
     host = gh.GatewayDeviceHost(paths, mirror, host_dir=tmp_path / "host", clock=clock)
+    def zeitdienst_setzen(synchron):  # host/status.json wie vom Dienst hoststatus, frisch gestempelt
+        status = {"netz": True, "dns": True, "zeit_synchron": synchron, "ts": datetime.now(UTC).isoformat()}
+        dateien.schreiben_json(tmp_path / "host" / "status.json", status, modus=dateien.LESBAR)
+
     return Welt(host=host, clock=clock, reload_kind=EV_RELOAD, aufraeumen_pfad=paths.aufraeumen,
                 abgemeldet_pfad=paths.abgemeldet, konfiguration=konfiguration(), wunsch_herkunft="thermostat",
-                fuehler_lesen=fuehler_lesen)
+                fuehler_lesen=fuehler_lesen, zeitdienst_setzen=zeitdienst_setzen,
+                laufzeit_host=lambda: GatewayHost(paths, bus, mirror, host, clock=clock))
 
 
 @pytest.mark.parametrize("pruefung", parameter(ABWEICHUNGEN))
