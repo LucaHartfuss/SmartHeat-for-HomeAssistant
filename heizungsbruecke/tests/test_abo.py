@@ -20,6 +20,7 @@ from smartheat_runtime.backup_store import load_backup
 from smartheat_runtime.notifier import Notifier
 from smartheat_runtime.ports import MqttChannel
 from smartheat_runtime.roles import ChannelManifest
+from smartheat_runtime.soll_eingang import EV_SOLL_ENDE
 from smartheat_runtime.status import StatusReporter
 from smartheat_runtime.texts import HA_TEXTS
 
@@ -32,6 +33,16 @@ SAFETY = LocalSafety(
     arrival_threshold_k=0.5,
 )
 BOTH_ROLES = {"curve_current": "number.curve", "shift_current": "number.shift"}
+
+
+class Rekorder:
+    """Stand-in fuer den Worker: merkt sich die eingestellten Ereignisse."""
+
+    def __init__(self):
+        self.ereignisse = []
+
+    def post(self, event):
+        self.ereignisse.append(event)
 
 
 def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.mobile_app_handy",), clock=None,
@@ -49,6 +60,7 @@ def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.mo
             HaEventSink(ha_api), OPTIONS["tenant_id"], store, LEVER_SETS["vaillant_vrc720"], ADDON_VERSION,
         ),
         clock=clock or FakeClock(), connection_failing_queried_at=None, texts=HA_TEXTS,
+        uhr_vertrauen=lambda: True, frist_offen=False, worker=Rekorder(), trigger_client=None,
     )
 
 
@@ -227,3 +239,103 @@ def test_connection_failing_is_silent_in_the_abo_inactive_mode(make_store, tmp_p
     assert queries == []  # keine Abfrage der Abo-Quelle
     assert rt.connection_failing_queried_at is None and rt.store.state.abo_inactive_since == ABO_NOW
     rt.ha_api.send_notification.assert_not_called()
+
+
+def _posted(rt):
+    return [event.kind for event in rt.worker.ereignisse]
+
+
+def _ohne_uhr(rt):
+    rt.uhr_vertrauen = lambda: False
+
+
+def test_frist_beginnt_nicht_ohne_vertrauenswuerdige_uhr(make_store, tmp_path):
+    rt = _runtime(tmp_path, make_store())
+    _ohne_uhr(rt)
+
+    abo.enter_inactive(rt, ABO_NOW)
+
+    assert not (tmp_path / "entitlement_state.json").exists()  # nichts persistiert: keine Frist auf falscher Uhr
+    assert rt.store.state.abo_inactive_since is None and rt.frist_offen is True
+    rt.mqtt_client.stop.assert_not_called()
+    rt.ha_api.send_notification.assert_not_called()
+
+
+def test_laufende_frist_geht_auch_ohne_vertrauenswuerdige_uhr_weiter(make_store, tmp_path):
+    entitlement.mark_inactive(tmp_path / "entitlement_state.json", ABO_NOW - timedelta(days=5))
+    rt = _runtime(tmp_path, make_store())
+    _ohne_uhr(rt)
+
+    abo.enter_inactive(rt, ABO_NOW)  # Neustart mitten in der Frist: der gespeicherte Beginn gilt
+
+    assert rt.store.state.abo_inactive_since == ABO_NOW - timedelta(days=5) and rt.frist_offen is False
+    rt.mqtt_client.stop.assert_called_once()
+
+
+def test_frist_beginnt_nachtraeglich_sobald_die_uhr_vertrauenswuerdig_ist(make_store, tmp_path, monkeypatch):
+    monkeypatch.setattr("smartheat_core.wallclock._now", lambda: ABO_NOW)
+    rt = _runtime(tmp_path, make_store(), abo_source=lambda: entitlement.INACTIVE)
+    _ohne_uhr(rt)
+    abo.enter_inactive(rt, ABO_NOW)
+    abo.frist_nachholen(rt)
+    assert rt.store.state.abo_inactive_since is None  # Uhr weiter unsicher
+
+    rt.uhr_vertrauen = lambda: True
+    abo.frist_nachholen(rt)
+
+    assert rt.store.state.abo_inactive_since == ABO_NOW and rt.frist_offen is False
+    assert entitlement.load_inactive_since(tmp_path / "entitlement_state.json") == ABO_NOW
+
+
+def test_frist_nachholen_tut_nichts_ohne_offene_frist_oder_bei_wieder_aktivem_abo(make_store, tmp_path, monkeypatch):
+    monkeypatch.setattr("smartheat_core.wallclock._now", lambda: ABO_NOW)
+    rt = _runtime(tmp_path, make_store(), abo_source=lambda: entitlement.INACTIVE)
+    abo.frist_nachholen(rt)  # keine Frist offen
+    assert rt.store.state.abo_inactive_since is None
+    rt.frist_offen = True
+    rt.config = runtime_config(entitlement_path=tmp_path / "entitlement_state.json",
+                               abo_source=lambda: entitlement.ACTIVE)  # Abo inzwischen wieder aktiv
+    abo.frist_nachholen(rt)
+    assert rt.store.state.abo_inactive_since is None and rt.frist_offen is False
+
+
+def _abgelaufen(tmp_path, make_store, monkeypatch, vertrauen):
+    monkeypatch.setattr("smartheat_core.wallclock._now", lambda: ABO_NOW)
+    entitlement.mark_inactive(tmp_path / "entitlement_state.json", ABO_NOW - timedelta(days=31))
+    rt = _runtime(tmp_path, make_store(), abo_source=lambda: entitlement.INACTIVE)
+    rt.store.update(abo_inactive_since=ABO_NOW - timedelta(days=31))
+    rt.uhr_vertrauen = lambda: vertrauen
+    return rt
+
+
+def test_fristende_wird_nur_bei_vertrauenswuerdiger_uhr_beurteilt(make_store, tmp_path, monkeypatch):
+    rt = _abgelaufen(tmp_path, make_store, monkeypatch, vertrauen=False)
+    abo.check_grace_end(rt)
+    assert rt.store.state.abo_finished is False  # eine unsichere Uhr beendet nie: Verlaengerung ist die sichere Richtung
+    rt.ha_api.set_number_value.assert_not_called()
+
+    rt.uhr_vertrauen = lambda: True
+    abo.check_grace_end(rt)
+    assert rt.store.state.abo_finished is True
+
+
+def test_fristende_laesst_die_betriebsarten_bis_zum_ende_weiterlaufen(make_store, tmp_path, monkeypatch):
+    """Kulanzfrist (Notbetrieb): kein Ende der Regelung, die Quelle bekommt den Wunsch erst mit dem Fristende."""
+    monkeypatch.setattr("smartheat_core.wallclock._now", lambda: ABO_NOW)
+    rt = _runtime(tmp_path, make_store())
+    abo.enter_inactive(rt, ABO_NOW)
+    assert EV_SOLL_ENDE not in _posted(rt)
+
+    entitlement.mark_inactive(tmp_path / "entitlement_state.json", ABO_NOW)  # Beginn bleibt der alte
+    rt.store.update(abo_inactive_since=ABO_NOW - timedelta(days=31))
+    abo.check_grace_end(rt)
+    assert _posted(rt).count(EV_SOLL_ENDE) == 1
+
+
+def test_finish_grace_ohne_gelungene_rueckstellung_beendet_die_soll_quelle_nicht(make_store, tmp_path):
+    rt = _runtime(tmp_path, make_store(backup={"restore_point": {"curve": 0.4}, "boost_active": True}))
+    rt.ha_api.set_number_value.side_effect = RuntimeError("HA nicht erreichbar")
+
+    assert abo.finish_grace(rt, always_restore=True, final_notice=True) is False
+
+    assert EV_SOLL_ENDE not in _posted(rt)

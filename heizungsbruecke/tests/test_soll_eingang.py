@@ -6,7 +6,7 @@ import pytest
 from fakes import FakeClock
 
 from smartheat_runtime.runtime import EV_LOCAL_CHECK
-from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_SOLL_QUELLE, EV_TARGET_INPUT, SollEingang
+from smartheat_runtime.soll_eingang import EV_SOLL_ENDE, EV_SOLL_MODUS, EV_SOLL_QUELLE, EV_TARGET_INPUT, SollEingang
 from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_PORTAL, SOURCE_THERMOSTAT, TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
 
@@ -384,3 +384,59 @@ def test_die_laufzeit_merkt_soll_quelle_aus_aus_dem_ereignis():
     rt.worker.post(Event(EV_SOLL_QUELLE, {"aus": False}))
     rt.worker.run_pending()
     assert rt.soll_quelle_aus is False
+
+
+def _ende(a: Aufbau) -> None:
+    a.worker.post(Event(EV_SOLL_ENDE, {}))
+    a.worker.run_pending()
+
+
+def test_ende_der_regelung_bringt_die_quelle_auf_den_gemerkten_wunsch(tmp_path):
+    a = Aufbau(tmp_path)
+    a.quelle.wert = 17.5  # was eine Betriebsart (Plan kuehl, Abwesend) in die Quelle geschrieben hat
+    _ende(a)
+    assert a.quelle.geschrieben == [21.0] and a.store.value == 21.0
+
+
+def test_ende_der_regelung_senkt_die_quelle_nie_ab(tmp_path):
+    a = Aufbau(tmp_path)
+    a.quelle.wert = 23.0  # die Quelle zeigt mehr als der gemerkte Wunsch: so lassen
+    _ende(a)
+    assert a.quelle.geschrieben == [] and a.quelle.wert == 23.0
+    a.quelle.wert = 21.0  # zeigt schon den Wunsch: nichts
+    _ende(a)
+    assert a.quelle.geschrieben == []
+
+
+def test_ende_der_regelung_schreibt_nicht_bei_soll_quelle_aus(tmp_path):
+    a = Aufbau(tmp_path)
+    a.worker.post(Event(EV_SOLL_MODUS, {"mode": "off"}))
+    a.worker.run_pending()
+    a.quelle.wert = 17.5
+    _ende(a)
+    assert a.quelle.geschrieben == []
+    a.post(7.0, SOURCE_THERMOSTAT, herkunft="soll_entity")  # Frostschutz-Stellung bleibt unangetastet
+    _ende(a)
+    assert a.quelle.geschrieben == []
+
+
+def test_ende_der_regelung_laesst_einen_offenen_wunsch_stehen(tmp_path):
+    a = Aufbau(tmp_path, entprellen_s=30.0)
+    a.post(23.0, SOURCE_THERMOSTAT, herkunft="soll_entity")  # noch nicht entprellt: der Kunde dreht gerade
+    a.quelle.wert = 23.0
+    _ende(a)
+    assert a.quelle.geschrieben == []
+
+
+def test_ende_der_regelung_ohne_schreibbare_quelle_tut_nichts(tmp_path):
+    a = Aufbau(tmp_path, schreibbar=False)
+    a.quelle.wert = 17.5
+    _ende(a)
+    assert a.quelle.geschrieben == [] and a.store.value == 21.0
+
+
+def test_ende_der_regelung_bei_unbekannter_anzeige_schreibt_den_wunsch(tmp_path):
+    a = Aufbau(tmp_path)
+    a.quelle.wert = None
+    _ende(a)
+    assert a.quelle.geschrieben == [21.0]

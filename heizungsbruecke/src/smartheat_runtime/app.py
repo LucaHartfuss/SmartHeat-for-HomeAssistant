@@ -32,6 +32,7 @@ from smartheat_runtime import (
     telemetry,
     testphase,
     ticks,
+    uhr,
 )
 from smartheat_runtime.budget_store import AnlagenBudget, BudgetStore, ZustandsSpeicher
 from smartheat_runtime.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
@@ -555,6 +556,7 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
 def _on_grace_check(rt: Runtime, event: Event) -> None:
     rt.worker.schedule(rt.config.local_check_interval, Event(EV_GRACE_CHECK))
     if not kreiszustand.ausser_betrieb(rt):  # ausser Betrieb gibt es keine Abo-Frist
+        abo.frist_nachholen(rt)
         abo.check_grace_end(rt)
 
 
@@ -850,6 +852,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
             server_originals=host.ursprungswerte_server,
         ),
         notifier=notifier, neustart=neustart, status=status, clock=clock, texts=host.texts,
+        uhr_vertrauen=uhr.UhrVertrauen(host.uhr_synchron, clock=clock),
     )
     # Abo-Status erst hier: Abschluss-Start und lokaler Modus brauchen Manifest und Clamps.
     # "unknown" (accounts-api nicht erreichbar) startet normal -- fail-open.
@@ -864,7 +867,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
         status.update(abo=ABO_AKTIV)
     elif abo_status == entitlement.INACTIVE:
         inactive_since = entitlement.load_inactive_since(config.entitlement_path)
-        if inactive_since is not None and entitlement.grace_expired(inactive_since, now):
+        if inactive_since is not None and rt.uhr_vertrauen() and entitlement.grace_expired(inactive_since, now):
             return _finish_at_start(rt, clock)
         abo.enter_inactive(rt, now)
 

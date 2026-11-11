@@ -13,6 +13,8 @@ import logging
 import threading
 from collections.abc import Callable
 
+from smartheat_core import wallclock
+
 #: so lange gilt eine Antwort, ohne den Rueckruf neu zu rufen
 UHR_ZWISCHENSPEICHER_S = 30.0
 #: so lange wartet ein Aufruf hoechstens auf die laufende Abfrage
@@ -58,3 +60,19 @@ class UhrPort:
             with self._lock:
                 self._wert, self._stand, self._laeuft = wert, self._clock(), False
             fertig.set()
+
+
+class UhrVertrauen:
+    """Ob die Wanduhr jetzt als Grundlage fuer Fristen gilt (`wallclock.vertrauenswuerdig`). Jeder Aufruf fragt den Zeitdienst
+    (zwischengespeichert, `UhrPort`), fuehrt den Beleg fort und beurteilt die Wanduhr gegen die monotone Uhr. Nur im
+    Worker-Thread aufrufen (der Beleg ist nicht gesperrt)."""
+
+    def __init__(self, synchron: Callable[[], object], *, clock: Callable[[], float]) -> None:
+        self._synchron, self._clock = synchron, clock
+        self._beleg: wallclock.UhrBeleg | None = None
+
+    def __call__(self) -> bool:
+        wand, mono = wallclock.now(), self._clock()
+        self._beleg = wallclock.beleg_fortschreiben(self._beleg, synchron=self._synchron() is True, wand_jetzt=wand,
+                                                    mono_jetzt=mono)
+        return wallclock.vertrauenswuerdig(self._beleg, wand_jetzt=wand, mono_jetzt=mono)

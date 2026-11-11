@@ -118,6 +118,7 @@ class FakeGeraet:
                  start_markierung=None):
         self._konfiguration, self._bedienung, self._dirty, self._abo = konfiguration, bedienung, dirty, abo
         self.start_markierung = start_markierung  # die beim Start gelesene Aufraeum-Markierung (aufraeumen.entscheiden)
+        self.uhr = True  # was der Zeitdienst des Hosts meldet (uhr_synchron)
         self.wuensche, self.aus, self.status = [], [], []
         self.wunsch_kreise: list[int] = []  # der Kreis jedes Wunschs, parallel zu wuensche
         self.gemeldet: list[dict] = []  # Ursprungswerte, die die Laufzeit dem Host gab
@@ -133,6 +134,9 @@ class FakeGeraet:
         self.status_sink = self if ha is None else GeraetStatus(
             ha, GERAET_ID, lokale_sicht(self.konfiguration, self._raum_soll, self._raum_ist, lambda: None),
             laufzeit_merken=self.status.append)
+
+    def uhr_synchron(self):
+        return self.uhr
 
     def neustart(self):
         self.neustarts.append(1)

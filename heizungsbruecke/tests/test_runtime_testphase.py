@@ -345,13 +345,13 @@ def test_der_frostnaehe_kaelteschutz_startet_in_der_testphase(make_store, wall, 
 # --- Rueckgabe von pruefen (reine Entscheidung, ohne Anlage) ---
 
 def _stub(zustand, *, abo_finished=False, rueckgestellt=False, restore_ok=True):
-    aufrufe = []
+    aufrufe, ereignisse = [], []
     override = types.SimpleNamespace(restore_for_pause=lambda: aufrufe.append(1) or restore_ok)
     state = types.SimpleNamespace(abo_finished=abo_finished, testphase_rueckgestellt=rueckgestellt)
     store = types.SimpleNamespace(state=state, update=lambda **felder: state.__dict__.update(felder))
     rt = types.SimpleNamespace(
         config=types.SimpleNamespace(zustand_source=lambda: zustand), store=store, override=override,
-        zone_prepared=True)
+        zone_prepared=True, worker=types.SimpleNamespace(post=ereignisse.append), ereignisse=ereignisse)
     return rt, aufrufe
 
 
@@ -388,3 +388,9 @@ def test_nach_der_rueckstellung_gilt_die_zone_als_nicht_vorbereitet():
     offen, _ = _stub(OHNE, restore_ok=False)
     testphase.pruefen(offen)
     assert offen.zone_prepared is True  # nichts zurueckgestellt, die Zone steht noch auf Manuell
+
+
+def test_die_testphase_beendet_die_soll_quelle_nicht_die_betriebsarten_laufen_weiter():
+    rt, _ = _stub(OHNE)
+    assert testphase.pruefen(rt) is True
+    assert rt.ereignisse == []

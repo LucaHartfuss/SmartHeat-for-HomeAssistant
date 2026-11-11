@@ -43,6 +43,5 @@ _.delta  # Contract-Check 89 (tools/contracts/raum_delta.json) rechnet Server un
 _.EVENT_FIELDS  # geraet_status/status/geraet_nachweis: Contract-Check 14 und 88 vergleichen sie mit der Integration bzw. der Fixture
 _.KREIS_EVENT_FIELDS  # geraet_status: Contract-Check 14 und 88 vergleichen die Kreisfelder mit STATUS_KREIS_FIELDS der Integration
 
-# --- Vertrauen in die Uhr (smartheat_core/wallclock.py): die Verdrahtung in die Betriebsarten folgt, bis dahin ruft nur der Test ---
-_.beleg_fortschreiben  # smartheat_core/wallclock.py: noch ohne Aufrufer in den Hosts (tests/test_core_wallclock.py)
-_.vertrauenswuerdig  # smartheat_core/wallclock.py: noch ohne Aufrufer in den Hosts (tests/test_core_wallclock.py)
+# --- Kritische Mindestversion (smartheat_runtime/entitlement.py): der Zeitpunkt "wirksam ab" kommt mit dem Versionspruefer; bis dahin ruft nur der Test ---
+_.kritische_mindestversion_abgelaufen  # smartheat_runtime/entitlement.py: Haken fuer das Ende der Regelung 30 Tage nach "wirksam ab" (tests/test_entitlement.py), noch ohne Aufrufer in den Hosts

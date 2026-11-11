@@ -83,7 +83,7 @@ def _kreis(store, wall, clock, ist, *, soll=21.0, referenz=((1, 0.0),), beschrei
         store.set_delivery(DeliveryState(notbetrieb=True))
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, store=store, clock=clock, boost_mono_start=None,
-        kaelteschutz_mono_start=None, soll_quelle_aus=False,
+        kaelteschutz_mono_start=None, soll_quelle_aus=False, worker=SimpleNamespace(post=lambda ereignis: None),
         config=runtime_config(referenzraeume=tuple(referenz)), werte=werte, raum_refs=raum_refs, wand=wall,
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest, beschreibung), SAFETY, clock=clock),
     )

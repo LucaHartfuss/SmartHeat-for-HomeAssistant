@@ -2,6 +2,7 @@
 jede Verspaetung ist "nicht synchron", der Zwischenspeicher haelt den Takt frei."""
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fakes import FakeClock
@@ -97,3 +98,41 @@ def test_eine_schnelle_antwort_kommt_schon_beim_ersten_aufruf():
     start = time.monotonic()
     assert UhrPort(Abfrage(True), clock=FakeClock()).uhr_synchron() is True
     assert time.monotonic() - start < uhr.UHR_WARTEZEIT_S
+
+
+class Wand:
+    """Fake-Wanduhr (setzt wallclock._now)."""
+
+    def __init__(self, monkeypatch, start) -> None:
+        self.jetzt = start
+        monkeypatch.setattr("smartheat_core.wallclock._now", lambda: self.jetzt)
+
+
+def _vertrauen(monkeypatch, antwort=True):
+    clock = FakeClock()
+    wand = Wand(monkeypatch, datetime(2026, 11, 11, 12, 0, tzinfo=UTC))
+    abfrage = Abfrage(antwort)
+    return uhr.UhrVertrauen(abfrage, clock=clock), clock, wand, abfrage
+
+
+def test_vertrauen_gibt_es_erst_nach_einer_synchronen_meldung(monkeypatch):
+    vertrauen, _, _, _ = _vertrauen(monkeypatch, antwort=False)
+    assert vertrauen() is False
+
+
+def test_vertrauen_haelt_bei_gleichlaufender_wand_und_monotoner_uhr(monkeypatch):
+    vertrauen, clock, wand, abfrage = _vertrauen(monkeypatch)
+    assert vertrauen() is True
+    abfrage.antwort = False  # der Zeitdienst meldet nicht mehr, der Beleg bleibt
+    clock.advance(3600)
+    wand.jetzt += timedelta(hours=1)
+    assert vertrauen() is True
+
+
+def test_vertrauen_geht_bei_einem_wanduhrsprung_verloren(monkeypatch):
+    vertrauen, clock, wand, abfrage = _vertrauen(monkeypatch)
+    assert vertrauen() is True
+    abfrage.antwort = False
+    clock.advance(60)
+    wand.jetzt += timedelta(days=40)  # Sprung vor: die 30 Tage waeren sonst "abgelaufen"
+    assert vertrauen() is False

@@ -7,6 +7,8 @@ from smartheat_core import wallclock
 from smartheat_runtime import entitlement
 from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.soll_eingang import EV_SOLL_ENDE
+from smartheat_runtime.worker import Event
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,13 @@ def enter_inactive(rt: Runtime, now: datetime) -> None:
     state = rt.store.state
     if state.abo_inactive_since is not None:
         return
+    if entitlement.load_inactive_since(rt.config.entitlement_path) is None and not rt.uhr_vertrauen():
+        # Eine Frist auf unsicherer Uhr koennte zu frueh enden: sie beginnt erst, wenn die Uhr vertrauenswuerdig ist
+        # (frist_nachholen). Bis dahin aendert sich nichts an der Anlage.
+        rt.frist_offen = True
+        logger.warning("Abo inaktiv, die Uhr ist nicht vertrauenswuerdig - die Frist beginnt, sobald sie es ist.")
+        return
+    rt.frist_offen = False
     try:
         since, newly_set = entitlement.mark_inactive(rt.config.entitlement_path, now)
     except Exception:
@@ -71,6 +80,7 @@ def finish_grace(rt: Runtime, *, always_restore: bool, final_notice: bool) -> bo
     if not rt.override.restore_and_clear(always_restore):
         return False
     rt.store.update(abo_finished=True)
+    rt.worker.post(Event(EV_SOLL_ENDE))
     if final_notice:
         rt.notifier.notify("abo", "beendet", ABO_ENDED_MESSAGE, critical=True)
     else:
@@ -126,6 +136,19 @@ def handle_connection_failing(rt: Runtime) -> None:
         logger.warning("MQTT-Verbindung fehlt seit Langem, Abo-Status ist '%s' - Verbindung pruefen.", status)
 
 
+def frist_nachholen(rt: Runtime) -> None:
+    """Der Beginn einer Abo-Frist, den `enter_inactive` wegen unsicherer Uhr zurueckgestellt hat, im Takt des lokalen
+    Checks: sobald die Uhr vertrauenswuerdig ist und der Abo-Status weiter inaktiv ist, beginnt die Frist jetzt. Wurde das
+    Abo inzwischen aktiv, entfaellt der offene Beginn."""
+    if not rt.frist_offen:
+        return
+    if entitlement.query(rt.config) != entitlement.INACTIVE:
+        rt.frist_offen = False
+        return
+    if rt.uhr_vertrauen():
+        enter_inactive(rt, wallclock.now())
+
+
 def check_grace_end(rt: Runtime) -> None:
     """Fristende waehrend der Laufzeit. Vorher erneut fragen (Abo-Status aus dem Konfigurationsdokument): ein
     inzwischen reaktiviertes Abo wird nicht zurueckgesetzt, sondern der Prozess startet im Normalbetrieb
@@ -133,8 +156,8 @@ def check_grace_end(rt: Runtime) -> None:
     Wiederherstellung, laeuft die lokale Regelung weiter und der naechste Check versucht es
     erneut."""
     since = rt.store.state.abo_inactive_since
-    if since is None or not entitlement.grace_expired(since, wallclock.now()):
-        return
+    if since is None or not rt.uhr_vertrauen() or not entitlement.grace_expired(since, wallclock.now()):
+        return  # eine unsichere Uhr beendet nie: die Frist verlaengert sich hoechstens
     if entitlement.query(rt.config) == entitlement.ACTIVE:
         entitlement.clear(rt.config.entitlement_path)
         logger.warning("Abo wieder aktiv, Neustart im Normalbetrieb")

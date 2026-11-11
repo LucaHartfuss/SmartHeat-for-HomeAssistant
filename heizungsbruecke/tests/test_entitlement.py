@@ -60,3 +60,11 @@ def test_mark_inactive_writes_privately_and_completely(tmp_path):
     since, neu = entitlement.mark_inactive(path, datetime(2026, 10, 14, 12, tzinfo=UTC))
     assert neu and entitlement.load_inactive_since(path) == since
     assert stat.S_IMODE(path.stat().st_mode) == 0o600 and not path.with_name(path.name + ".tmp").exists()
+
+
+def test_kritische_mindestversion_laeuft_30_tage_nach_wirksam_ab_ab():
+    assert entitlement.kritische_mindestversion_abgelaufen(NOW, NOW + timedelta(days=30) - timedelta(seconds=1)) is False
+    assert entitlement.kritische_mindestversion_abgelaufen(NOW, NOW + timedelta(days=30)) is True
+    assert entitlement.kritische_mindestversion_abgelaufen(None, NOW + timedelta(days=400)) is False  # nichts kritisch
+    # Zeitzonen mit anderem Versatz vergleichen den Augenblick, nicht die Wanduhrzahl.
+    assert entitlement.kritische_mindestversion_abgelaufen(NOW, (NOW + timedelta(days=31)).astimezone(UTC)) is True

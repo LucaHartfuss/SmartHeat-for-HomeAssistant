@@ -57,3 +57,10 @@ def grace_end(inactive_since: datetime) -> datetime:
 
 def grace_expired(inactive_since: datetime, now: datetime) -> bool:
     return now >= grace_end(inactive_since)
+
+
+def kritische_mindestversion_abgelaufen(wirksam_ab: datetime | None, jetzt: datetime) -> bool:
+    """Eine kritische Mindestversion gilt 30 Tage nach ihrem "wirksam ab"; danach endet die Regelung wie beim Ende der
+    Abo-Frist (Hebel zurueck auf die Ursprungswerte, Soll-Quelle auf den gemerkten Wunsch). None: keine kritische
+    Mindestversion. Der Aufrufer prueft vorher, dass die Uhr vertrauenswuerdig ist."""
+    return wirksam_ab is not None and jetzt >= wirksam_ab + GRACE_PERIOD

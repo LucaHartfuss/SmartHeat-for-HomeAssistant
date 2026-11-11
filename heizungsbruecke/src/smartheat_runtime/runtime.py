@@ -77,6 +77,12 @@ class Runtime:
     # Soll-Quelle aus (Thermostat aus oder Frostschutz-Stellung, soll_eingang.SollEingang.aus): der Speicher haelt dann
     # den alten Wunsch, der Kaelteschutz rechnet ohne Soll. Gesetzt vom Ereignis EV_SOLL_QUELLE (app). Nicht persistiert.
     soll_quelle_aus: bool = False
+    # Ob die Wanduhr als Grundlage einer Frist gilt (uhr.UhrVertrauen, vom Start verdrahtet). Der Vorgabewert vertraut
+    # nie: ohne verlaessliche Uhr beginnt keine Abo-Frist und keine endet.
+    uhr_vertrauen: Callable[[], bool] = lambda: False
+    # Die Abo-Frist sollte beginnen, die Uhr war aber nicht vertrauenswuerdig (abo.enter_inactive); abo.frist_nachholen
+    # holt den Beginn nach. Nicht persistiert.
+    frist_offen: bool = False
     # Comfort-Boost: Stand der monotonen Uhr (clock) beim Start des Boosts in diesem Prozess, None bei einem
     # Boost aus einem frueheren Lauf. Gilt nur bei aktivem Boost: ein Boost-Ende ueber die Pipeline laesst den Wert
     # stehen, jeder neue Start ueberschreibt ihn. Die 4-h-Grenze zaehlt auch hier, falls die Wanduhr zurueckspringt.

@@ -25,6 +25,8 @@ EV_TARGET_INPUT = "shg_target_input"
 EV_SOLL_MODUS = "shg_soll_modus"
 #: Meldet der Laufzeit jeden Wechsel von Soll-Quelle aus/an ({"aus": bool}); der Kaelteschutz rechnet dann ohne Soll.
 EV_SOLL_QUELLE = "shg_soll_quelle"
+#: Ende der Regelung (Abo-Ende, ausser Betrieb): die Soll-Quelle zeigt danach den gemerkten Wunsch, nie weniger.
+EV_SOLL_ENDE = "shg_soll_ende"
 DEBOUNCE_KIND = "shg_target_debounce"
 #: Ein Soll bis zu diesem Wert ist die Frostschutz-Stellung der Soll-Quelle, kein Bedienwunsch.
 FROSTSCHUTZ_BIS = 7.0
@@ -58,6 +60,7 @@ class SollEingang:
         self._debouncer = Debouncer(worker, DEBOUNCE_KIND, entprellen_s, self._entprellt)
         worker.register(EV_TARGET_INPUT, self._on_target_input)
         worker.register(EV_SOLL_MODUS, self._on_mode)
+        worker.register(EV_SOLL_ENDE, self._on_ende)
 
     @property
     def aus(self) -> bool:
@@ -99,6 +102,18 @@ class SollEingang:
             self._store.wiederherstellen(*self._vor_wunsch)
         self._wunsch_offen = self._lokal_offen = False
         self._vor_wunsch = None
+
+    def _on_ende(self, event: Event) -> None:
+        """Ende der Regelung: die Soll-Quelle zeigt den gemerkten Wunsch (`TargetStore.value`), damit keine Betriebsart
+        ihren Wert dort stehen laesst. Es senkt nie ab: zeigt die Quelle gleich viel oder mehr, bleibt sie. Nichts bei
+        Soll-Quelle aus (Modus off, Frostschutz-Stellung: die Quelle gehoert dem Kunden) und bei einem offenen,
+        noch nicht entprellten Wunsch (der Kunde dreht gerade; sein Wert gewinnt)."""
+        if self._quelle is None or self._aus or self._wunsch_offen:
+            return
+        angezeigt = self._quelle.angezeigt()
+        if angezeigt is not None and angezeigt >= self._store.value:
+            return
+        self._schreiben(self._store.value, veraltet=angezeigt)
 
     def _on_mode(self, event: Event) -> None:
         """Ein Modus ohne Text (Zigbee2MQTT `system_mode: null`) ist keine Aussage: er schaltet weder an noch aus (fail

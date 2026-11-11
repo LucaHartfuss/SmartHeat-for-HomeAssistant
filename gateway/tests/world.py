@@ -85,6 +85,7 @@ class GatewayWorld:
         mirror = ZigbeeMirror(self.bus, self.clock)
         mirror.start()
         self.geraet = GatewayDeviceHost(self.paths, mirror, host_dir=self.host_dir, clock=self.clock, wall=self._wall)
+        self.geraet.uhr_synchron = lambda: True  # der Zeitdienst des Hosts meldet die Uhr als abgeglichen
         self.geraet.start_markierung = ausstehend
         self._geraete.append(self.geraet)
         self.device = Device(self.geraet, self.paths.data, "https://accounts.example.test", clock=self.clock,

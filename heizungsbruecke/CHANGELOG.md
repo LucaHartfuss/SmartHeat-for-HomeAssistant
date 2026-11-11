@@ -5,6 +5,12 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 ## Unveröffentlicht
 
+- Ende der Regelung: Mit dem Ende der Abo-Frist und beim Rückstellen eines Kreises „ausser Betrieb“ zeigt die
+  Soll-Quelle (Thermostat bzw. Soll-Entity) den gemerkten Wunsch, nie weniger als vorher. Bei ausgeschalteter Soll-Quelle
+  und bei einem Wunsch, der gerade gedreht wird, ändert sich nichts. Die Abo-Frist beginnt und endet nur bei
+  vertrauenswürdiger Uhr: ohne verlässliche Uhr verlängert sie sich höchstens, sie beginnt nachträglich, sobald die Uhr
+  stimmt. Haken für die kritische Mindestversion (30 Tage nach „wirksam ab“) ist vorbereitet, aber noch nicht verdrahtet.
+
 - Neue Abhängigkeit `tzdata` 2026.5 (mit Hash): das Image hat keine Systemzonendaten, die Zone `Europe/Berlin` kommt aus dem
   Paket.
 - Der Standard der Option `bootstrap_url` ist jetzt `https://accounts.setwell.de` (vorher `https://accounts.hartfussha.org`).

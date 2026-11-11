@@ -6,6 +6,8 @@ gelesen; nach `abo_finished` des ganzen Geraets gilt nichts mehr."""
 import logging
 
 from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.soll_eingang import EV_SOLL_ENDE
+from smartheat_runtime.worker import Event
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,7 @@ def pruefen(rt: Runtime) -> bool:
         if rt.override.restore_and_clear(True):
             rt.zone_prepared = False  # die Zone steht wieder auf dem Zeitprogramm: die Rueckkehr bereitet sie neu vor
             rt.store.update(ausser_betrieb_rueckgestellt=True)
+            rt.worker.post(Event(EV_SOLL_ENDE))  # die Soll-Quelle zeigt den gemerkten Wunsch, nie weniger
             logger.info("Kreis ausser Betrieb: Hebel auf die Ursprungswerte zurueckgestellt")
         else:
             logger.info("Kreis ausser Betrieb: Rueckstellung offen, naechster Check versucht es erneut")

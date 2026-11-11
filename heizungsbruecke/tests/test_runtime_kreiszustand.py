@@ -55,6 +55,7 @@ from smartheat_runtime.runtime import (
     EV_TELEMETRY,
     Runtime,
 )
+from smartheat_runtime.soll_eingang import EV_SOLL_ENDE
 from smartheat_runtime.worker import Event
 
 AUSSER = "ausser_betrieb"
@@ -477,14 +478,14 @@ def test_zwei_kreise_laufen_unabhaengig(tmp_path, wall, uhr):  # noqa: F811
 # --- kreiszustand.pruefen (reine Entscheidung, ohne Anlage) ---
 
 def _stub(zustand, *, abo_finished=False, rueckgestellt=False, restore_ok=True):
-    aufrufe = []
+    aufrufe, ereignisse = [], []
     override = types.SimpleNamespace(restore_and_clear=lambda immer: aufrufe.append(immer) or restore_ok)
     state = types.SimpleNamespace(abo_finished=abo_finished, kaelteschutz_art=None,
                                   ausser_betrieb_rueckgestellt=rueckgestellt)
     store = types.SimpleNamespace(state=state, update=lambda **felder: state.__dict__.update(felder))
     rt = types.SimpleNamespace(
         config=types.SimpleNamespace(zustand_source=lambda: zustand), store=store, override=override,
-        zone_prepared=True)
+        zone_prepared=True, worker=types.SimpleNamespace(post=ereignisse.append), ereignisse=ereignisse)
     return rt, aufrufe
 
 
@@ -674,3 +675,13 @@ def test_ausser_betrieb_traegt_auch_mit_laufendem_frostlauf_keine_kennzeichen(en
     app._on_telemetry(bridge, Event(EV_TELEMETRY))
     neu = _mqtt(env).telemetry[vorher:]
     assert len(neu) == 1 and set(neu[0]) == TELEMETRIE_FELDER
+
+
+def test_die_rueckstellung_ausser_betrieb_beendet_auch_die_soll_quelle_einmal():
+    rt, _ = _stub(AUSSER)
+    kreiszustand.pruefen(rt)
+    kreiszustand.pruefen(rt)
+    assert [e.kind for e in rt.ereignisse] == [EV_SOLL_ENDE]  # nur beim Eintritt
+    offen, _ = _stub(AUSSER, restore_ok=False)
+    kreiszustand.pruefen(offen)
+    assert offen.ereignisse == []  # ohne gelungene Rueckstellung bleibt die Quelle, wie sie ist
