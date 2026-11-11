@@ -20,6 +20,7 @@ from heizungsbruecke.geraet_status import GeraetStatus, lokale_sicht
 from heizungsbruecke.ha_sinks import HaNotifySink
 from heizungsbruecke.host import HaHost
 from smartheat_device.commands import CommandRegister
+from smartheat_device.documents import Dokument
 from smartheat_device.geraet_host_basis import GeraetHostBasis
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import app, aufraeumen, dokument_config, entitlement
@@ -136,7 +137,7 @@ class FakeGeraet:
         self.host = None
         self._ha = ha
         self.status_sink = self if ha is None else GeraetStatus(
-            ha, GERAET_ID, lokale_sicht(self.konfiguration, self._raum_soll, self._raum_ist, lambda: None),
+            ha, GERAET_ID, lokale_sicht(self._konfig_dokument, self._raum_soll, self._raum_ist, lambda: None),
             laufzeit_merken=self.status.append)
 
     def zeitdienst_setzen(self, synchron):
@@ -146,6 +147,9 @@ class FakeGeraet:
 
     def neustart(self):
         self.neustarts.append(1)
+
+    def _konfig_dokument(self):
+        return None if self._konfiguration is None else Dokument("konfiguration", 1, self._konfiguration)
 
     def _raum_soll(self, kreis):
         kreis_host = self.host.hosts.get(kreis) if hasattr(self.host, "hosts") else self.host if kreis == 1 else None
@@ -259,7 +263,8 @@ class FakeDevice:
         self.konf, self.bed = konfiguration, bedienung
         self.order = order if order is not None else []
         self.identity = SimpleNamespace(device_id=DEVICE_ID, claim_code=CLAIM_CODE)
-        self.documents = SimpleNamespace(aktuell=lambda art: None)
+        self.documents = SimpleNamespace(aktuell=lambda art: (
+            Dokument(art, 1, self.konf) if art == "konfiguration" and self.konf is not None else None))
         self.sent = []
         self.aufgaben = []
 
@@ -350,6 +355,8 @@ class Device:
         return self.bed
 
     def aktuell(self, art):
+        if art == "konfiguration" and self.konf is not None:
+            return Dokument(art, 1, self.konf)
         return Doc(self.dirty) if art == "bedienung" and self.bed is not None else None
 
     def abo_status(self, kreis=None):

@@ -1,6 +1,7 @@
 """Status-Ereignis des HA-Add-ons: smartheat_status Schema 4 = die Felder der Anlage aus dem Laufzeit-Status
 (Schema 2, smartheat_runtime.status, unveraendert fuer Gateway und up/status), Geraet (ID, Zustand, Verbindung),
-Anlagenname und Hinweise fuer die Reparatur-Hinweise der Integration, dazu `kreise`: je Kreis der Konfiguration
+Anlagenname, Version des Konfigurationsdokuments und dessen kritische Mindestversion der Integration, Hinweise fuer die
+Reparatur-Hinweise der Integration, dazu `kreise`: je Kreis der Konfiguration
 Name, Raum (Ist, wirksamer Soll aus dem Soll-Speicher), die Kreisfelder der Laufzeit (Boost, Abo, Hebel, Zustand,
 Kaelteschutz ...) und die Felder des Anzeige-Dokuments. Nie der Uebernahme-Code (der steht nur in der Discovery):
 ins Ereignis kommen nur die benannten Felder, nie ein ganzes Objekt der Quellen. Der Kreisname ist ein
@@ -8,6 +9,7 @@ Kundendatum: er steht nur in diesem lokalen Ereignis, nie in Log, Topic, Push od
 Lebenszeichen alle 300 s) und bei einer inhaltlichen Aenderung der Anzeige. Felder sind Cross-Repo-Vertrag mit der
 Integration (Contract-Check)."""
 import logging
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -15,13 +17,18 @@ from collections.abc import Callable, Mapping
 from heizungsbruecke.ha_sinks import EVENT_TYPE
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import kreisansicht
+from smartheat_device.documents import Dokument
 from smartheat_device.host import Anzeige
 from smartheat_runtime import status
 
 logger = logging.getLogger(__name__)
 
 EVENT_SCHEMA = 4
-GERAET_FIELDS = ("geraet_id", "geraet_zustand", "server_verbunden", "geraet_hinweise", "anlage_name")
+GERAET_FIELDS = ("geraet_id", "geraet_zustand", "server_verbunden", "geraet_hinweise", "anlage_name",
+                 "konfig_version", "mindest_integration")
+#: Form der kritischen Mindestversion der Integration im Ereignis (wie die Pruefung der Integration): drei Zahlen,
+#: hoechstens eine Endung, hoechstens 32 Zeichen; was nicht passt, geht nie ins Ereignis (kein Freitext des Servers).
+MINDEST_INTEGRATION_RE = re.compile(r"(?=.{1,32}\Z)\d{1,6}\.\d{1,6}\.\d{1,6}(?:[.+-][0-9A-Za-z]{1,16})?")
 #: Felder der Anlage im Ereignis und Felder eines Kreises: die Kreisfelder der Laufzeit plus die lokalen.
 LOKAL_KREIS_FIELDS = ("name", "raum_soll", "raum_ist", "einlernphase_tag", "testphase_bis", "befunde")
 EVENT_FIELDS = (*status.ANLAGE_FELDER, *GERAET_FIELDS, "kreise")
@@ -59,12 +66,25 @@ def _zahl(wert) -> float | None:
     return float(wert) if isinstance(wert, int | float) and not isinstance(wert, bool) else None
 
 
-def lokale_sicht(konfiguration: Callable[[], Mapping | None], soll: Callable[[int], float | None],
+def _version(dokument: Dokument | None) -> int | None:
+    version = dokument.version if dokument is not None else None
+    return version if isinstance(version, int) and not isinstance(version, bool) else None
+
+
+def _mindest_integration(konf: Mapping | None) -> str | None:
+    wert = konf.get("mindest_integration") if isinstance(konf, Mapping) else None
+    return wert if isinstance(wert, str) and MINDEST_INTEGRATION_RE.fullmatch(wert) else None
+
+
+def lokale_sicht(konfiguration: Callable[[], Dokument | None], soll: Callable[[int], float | None],
                  raum_ist: Callable[[int], float | None], anzeige: Callable[[], Mapping | None]) -> Callable[[], dict]:
-    """Die lokale Sicht des Ereignisses: Anlagenname und je Kreis der Konfiguration Name, Soll (Soll-Speicher), Ist
-    des Raums und die Felder des Anzeige-Dokuments (heute ohne Befund: null/null/[]). Liest nur, ohne Sperre."""
+    """Die lokale Sicht des Ereignisses: Anlagenname, Version des Konfigurationsdokuments und dessen kritische
+    Mindestversion der Integration (beide null ohne Dokument bzw. ohne gueltigen Wert) und je Kreis der Konfiguration
+    Name, Soll (Soll-Speicher), Ist des Raums und die Felder des Anzeige-Dokuments (heute ohne Befund: null/null/[]).
+    Version und Inhalt kommen aus einem Dokument, damit sie zusammenpassen. Liest nur, ohne Sperre."""
     def sicht() -> dict:
-        konf = konfiguration()
+        dokument_konf = konfiguration()
+        konf = dokument_konf.inhalt if dokument_konf is not None else None
         dokument = anzeige()
         eintraege = dokument.get("kreise") if isinstance(dokument, Mapping) else None
         je_kreis = {e.get("kreis"): e for e in eintraege if isinstance(e, Mapping)} if isinstance(eintraege, list) else {}
@@ -82,7 +102,8 @@ def lokale_sicht(konfiguration: Callable[[], Mapping | None], soll: Callable[[in
                 "testphase_bis": angezeigt.get("testphase_bis"), "befunde": list(befunde) if isinstance(befunde, list) else [],
             }
         name = konf.get("anlage_name") if isinstance(konf, Mapping) else None
-        return {"anlage_name": name if isinstance(name, str) else None, "kreise": kreise}
+        return {"anlage_name": name if isinstance(name, str) else None, "konfig_version": _version(dokument_konf),
+                "mindest_integration": _mindest_integration(konf), "kreise": kreise}
     return sicht
 
 
@@ -141,7 +162,8 @@ class GeraetStatus:
                 "geraet_zustand": anzeige.zustand if anzeige is not None else "startet",
                 "server_verbunden": anzeige.server_ok if anzeige is not None else False,
                 "geraet_hinweise": hinweise(anzeige) if anzeige is not None else [],
-                "anlage_name": lokal["anlage_name"], "kreise": kreise}
+                "anlage_name": lokal["anlage_name"], "konfig_version": lokal["konfig_version"],
+                "mindest_integration": lokal["mindest_integration"], "kreise": kreise}
 
     def _senden(self, *, force: bool) -> None:
         with self._senden_lock:

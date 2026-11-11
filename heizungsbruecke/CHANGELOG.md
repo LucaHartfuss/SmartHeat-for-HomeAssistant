@@ -5,6 +5,9 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 ## Unveröffentlicht
 
+- Das Status-Ereignis für die Integration trägt zwei neue Anlagenfelder: die Version des Konfigurationsdokuments
+  (`konfig_version`) und dessen kritische Mindestversion der Integration (`mindest_integration`, nur in der Form einer
+  Versionsnummer, sonst leer). Die Integration entfernt Kreis-Geräte erst, wenn zwei Ereignisse dieselbe Version tragen.
 - Ende der Regelung: Mit dem Ende der Abo-Frist und beim Rückstellen eines Kreises „ausser Betrieb“ zeigt die
   Soll-Quelle (Thermostat bzw. Soll-Entity) den gemerkten Wunsch, nie weniger als vorher. Bei ausgeschalteter Soll-Quelle
   und bei einem Wunsch, der gerade gedreht wird, ändert sich nichts. Die Abo-Frist beginnt und endet nur bei

@@ -25,6 +25,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -74,6 +76,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -139,6 +143,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -188,6 +194,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -279,6 +287,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -393,6 +403,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -521,6 +533,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -650,6 +664,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -785,6 +801,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -837,6 +855,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -973,6 +993,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -1131,6 +1153,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -1265,6 +1289,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -1390,6 +1416,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -1519,6 +1547,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -1649,6 +1679,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -1743,6 +1775,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -1890,6 +1924,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -1972,6 +2008,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -2128,6 +2166,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -2228,6 +2268,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -2340,6 +2382,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -2415,6 +2459,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -2490,6 +2536,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -2565,6 +2613,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -2640,6 +2690,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -2715,6 +2767,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -2790,6 +2844,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -2865,6 +2921,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -2940,6 +2998,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -3035,6 +3095,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -3095,6 +3157,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -3170,6 +3234,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -3296,6 +3362,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -3379,6 +3447,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -3510,6 +3580,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -3564,6 +3636,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -3622,6 +3696,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -3699,6 +3775,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -3830,6 +3908,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -3901,6 +3981,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -4039,6 +4121,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -4178,6 +4262,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -4236,6 +4322,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -4375,6 +4463,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -4476,6 +4566,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -4613,6 +4705,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
@@ -4680,6 +4774,8 @@
      "server_verbunden": false,
      "geraet_hinweise": [],
      "anlage_name": "Testanlage",
+     "konfig_version": 1,
+     "mindest_integration": null,
      "kreise": [
       {
        "kreis": 1,
