@@ -1,8 +1,10 @@
 import json
+import random
 
 import pytest
-from bindung_beispiele import VIESSMANN_VICARE_BINDING
+from bindung_beispiele import BINDINGS, VIESSMANN_VICARE_BINDING
 
+from smartheat_core import hausmodell
 from smartheat_device import wire
 from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers.base import DriverError
@@ -150,12 +152,142 @@ def test_erkennung_of_a_reader_instance_does_not_create_the_plant_file(paths, cl
     assert not (paths.sim_dir / "plant.json").exists()
 
 
-def test_house_model_moves_towards_the_equilibrium(paths, clock):
-    driver = _sim(paths, clock, raum_start=15.0)
-    start = driver.read_signal("room_temperature")
+# --- Hausmodell-Kern: der Treiber ruft ihn je 5-min-Schritt der monotonen Uhr ---
+
+WALL = 12 * 3600.0  # feste Wanduhr; mit aussen_amplitude 0 ist die Aussentemperatur dann aussen_mittel
+AUSSEN = 5.0
+SCHRITT = hausmodell.DT
+# Abbildung Hebel -> Kern je Hebelsatz: (geschriebene Hebel, Erzeuger (a, b), (Steigung, Verschiebung, Heizgrenze), Mindestvorlauf).
+# Heizgrenze 16 und Steigung 1 gelten, wo der Hebelsatz den Hebel nicht hat.
+ABBILDUNG = {
+    "vaillant_vrc720": ({"curve": 1.4, "room_setpoint": 21.0, "heat_limit": 15.0, "min_flow": 22.0},
+                        (2.54, 0.78), (1.4, 21.0, 15.0), 22.0),
+    "weishaupt_wwp": ({"curve": 1.2, "room_setpoint": 21.5, "heat_limit": 14.0},
+                      (1.0, 1.0), (1.2, 21.5, 14.0), 21.5),
+    "weishaupt_wwp_basis": ({"room_setpoint": 22.0}, (1.0, 1.0), (1.0, 22.0, 16.0), 22.0),
+    "viessmann_vicare": ({"curve": 1.2, "room_setpoint": 19.0, "level": 3.0}, (1.0, 1.0), (1.2, 22.0, 16.0), 19.0),
+}
+
+
+def _sim_satz(paths, clock, hebelsatz, hebel=None, **parameter):
+    driver = create("simulation", {"lever_set": hebelsatz, "aussen_amplitude": 0.0, "aussen_mittel": AUSSEN, **parameter},
+                    paths, clock=clock, writer=True, description=BINDINGS[hebelsatz], wall=lambda: WALL)
+    driver.poll_once()
+    for name, wert in (hebel or {}).items():
+        driver.write(name, wert)
+    return driver
+
+
+def _kern(erzeuger, hebel, ziel, schritte, *, raum=20.0, liefert=True, seed=None, aussen=AUSSEN):
+    """Direktlauf des Kerns mit den Eingaben des Treibers (Stunde fest ausserhalb der Warmwasserpausen)."""
+    zustand = hausmodell.Anlagenzustand(room=raum, burner_hours=1000.0)
+    rng = None if seed is None else random.Random(seed)
+    letzter = None
+    for _ in range(schritte):
+        letzter = hausmodell.anlage_schritt(
+            zustand, hausmodell.HOUSES["H1"], hausmodell.Potenzgesetz(*erzeuger), hebel, aussen, 0.0, 12.0, ziel,
+            hausmodell.Betriebsflags(liefert=liefert), rng)
+    return zustand, letzter
+
+
+@pytest.mark.parametrize("hebelsatz", sorted(ABBILDUNG))
+def test_driver_run_equals_direct_run_of_the_core(paths, clock, hebelsatz):
+    geschrieben, erzeuger, hebel, ziel = ABBILDUNG[hebelsatz]
+    driver = _sim_satz(paths, clock, hebelsatz, geschrieben)
+    clock.advance(12 * SCHRITT)
+    driver.poll_once()
+    zustand, letzter = _kern(erzeuger, hebel, ziel, 12)
+    assert zustand.heating and letzter.geliefert
+    assert driver.read_signal("room_temperature") == round(zustand.room, 2)
+    assert driver.read_signal("generator_hours") == round(zustand.burner_hours, 3)
+    assert driver.read_signal("flow_setpoint") == round(letzter.flow, 1)
+    assert driver.read_signal("flow_temperature") == round(letzter.flow, 1)
+    assert driver.read_signal("outdoor_temp") == AUSSEN
+
+
+def test_the_start_room_is_the_room_of_the_first_reading(paths, clock):
+    driver = _sim_satz(paths, clock, "vaillant_vrc720", raum_start=17.5)
+    assert driver.read_signal("room_temperature") == 17.5
+
+
+def test_the_remainder_of_the_interval_is_carried_to_the_next_poll(paths, clock):
+    geschrieben, erzeuger, hebel, ziel = ABBILDUNG["vaillant_vrc720"]
+    driver = _sim_satz(paths, clock, "vaillant_vrc720", geschrieben)
+    for gesamt, schritte in ((200, 0), (400, 1), (600, 2)):
+        clock.advance(200)
+        driver.poll_once()
+        zustand, _ = _kern(erzeuger, hebel, ziel, schritte)
+        assert driver.read_signal("room_temperature") == round(zustand.room, 2), gesamt
+
+
+def test_one_poll_runs_at_most_one_day(paths, clock):
+    geschrieben, erzeuger, hebel, ziel = ABBILDUNG["vaillant_vrc720"]
+    driver = _sim_satz(paths, clock, "vaillant_vrc720", geschrieben)
+    clock.advance(5 * 86400 + 100)
+    driver.poll_once()
+    zustand, _ = _kern(erzeuger, hebel, ziel, hausmodell.STEPS_PER_DAY)
+    assert driver.read_signal("room_temperature") == round(zustand.room, 2)
+    assert driver.read_signal("generator_hours") == round(zustand.burner_hours, 3)
+
+
+@pytest.fixture
+def paths_zwei(tmp_path):
+    """Eine zweite, getrennte Anlage (eigene Dateien) fuer Vergleiche im selben Test."""
+    (tmp_path / "zwei").mkdir()
+    return Paths(tmp_path / "zwei")
+
+
+def test_a_higher_curve_warms_the_room(paths, paths_zwei, clock):
+    flach = _sim_satz(paths, clock, "vaillant_vrc720", {"curve": 0.5})
+    steil = _sim_satz(paths_zwei, clock, "vaillant_vrc720", {"curve": 2.0})
+    clock.advance(6 * 3600)
+    flach.poll_once()
+    steil.poll_once()
+    assert steil.read_signal("room_temperature") > flach.read_signal("room_temperature") + 0.5
+
+
+def test_a_heat_limit_below_the_outdoor_temperature_does_not_heat(paths, clock):
+    driver = _sim_satz(paths, clock, "vaillant_vrc720", {"heat_limit": 10.0}, aussen_mittel=12.0)
+    start = driver.read_signal("generator_hours")
+    clock.advance(6 * 3600)
+    driver.poll_once()
+    assert driver.read_signal("generator_hours") == start
+    assert driver.read_signal("room_temperature") < 20.0
+    assert driver.read_signal("flow_temperature") == 29.5
+
+
+def test_without_heat_delivery_the_room_cools_and_the_burner_stands_still(paths, clock):
+    driver = _sim_satz(paths, clock, "vaillant_vrc720")
+    (paths.sim_dir / "control.json").write_text(json.dumps({"keine_waerme": True}))
+    clock.advance(6 * 3600)
+    driver.poll_once()
+    zustand, _ = _kern((2.54, 0.78), (1.0, 20.0, 16.0), 20.0, 72, liefert=False)
+    assert driver.read_signal("room_temperature") == round(zustand.room, 2)
+    assert driver.read_signal("room_temperature") < 20.0
+    assert driver.read_signal("generator_hours") == 1000.0
+    assert driver.read_signal("flow_temperature") == 29.5
+
+
+@pytest.mark.parametrize("hebelsatz", sorted(ABBILDUNG))
+def test_every_lever_set_runs(paths, clock, hebelsatz):
+    driver = _sim_satz(paths, clock, hebelsatz)
     clock.advance(3600)
     driver.poll_once()
-    assert driver.read_signal("room_temperature") > start
+    assert 10.0 < driver.read_signal("room_temperature") < 30.0
+    assert driver.read_signal("generator_hours") > 1000.0
+
+
+def test_the_noise_follows_the_seed_and_scales_with_the_parameter(paths, paths_zwei, clock):
+    geschrieben, erzeuger, hebel, ziel = ABBILDUNG["vaillant_vrc720"]
+    ruhig = _sim_satz(paths, clock, "vaillant_vrc720", geschrieben)
+    laut = _sim_satz(paths_zwei, clock, "vaillant_vrc720", geschrieben, rauschen=0.2, seed=3)
+    clock.advance(SCHRITT)
+    ruhig.poll_once()
+    laut.poll_once()
+    zustand, letzter = _kern(erzeuger, hebel, ziel, 1, seed=3)
+    abweichung = letzter.gemessen - zustand.room
+    assert ruhig.read_signal("room_temperature") == round(zustand.room, 2)
+    assert laut.read_signal("room_temperature") == pytest.approx(zustand.room + 2 * abweichung, abs=0.006)
 
 
 def test_reader_instance_does_not_create_the_plant_file(paths, clock):

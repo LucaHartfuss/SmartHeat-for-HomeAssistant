@@ -1,7 +1,8 @@
 """Simulations-Treiber: fuer E2E, Labor und Gleichheitstests; nie im Kundenkatalog.
 Anlagenzustand in /data/sim/plant.json (schreibt nur die Laufzeit, writer=True; der Heizkreis n > 0 hat plant-<n>.json),
 Fehlerinjektion in /data/sim/control.json (bei jeder Abfrage gelesen; `heizkreise: 2` macht auch den zweiten Kreis der
-Erkennung schreibbar). Hausmodell bewusst einfach, nicht physikalisch."""
+Erkennung schreibbar). Das Haus rechnet der Hausmodell-Kern (`smartheat_core/hausmodell.py`, Haus H1) in 5-min-Schritten
+der monotonen Uhr; die Tageszeit bestimmt die Lieferung nicht (feste Stunde ausserhalb der Warmwasserpausen)."""
 import logging
 import math
 import random
@@ -9,7 +10,7 @@ import threading
 import time
 from collections.abc import Mapping
 
-from smartheat_core import dateien
+from smartheat_core import dateien, hausmodell
 from smartheat_core.binding import BindingDescription
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.verfahren import VERFAHREN
@@ -42,7 +43,17 @@ SIM_SCHRITTE = {
     "weishaupt_wwp_basis": {"room_setpoint": 0.5},
     "viessmann_vicare": {"curve": 0.1, "level": 1.0, "room_setpoint": 1.0},
 }
-TAU_SECONDS = 3 * 3600
+# Erzeuger je Hebelsatz als Potenzgesetz des Kerns. Vaillant hat die Werte des Servermodells; fuer Viessmann und Weishaupt
+# gibt es dort noch keine gemessenen Werte, sie rechnen mit a = b = 1 (Platzhalterphysik).
+ERZEUGER = {
+    "vaillant_vrc720": hausmodell.Potenzgesetz(a=2.54, b=0.78),
+    "viessmann_vicare": hausmodell.Potenzgesetz(a=1.0, b=1.0),
+    "weishaupt_wwp": hausmodell.Potenzgesetz(a=1.0, b=1.0),
+    "weishaupt_wwp_basis": hausmodell.Potenzgesetz(a=1.0, b=1.0),
+}
+KERN_HAUS = "H1"
+KERN_STUNDE = 12.0  # ausserhalb der Warmwasserpausen: die Tageszeit darf die Lieferung nicht bestimmen
+START_BRENNERSTUNDEN = 1000.0  # Betriebsstunden des simulierten Erzeugers
 # Zahlenparameter: JSON liest NaN, Infinity und beliebig grosse Ganzzahlen; sie liessen die Abfrage ohne Pause laufen
 # (Event.wait(NaN)) bzw. den Abfrage-Thread sterben und verfaelschten das Hausmodell.
 ZAHL_PARAMETER = ("settle_delay", "aussen_mittel", "aussen_amplitude", "rauschen", "raum_start")
@@ -103,9 +114,11 @@ class SimulationDriver:
         self.physical_writes = 0
         self._cache: dict[str, float | str] = {}
         self._cache_at: float | None = None
-        self._room = float(self._p["raum_start"])
+        self._zustand = hausmodell.Anlagenzustand(
+            room=float(self._p["raum_start"]), burner_hours=START_BRENNERSTUNDEN)
         self._last_model: float | None = None
-        self._hours = 1000.0  # Betriebsstunden des simulierten Erzeugers
+        self._rest = 0.0  # Sekunden seit dem letzten vollen Schritt, noch nicht gerechnet
+        self._letzter: hausmodell.Anlagenschritt | None = None
         self._random = random.Random(self._p["seed"])
         self._lock = threading.RLock()  # Thread-Vertrag wie die Cloud-Treiber
         self._stop = threading.Event()
@@ -171,33 +184,51 @@ class SimulationDriver:
         now = self._clock()
         outdoor = self._outdoor()
         levers = {lever: self._visible(plant, lever) for lever in self._levers()}
-        equilibrium = (
-            levers.get("room_setpoint", 20.0) + 4.0 * (levers.get("curve", 1.0) - 1.0) + 0.5 * levers.get("level", 0.0)
-            - 0.1 * (15.0 - outdoor)
-        )
-        dt = max(now - self._last_model, 0.0) if self._last_model is not None else 0.0
-        if self._last_model is not None:
-            self._room += (equilibrium - self._room) * (1 - math.exp(-dt / TAU_SECONDS))
+        hebel, mindestvorlauf = self._kern_eingaenge(levers)
         # Ohne Liefer-Signal lernt der Server nicht; `keine_waerme` in der Steuerdatei bildet einen
         # Waermeausfall nach.
-        delivers = not control.get("keine_waerme")
-        if delivers:
-            self._hours += dt / 3600
-        self._last_model = now
-        noise = self._random.gauss(0, float(self._p["rauschen"])) if self._p["rauschen"] else 0.0
-        flow = (
-            levers.get("room_setpoint", 20.0) + levers.get("curve", 1.0) * max(0.0, 20.0 - outdoor)
-            + levers.get("level", 0.0)
-        )
+        flags = hausmodell.Betriebsflags(liefert=not control.get("keine_waerme"))
+        erzeuger = ERZEUGER[self.lever_set_id]
+        gemessen = self._rechne(now, erzeuger, hebel, mindestvorlauf, outdoor, flags)
+        # Sollvorlauf aus den aktuellen Hebeln (wie der Kern ihn im Heizbetrieb bildet); geliefert wird, wenn die Anlage
+        # weder ausgefallen ist noch im letzten Schritt ohne Heizbetrieb war.
+        flow = max(erzeuger.flow(hebel[0], hebel[1], outdoor), mindestvorlauf)
+        delivers = flags.liefert and (self._letzter is None or self._letzter.geliefert)
         cache: dict[str, float | str] = {LEVER_ROLES[lever]: value for lever, value in levers.items()}
         cache.update({key: plant["hilfswerte"].get(key, START_AUX[key]) for key in self.description.aux_originals})
         cache.update({
-            "outdoor_temp": round(outdoor, 2), "flow_setpoint": round(flow, 1), "flow_temperature": round(flow, 1),
-            "room_temperature": round(self._room + noise, 2), "generator_hours": round(self._hours, 3),
+            "outdoor_temp": round(outdoor, 2), "flow_setpoint": round(flow, 1),
+            "flow_temperature": round(flow, 1) if delivers else 29.5,
+            "room_temperature": round(gemessen, 2), "generator_hours": round(self._zustand.burner_hours, 3),
         })
-        if not delivers:
-            cache["flow_temperature"] = 29.5
         self._cache, self._cache_at = cache, now
+
+    def _kern_eingaenge(self, levers: Mapping[str, float]) -> tuple[tuple[float, float, float], float]:
+        """Hebel der Anlage -> Eingaben des Kerns: (Steigung, Verschiebung, Heizgrenze) und Mindestvorlauf. Die
+        Verschiebung ist das Raum-Soll (bei Viessmann plus Niveau), der Mindestvorlauf der Hebel `min_flow`, sonst das
+        Raum-Soll; fehlt ein Hebel im Hebelsatz, gilt sein Startwert."""
+        raum_soll = levers.get("room_setpoint", START_LEVERS["room_setpoint"])
+        verschiebung = raum_soll + (levers.get("level", START_LEVERS["level"]) if self.lever_set_id == "viessmann_vicare" else 0.0)
+        hebel = (levers.get("curve", START_LEVERS["curve"]), verschiebung, levers.get("heat_limit", START_LEVERS["heat_limit"]))
+        return hebel, levers.get("min_flow", raum_soll)
+
+    def _rechne(self, jetzt, erzeuger, hebel, mindestvorlauf, outdoor, flags) -> float:
+        """Rechnet die vollen 5-min-Schritte seit der letzten Abfrage (der Rest bleibt fuer die naechste liegen, hoechstens
+        ein Tag je Abfrage) und liefert den Fuehlerwert des Raums."""
+        if self._last_model is not None:
+            self._rest += max(jetzt - self._last_model, 0.0)
+        self._last_model = jetzt
+        schritte = int(self._rest // hausmodell.DT)
+        self._rest -= schritte * hausmodell.DT
+        rauschen = float(self._p["rauschen"])
+        for _ in range(min(schritte, hausmodell.STEPS_PER_DAY)):
+            self._letzter = hausmodell.anlage_schritt(
+                self._zustand, hausmodell.HOUSES[KERN_HAUS], erzeuger, hebel, outdoor, 0.0, KERN_STUNDE, mindestvorlauf, flags,
+                self._random if rauschen else None)
+        if not rauschen or self._letzter is None or self._letzter.gemessen is None:
+            return self._zustand.room
+        # Der Kern rauscht mit fester Staerke; `rauschen` skaliert diese Abweichung.
+        return self._zustand.room + (self._letzter.gemessen - self._zustand.room) * rauschen / hausmodell.NOISE_K
 
     def _outdoor(self) -> float:
         hours = (self._wall() / 3600.0) % 24
