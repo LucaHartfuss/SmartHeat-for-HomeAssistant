@@ -60,3 +60,53 @@ def test_mark_inactive_writes_privately_and_completely(tmp_path):
     since, neu = entitlement.mark_inactive(path, datetime(2026, 10, 14, 12, tzinfo=UTC))
     assert neu and entitlement.load_inactive_since(path) == since
     assert stat.S_IMODE(path.stat().st_mode) == 0o600 and not path.with_name(path.name + ".tmp").exists()
+
+
+def test_kritische_mindestversion_laeuft_30_tage_nach_wirksam_ab_ab():
+    assert entitlement.kritische_mindestversion_abgelaufen(NOW, NOW + timedelta(days=30) - timedelta(seconds=1)) is False
+    assert entitlement.kritische_mindestversion_abgelaufen(NOW, NOW + timedelta(days=30)) is True
+    assert entitlement.kritische_mindestversion_abgelaufen(None, NOW + timedelta(days=400)) is False  # nichts kritisch
+    # Zeitzonen mit anderem Versatz vergleichen den Augenblick, nicht die Wanduhrzahl.
+    assert entitlement.kritische_mindestversion_abgelaufen(NOW, (NOW + timedelta(days=31)).astimezone(UTC)) is True
+
+
+def test_das_ende_wird_neben_dem_fristbeginn_gespeichert_und_gelesen(tmp_path):
+    path = tmp_path / "entitlement_state.json"
+    entitlement.mark_inactive(path, NOW)
+    assert not entitlement.ist_beendet(path)
+
+    entitlement.mark_beendet(path)
+
+    assert entitlement.ist_beendet(path)
+    assert json.loads(path.read_text()) == {"inactive_since": NOW.isoformat(), "beendet": True}
+    assert entitlement.load_inactive_since(path) == NOW
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_das_ende_gilt_auch_ohne_fristbeginn_in_der_datei(tmp_path):
+    path = tmp_path / "entitlement_state.json"
+    entitlement.mark_beendet(path)
+    assert entitlement.ist_beendet(path)
+
+
+@pytest.mark.parametrize("content", [None, "{kaputt", "[]", "{}", '{"beendet": false}', '{"beendet": "ja"}',
+                                     '{"beendet": 1}', '{"inactive_since": "2026-09-25T12:00:00+02:00"}'])
+def test_fehlt_das_ende_oder_ist_die_datei_unbrauchbar_gilt_nicht_beendet(tmp_path, content):
+    path = tmp_path / "entitlement_state.json"
+    if content is not None:
+        path.write_text(content)
+    assert not entitlement.ist_beendet(path)
+
+
+def test_mark_beendet_ueber_kaputter_datei_schreibt_nur_das_ende(tmp_path):
+    path = tmp_path / "entitlement_state.json"
+    path.write_text("{kaputt")
+    entitlement.mark_beendet(path)
+    assert json.loads(path.read_text()) == {"beendet": True}
+
+
+def test_clear_nimmt_auch_das_ende_zurueck(tmp_path):
+    path = tmp_path / "entitlement_state.json"
+    entitlement.mark_beendet(path)
+    entitlement.clear(path)
+    assert not entitlement.ist_beendet(path)

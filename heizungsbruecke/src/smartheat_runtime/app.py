@@ -29,9 +29,11 @@ from smartheat_runtime import (
     regulation,
     roles,
     room_sensors,
+    soll_ende,
     telemetry,
     testphase,
     ticks,
+    uhr,
 )
 from smartheat_runtime.budget_store import AnlagenBudget, BudgetStore, ZustandsSpeicher
 from smartheat_runtime.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
@@ -63,7 +65,8 @@ from smartheat_runtime.runtime import (
     Runtime,
 )
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
-from smartheat_runtime.soll_eingang import EV_SOLL_QUELLE
+from smartheat_runtime.soll_eingang import EV_SOLL_ENDE, EV_SOLL_ENDE_ERLEDIGT, EV_SOLL_QUELLE
+from smartheat_runtime.soll_ende import SollEnde
 from smartheat_runtime.state import StateStore, StorageError, bind_to_tenant
 from smartheat_runtime.status import (
     ABO_AKTIV,
@@ -170,6 +173,15 @@ class Host(Protocol):
         """Binding und Sicherheitswerte zum Zuruecksetzen; None bei ungueltiger Konfiguration."""
         ...
 
+    def uhr_synchron(self) -> bool:
+        """True nur, wenn der Zeitdienst des Systems die Uhr als abgeglichen meldet; Fehler, unbekannt und keine Antwort
+        binnen der Zwischenspeicherzeit sind False. Wirft nie und haelt den Takt nie laenger an (`uhr.UhrPort`)."""
+        ...
+
+    def uhr_antwort(self) -> uhr.UhrAntwort:
+        """Wie `uhr_synchron`, mit Wand- und monotoner Zeit der Antwort (`uhr.UhrAntwort`); wirft nie."""
+        ...
+
     def ursprungswerte_melden(self, werte: dict) -> None:
         """Gemerkte Ursprungswerte fuer up/status; im Hauptthread, wirft nie."""
         ...
@@ -181,6 +193,11 @@ class Host(Protocol):
 
     def load(self) -> Loaded:
         """Konfiguration pruefen, Signale und Anlage vorbereiten; wirft StartFailure."""
+        ...
+
+    def soll_ende(self) -> SollEnde | None:
+        """Der gemerkte Wunsch und die Soll-Quelle fuers Soll-Ende ohne laufende Regelung (Ruhezustand, Abmelden); nur
+        lesend (legt keine Datei an). None, wenn kein Wunsch gemerkt ist oder die Quelle nicht schreibbar ist; wirft nie."""
         ...
 
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource: ...
@@ -299,7 +316,9 @@ def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_
     laufenden Boost auf den Wiederherstellungspunkt zuruecknehmen, alle Meldungen entfernen, dann
     Ruhezustand `abgemeldet`. Scheitert es, wird es im Takt retry_seconds erneut versucht; der Status bleibt
     `abgemeldet` mit Grund. Gelingt es und steht eine Aufraeum-Markierung dieser Anlage offen, folgt ein Neustart
-    (_nach_zuruecksetzen); scheitert es, bleibt sie offen und ein Neustart dazwischen versucht es erneut."""
+    (_nach_zuruecksetzen); scheitert es, bleibt sie offen und ein Neustart dazwischen versucht es erneut.
+    Das Abmelden schreibt nie auf das Thermostat (kein Soll-Ende, kein Merker): die Einstellung des Kunden bleibt. Eine
+    andere Anlage oder eine ungueltige Konfiguration schreibt nichts."""
     andere_anlage = parts is not None and not _gleiche_anlage(store, parts)
     if andere_anlage:
         logger.error("Abmelden ohne Zuruecksetzen: %s", GRUND_ANDERE_ANLAGE)
@@ -341,6 +360,7 @@ def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_
         bridge.worker.register(EV_RECHECK, _retry)
         bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
     return bridge
+
 
 
 def _hint(notifier, key: str, state: str, message: str) -> None:
@@ -385,21 +405,30 @@ def _restore_values_text(state, description: BindingDescription | None, *,
     return ", ".join(parts) if parts else "Werte unbekannt"
 
 
-def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
-    """Abo-Frist beim Start schon abgelaufen: laufende Boosts zuruecknehmen (nicht
-    mit Boost-Werten liegen bleiben), dann Ruhezustand `abo_beendet`. Scheitert das
+def _finish_at_start(rt: Runtime, clock, ende_quelle: Callable[[], SollEnde | None]) -> IdleBridge:
+    """Abo-Frist beim Start schon abgelaufen (oder das Ende schon gespeichert, entitlement.ist_beendet): laufende Boosts
+    zuruecknehmen (nicht mit Boost-Werten liegen bleiben), dann Ruhezustand `abo_beendet`. Scheitert das
     Zuruecksetzen, meldet der notifier das einmal, und es wird im Takt
-    local_check_interval im Worker erneut versucht."""
+    local_check_interval im Worker erneut versucht. Ein offener Merker `soll_ende_offen` (das erste Ende setzt ihn,
+    auch ein Neustart davor) wird danach im Worker des Ruhezustands abgearbeitet: die Soll-Quelle zeigt den gemerkten
+    Wunsch, nie weniger. Scheitert das dauerhafte Speichern des Endes, wiederholt derselbe Takt es, bis es gelingt."""
     status = rt.status
     assert status is not None  # beim Boot gesetzt
     status.update(abo_beendet=True)
     bridge = _idle(clock, status, STATUS_ABO_BEENDET, neustart=rt.neustart)
     retry_seconds = rt.config.local_check_interval
+    soll_ende_gestartet = False
 
     def _attempt(event: Event | None = None) -> None:
+        nonlocal soll_ende_gestartet
         if abo.finish_grace(rt, always_restore=False, final_notice=False):
             abo.report_restore(rt.notifier, ok=True)
             status.update(grund=None)
+            if not soll_ende_gestartet:
+                soll_ende_gestartet = True  # nur einmal: ein zweiter Aufruf setzte den Versuchsstand zurueck
+                soll_ende.ruhezustand_abarbeiten(bridge.worker, rt.store, ende_quelle, retry_seconds)
+            if not abo.ende_festhalten(rt):
+                bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
             return
         abo.log_restore_failure(
             rt, "Abo-inaktiv-Frist abgelaufen, Boost-Werte konnten nicht zurueckgesetzt werden - "
@@ -550,6 +579,7 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
 def _on_grace_check(rt: Runtime, event: Event) -> None:
     rt.worker.schedule(rt.config.local_check_interval, Event(EV_GRACE_CHECK))
     if not kreiszustand.ausser_betrieb(rt):  # ausser Betrieb gibt es keine Abo-Frist
+        abo.frist_nachholen(rt)
         abo.check_grace_end(rt)
 
 
@@ -565,6 +595,7 @@ def _on_health(rt: Runtime, event: Event) -> None:
     else:
         ticks.deliver(rt, delivery.StorageWritable())  # wartet ein Tick am Datentraeger, jetzt erneut
     if rt.store.state.abo_finished:
+        abo.ende_festhalten(rt)  # ein gescheitertes Speichern des Endes wird im Takt wiederholt
         return
     checks = [battery.check_batteries, room_sensors.check_room_sensors, aussentemperatur.check]
     # Ohne Setwell (Testphase, Kreis ausser Betrieb) gibt es nichts durchzusetzen: ein Eingriff von Hand ist dann der
@@ -610,6 +641,12 @@ def _on_soll_quelle(rt: Runtime, event: Event) -> None:
     rt.soll_quelle_aus = bool(event.data["aus"])
 
 
+def _on_soll_ende_erledigt(rt: Runtime, event: Event) -> None:
+    """Das Soll-Ende ist an der Soll-Quelle angekommen (oder es war nichts zu schreiben): der persistierte Merker faellt
+    erst jetzt (soll_eingang.EV_SOLL_ENDE_ERLEDIGT)."""
+    soll_ende.merker_setzen(rt.store, False)
+
+
 def _unless_idle(rt: Runtime, handler, event: Event) -> None:
     """Im Ruhezustand (Fristende im Betrieb) laufen alle Handler ausser dem Lebenszeichen leer;
     sie planen sich dann auch nicht neu ein."""
@@ -635,6 +672,7 @@ def _register_handlers(rt: Runtime, melder: Callable[[], None]) -> None:
         rt.worker.register(kind, functools.partial(_unless_idle, rt, handler))
     rt.worker.register(EV_HEARTBEAT, functools.partial(_on_heartbeat, rt))
     rt.worker.register(EV_SOLL_QUELLE, functools.partial(_on_soll_quelle, rt))
+    rt.worker.register(EV_SOLL_ENDE_ERLEDIGT, functools.partial(_on_soll_ende_erledigt, rt))
     rt.worker.after_each(functools.partial(_after_each, rt, melder))
 
 
@@ -845,6 +883,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
             server_originals=host.ursprungswerte_server,
         ),
         notifier=notifier, neustart=neustart, status=status, clock=clock, texts=host.texts,
+        uhr_vertrauen=uhr.UhrVertrauen(host.uhr_antwort, clock=clock),
     )
     # Abo-Status erst hier: Abschluss-Start und lokaler Modus brauchen Manifest und Clamps.
     # "unknown" (accounts-api nicht erreichbar) startet normal -- fail-open.
@@ -857,11 +896,20 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
         entitlement.clear(config.entitlement_path)
         notifier.notify("abo", STATE_OK, abo.ABO_ACTIVE_MESSAGE, critical=True)
         status.update(abo=ABO_AKTIV)
+    elif not ausser and entitlement.ist_beendet(config.entitlement_path):
+        # Das Ende ist schon einmal abgewickelt: es gilt ohne Blick auf die Uhr, bis das Abo wieder aktiv ist (nur ACTIVE
+        # hebt es auf, auch ein unbekannter Status nicht). Nur das erste Ende braucht eine vertrauenswuerdige Uhr
+        # (check_grace_end, unten).
+        return _finish_at_start(rt, clock, host.soll_ende)
     elif abo_status == entitlement.INACTIVE:
         inactive_since = entitlement.load_inactive_since(config.entitlement_path)
-        if inactive_since is not None and entitlement.grace_expired(inactive_since, now):
-            return _finish_at_start(rt, clock)
+        if inactive_since is not None and rt.uhr_vertrauen() and entitlement.grace_expired(inactive_since, now):
+            return _finish_at_start(rt, clock, host.soll_ende)
         abo.enter_inactive(rt, now)
+    if not ausser and abo_status != entitlement.INACTIVE and rt.store.state.soll_ende_offen:
+        # ein Merker ohne Ende (Abo wieder aktiv, Kreis wieder in Betrieb) ist veraltet; bei inaktivem Abo steht das Ende
+        # noch bevor (die Uhr ist unsicher), der Merker faellt nicht, bevor das Ende gespeichert ist
+        soll_ende.merker_setzen(rt.store, False)
 
     melder = _ursprung_melder(rt, host)
     _register_handlers(rt, melder)
@@ -880,6 +928,8 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
 
     rt.trigger_client = host.trigger_source(loaded.manifest, rt.worker)
     rt.trigger_client.start()
+    if ausser and rt.store.state.soll_ende_offen:
+        rt.worker.post(Event(EV_SOLL_ENDE))  # Rueckstellung vor dem Neustart, Soll-Ende noch offen: nachholen
     for kind in (EV_WATCHDOG, EV_TELEMETRY, EV_GRACE_CHECK, EV_HEALTH, EV_CONNECTION_CHECK):
         rt.worker.schedule(0, Event(kind))
     rt.worker.schedule(HEARTBEAT_SECONDS, Event(EV_HEARTBEAT))

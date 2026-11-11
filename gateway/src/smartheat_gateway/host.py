@@ -11,6 +11,7 @@ Angleichen ans Thermostat (BusTriggerSource: erst bei bekanntem Zustand, der nic
 import dataclasses
 import logging
 import time
+from types import SimpleNamespace
 
 from smartheat_core import bindungsparameter, kennung, kreisansicht, wallclock
 from smartheat_core.logtext import lesbar
@@ -22,7 +23,7 @@ from smartheat_gateway.geraet_host import GatewayDeviceHost, thermostat_unzulaes
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.signals import REF_ROOM_MEAN, REF_ROOM_TARGET, GatewaySignalSource
 from smartheat_gateway.texts import SHG_TEXTS
-from smartheat_gateway.triggers import BusTriggerSource
+from smartheat_gateway.triggers import BusTriggerSource, _ZigbeeQuelle
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import CAP_BATTERY, CAP_BATTERY_LOW, ZigbeeMirror
 from smartheat_runtime import dokument_config
@@ -33,8 +34,10 @@ from smartheat_runtime.raum import RaumPublisher
 from smartheat_runtime.roles import ALL_ROLES, REQUIRED_ROLES_BY_LEVER_SET, ChannelManifest, ManifestError
 from smartheat_runtime.runtime import EV_LOCAL_CHECK
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef, BootInfo
-from smartheat_runtime.soll_speicher import DEFAULT_RAUM_SOLL, TargetStore, bedienung_start
+from smartheat_runtime.soll_ende import SollEnde
+from smartheat_runtime.soll_speicher import DEFAULT_RAUM_SOLL, TargetStore, bedienung_start, gespeicherter_wunsch
 from smartheat_runtime.texts import HostTexts
+from smartheat_runtime.uhr import UhrAntwort, UhrPort
 from smartheat_runtime.worker import RegulationWorker
 
 logger = logging.getLogger(__name__)
@@ -78,6 +81,7 @@ class GatewayHost:
                  kreis: int | None = None) -> None:
         self._paths, self._bus, self._clock = paths, bus, clock
         self._geraet = geraet
+        self._uhr = UhrPort(lambda: geraet.uhr_synchron(), clock=clock)
         self._devices_wait = devices_wait_seconds
         self._driver_threads = driver_threads
         # Steht nach einer leeren Konfiguration das Zuruecksetzen aus, laeuft die Laufzeit
@@ -118,11 +122,32 @@ class GatewayHost:
             logger.info("Lokaler Bus noch nicht erreichbar, warte ...")
         self._paths.runtime_dir.mkdir(parents=True, exist_ok=True)
 
+    def uhr_synchron(self) -> bool:
+        """Zeitdienst des Hosts (host/status.json) ueber den Geraete-Host; nur ein echtes True gilt."""
+        return self._uhr.uhr_synchron()
+
+    def uhr_antwort(self) -> UhrAntwort:
+        """Wie `uhr_synchron`, mit Wand- und monotoner Zeit der Antwort (Beleg der Uhrbeurteilung)."""
+        return self._uhr.antwort()
+
     def ursprungswerte_melden(self, werte: dict) -> None:
         self._geraet.ursprungswerte_merken(werte, self.kreis)
 
     def ursprungswerte_server(self) -> dict:
         return self._geraet.ursprungswerte_server(self.konfiguration, self._leer_abmelden, self.kreis)
+
+    def soll_ende(self) -> SollEnde | None:
+        """Der gemerkte Wunsch und das Thermostat fuers Soll-Ende im Ruhezustand (nur lesend, wirft nie): None ohne
+        gemerkten Wunsch oder ohne Thermostat in der Bindung."""
+        try:
+            thermostat = gateway_config.bindung(self.konfiguration, self.kreis).thermostat
+            wunsch = gespeicherter_wunsch(self._paths.room_target(self.kreis))
+        except Exception as error:
+            logger.warning("Soll-Ende: Wunsch oder Bindung nicht lesbar (%s)", type(error).__name__)
+            return None
+        if wunsch is None or not thermostat:
+            return None
+        return SollEnde(wunsch, _ZigbeeQuelle(self.mirror, thermostat, SimpleNamespace(value=wunsch)))  # type: ignore[arg-type]
 
     def sign_off_parts(self) -> RestoreParts | None:
         sicht = kreisansicht.sicht(self.konfiguration, self.kreis)

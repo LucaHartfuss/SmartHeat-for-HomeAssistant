@@ -70,6 +70,15 @@ def is_valid_portal_target(value) -> bool:
     return im_bedienbereich(value)
 
 
+def gespeicherter_wunsch(path: Path) -> float | None:
+    """Der gemerkte Wunsch aus room_target.json, nur lesend (legt nie eine Datei an); None, wenn die Datei fehlt oder
+    Wert bzw. Quelle unbrauchbar sind."""
+    stored = dateien.lesen_json(path)
+    if isinstance(stored, dict) and is_plausible(stored.get("value"), ROOM_TEMP_RANGE) and stored.get("source") in _SOURCES:
+        return float(stored["value"])
+    return None
+
+
 class TargetStore:
     def __init__(self, path: Path, start_value: float, clock: Callable[[], float], now_iso: Callable[[], str],
                  on_change: Callable[[], None] | None = None) -> None:

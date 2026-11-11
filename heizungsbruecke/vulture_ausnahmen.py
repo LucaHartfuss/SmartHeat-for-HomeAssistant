@@ -42,3 +42,6 @@ _.delta  # Contract-Check 89 (tools/contracts/raum_delta.json) rechnet Server un
 # --- Feldlisten des Status-Ereignisses (V5) und des flachen Kreis-Ereignisses (V1): Leser auf der Gegenseite ---
 _.EVENT_FIELDS  # geraet_status/status/geraet_nachweis: Contract-Check 14 und 88 vergleichen sie mit der Integration bzw. der Fixture
 _.KREIS_EVENT_FIELDS  # geraet_status: Contract-Check 14 und 88 vergleichen die Kreisfelder mit STATUS_KREIS_FIELDS der Integration
+
+# --- Kritische Mindestversion (smartheat_runtime/entitlement.py): der Zeitpunkt "wirksam ab" kommt mit dem Versionspruefer; bis dahin ruft nur der Test ---
+_.kritische_mindestversion_abgelaufen  # smartheat_runtime/entitlement.py: Haken fuer das Ende der Regelung 30 Tage nach dem lokalen ersten Empfang (tests/test_entitlement.py), noch ohne Aufrufer in den Hosts

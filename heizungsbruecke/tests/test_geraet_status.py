@@ -10,6 +10,7 @@ from runtime_helpers import OPTIONS
 
 from heizungsbruecke import geraet_status
 from smartheat_device.commands import Done, Waiting
+from smartheat_device.documents import Dokument
 from smartheat_device.host import Anzeige
 from smartheat_runtime import status
 from smartheat_runtime.status import STATUS_ABGEMELDET
@@ -29,9 +30,10 @@ def _lokal_kreis(soll=21.5, ist=20.5, name="Wohnen"):
             "befunde": []}
 
 
-def _lokal(soll=21.5, kreise=None):
+def _lokal(soll=21.5, kreise=None, konfig_version=7, mindest_integration="1.2.0"):
     """Die lokale Sicht (Konfiguration, Soll-Speicher, Raum, Anzeige-Dokument) mit einem Kreis oder den genannten."""
-    return lambda: {"anlage_name": "Zuhause", "kreise": kreise if kreise is not None else {1: _lokal_kreis(soll)}}
+    return lambda: {"anlage_name": "Zuhause", "konfig_version": konfig_version, "mindest_integration": mindest_integration,
+                    "kreise": kreise if kreise is not None else {1: _lokal_kreis(soll)}}
 
 
 def _status(ha, soll=21.5):
@@ -376,7 +378,8 @@ def test_der_kreisname_steht_nie_im_log(caplog):
 
 
 def _sicht(konfiguration, soll=lambda n: 20.0, ist=lambda n: 19.0, anzeige=lambda: None):
-    return geraet_status.lokale_sicht(lambda: konfiguration, soll, ist, anzeige)()
+    dokument = None if konfiguration is None else Dokument("konfiguration", 1, konfiguration)
+    return geraet_status.lokale_sicht(lambda: dokument, soll, ist, anzeige)()
 
 
 def test_die_lokale_sicht_uebernimmt_nur_namen_vom_typ_text_und_kreise_mit_echter_nummer():
@@ -390,3 +393,64 @@ def test_die_lokale_sicht_uebernimmt_nur_namen_vom_typ_text_und_kreise_mit_echte
 def test_die_lokale_sicht_hat_ohne_text_als_anlagenname_keinen_namen():
     assert _sicht({"anlage_name": 5, "kreise": []})["anlage_name"] is None
     assert _sicht(None)["anlage_name"] is None
+
+
+# --- Version des Konfigurationsdokuments und kritische Mindestversion der Integration ---
+
+
+def _dokument(version, inhalt):
+    return Dokument("konfiguration", version, inhalt)
+
+
+def _sicht_mit(dokument):
+    return geraet_status.lokale_sicht(lambda: dokument, lambda n: 20.0, lambda n: 19.0, lambda: None)()
+
+
+def test_das_ereignis_traegt_konfig_version_und_mindest_integration_nach_dem_anlagennamen():
+    ha = FakeHa()
+    sink, _ = _status(ha)
+    sink.anzeige(_anzeige())
+    data = ha.events[-1][1]
+    assert (data["konfig_version"], data["mindest_integration"]) == (7, "1.2.0")
+    felder = list(geraet_status.EVENT_FIELDS)
+    assert felder.index("anlage_name") < felder.index("konfig_version") < felder.index("mindest_integration")
+    assert set(data) == set(felder)
+
+
+def test_die_lokale_sicht_liest_version_und_mindestversion_aus_demselben_dokument():
+    sicht = _sicht_mit(_dokument(7, {"anlage_name": "Haus", "mindest_integration": "1.2.0", "kreise": []}))
+    assert (sicht["konfig_version"], sicht["mindest_integration"], sicht["anlage_name"]) == (7, "1.2.0", "Haus")
+
+
+def test_ohne_konfigurationsdokument_sind_beide_felder_null():
+    sicht = _sicht_mit(None)
+    assert (sicht["konfig_version"], sicht["mindest_integration"]) == (None, None)
+
+
+def test_eine_version_die_keine_ganze_zahl_ist_gilt_als_nicht_vorhanden():
+    for version in (True, "7", 7.0, None):
+        assert _sicht_mit(_dokument(version, {"mindest_integration": "1.2.0"}))["konfig_version"] is None, version
+    assert _sicht_mit(_dokument(0, {}))["konfig_version"] == 0
+
+
+def test_eine_mindestversion_die_nicht_die_form_einer_versionsnummer_hat_gilt_als_nicht_gesetzt():
+    for wert in (None, "", 5, True, ["1.2.0"], "1.2", "v1.2.0", "1.2.0 \n", "https://example.org/x", "ha.cker.com",
+                 "1.2.3." + "a" * 30, "1.2.3-" + "a" * 17, "1.2.3 beta", "1.2.3/x",
+                 "1.2.3.com", "1.2.3.rc1", "1.2.3.dev", "1.2.3.dev1234567", "١.٢.٣", "1.2.٣",
+                 "123456.123456.123456-abcdefghijkl"):  # die letzte hat 33 Zeichen
+        assert _sicht_mit(_dokument(7, {"mindest_integration": wert}))["mindest_integration"] is None, wert
+    for wert in ("1.2.0", "10.20.30", "1.2.3-beta1", "1.2.3+build5", "1.2.3.dev4", "1.2.3-" + "a" * 16, "1.2.3-rc1",
+                 "1.2.3+b5", "123456.123456.123456-abcdefghijk"):  # die letzte hat genau 32 Zeichen
+        assert _sicht_mit(_dokument(7, {"mindest_integration": wert}))["mindest_integration"] == wert, wert
+
+
+def test_ein_folgeereignis_nach_neuer_dokumentversion_traegt_die_neue_version():
+    ha = FakeHa()
+    stand = [_dokument(7, {"mindest_integration": "1.2.0", "kreise": [{"kreis": 1, "name": "Wohnen"}]})]
+    sink = geraet_status.GeraetStatus(
+        ha, GERAET_ID, geraet_status.lokale_sicht(lambda: stand[0], lambda n: 20.0, lambda n: 19.0, lambda: None),
+        laufzeit_merken=lambda e: None)
+    sink.anzeige(_anzeige())
+    stand[0] = _dokument(8, {"mindest_integration": "1.3.0", "kreise": [{"kreis": 1, "name": "Wohnen"}]})
+    sink.anzeige(_anzeige())  # nur die Version hat sich geaendert: inhaltliche Aenderung, wird gesendet
+    assert [(d["konfig_version"], d["mindest_integration"]) for _, d in ha.events] == [(7, "1.2.0"), (8, "1.3.0")]

@@ -6,7 +6,15 @@ import pytest
 from fakes import FakeClock
 
 from smartheat_runtime.runtime import EV_LOCAL_CHECK
-from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_SOLL_QUELLE, EV_TARGET_INPUT, SollEingang
+from smartheat_runtime.soll_eingang import (
+    EV_SOLL_ENDE,
+    EV_SOLL_ENDE_ERLEDIGT,
+    EV_SOLL_MODUS,
+    EV_SOLL_QUELLE,
+    EV_TARGET_INPUT,
+    SOLL_ENDE_WIEDERHOLUNG_S,
+    SollEingang,
+)
 from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_PORTAL, SOURCE_THERMOSTAT, TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
 
@@ -24,6 +32,9 @@ class Quelle:
 
     def angezeigt(self):
         return self.wert
+
+    def aus(self):
+        return False
 
 
 class Aufbau:
@@ -384,3 +395,131 @@ def test_die_laufzeit_merkt_soll_quelle_aus_aus_dem_ereignis():
     rt.worker.post(Event(EV_SOLL_QUELLE, {"aus": False}))
     rt.worker.run_pending()
     assert rt.soll_quelle_aus is False
+
+
+def _ende(a: Aufbau) -> None:
+    a.worker.post(Event(EV_SOLL_ENDE, {}))
+    a.worker.run_pending()
+
+
+def test_ende_der_regelung_bringt_die_quelle_auf_den_gemerkten_wunsch(tmp_path):
+    a = Aufbau(tmp_path)
+    a.quelle.wert = 17.5  # was eine Betriebsart (Plan kuehl, Abwesend) in die Quelle geschrieben hat
+    _ende(a)
+    assert a.quelle.geschrieben == [21.0] and a.store.value == 21.0
+
+
+def test_ende_der_regelung_senkt_die_quelle_nie_ab(tmp_path):
+    a = Aufbau(tmp_path)
+    a.quelle.wert = 23.0  # die Quelle zeigt mehr als der gemerkte Wunsch: so lassen
+    _ende(a)
+    assert a.quelle.geschrieben == [] and a.quelle.wert == 23.0
+    a.quelle.wert = 21.0  # zeigt schon den Wunsch: nichts
+    _ende(a)
+    assert a.quelle.geschrieben == []
+
+
+def test_ende_der_regelung_schreibt_nicht_bei_soll_quelle_aus(tmp_path):
+    a = Aufbau(tmp_path)
+    a.worker.post(Event(EV_SOLL_MODUS, {"mode": "off"}))
+    a.worker.run_pending()
+    a.quelle.wert = 17.5
+    _ende(a)
+    assert a.quelle.geschrieben == []
+    a.post(7.0, SOURCE_THERMOSTAT, herkunft="soll_entity")  # Frostschutz-Stellung bleibt unangetastet
+    _ende(a)
+    assert a.quelle.geschrieben == []
+
+
+def test_ende_der_regelung_laesst_einen_offenen_wunsch_stehen(tmp_path):
+    a = Aufbau(tmp_path, entprellen_s=30.0)
+    a.post(23.0, SOURCE_THERMOSTAT, herkunft="soll_entity")  # noch nicht entprellt: der Kunde dreht gerade
+    a.quelle.wert = 23.0
+    _ende(a)
+    assert a.quelle.geschrieben == []
+
+
+def test_ende_der_regelung_ohne_schreibbare_quelle_tut_nichts(tmp_path):
+    a = Aufbau(tmp_path, schreibbar=False)
+    a.quelle.wert = 17.5
+    _ende(a)
+    assert a.quelle.geschrieben == [] and a.store.value == 21.0
+
+
+def _erledigt(a: Aufbau) -> list:
+    """Wie oft das Soll-Ende als erledigt gemeldet wurde (die Laufzeit loescht daraufhin den Merker)."""
+    gemeldet: list = []
+    a.worker.register(EV_SOLL_ENDE_ERLEDIGT, lambda event: gemeldet.append(event))
+    return gemeldet
+
+
+def test_ende_der_regelung_bei_unbekannter_anzeige_schreibt_nicht_und_holt_es_nach(tmp_path):
+    a = Aufbau(tmp_path)
+    erledigt = _erledigt(a)
+    a.quelle.wert = None  # die Quelle meldet nichts: ein hoeherer Wert des Kunden koennte dort stehen
+    _ende(a)
+    assert a.quelle.geschrieben == [] and erledigt == []
+    a.clock.advance(SOLL_ENDE_WIEDERHOLUNG_S)
+    a.quelle.wert = 17.5  # jetzt bekannt und niedriger als der Wunsch
+    a.worker.run_pending()
+    assert a.quelle.geschrieben == [21.0] and len(erledigt) == 1
+
+
+def test_ende_der_regelung_meldet_erst_nach_erfolg_und_wiederholt_ein_scheiterndes_schreiben(tmp_path):
+    a = Aufbau(tmp_path, schreibbar=False)
+    erledigt = _erledigt(a)
+    a.quelle.wert = 17.5
+    _ende(a)
+    assert erledigt == []
+    a.clock.advance(SOLL_ENDE_WIEDERHOLUNG_S)
+    a.quelle.schreibbar = True
+    a.worker.run_pending()
+    assert a.quelle.geschrieben == [21.0] and len(erledigt) == 1
+
+
+def test_ende_der_regelung_plant_nicht_mehrere_wiederholungen(tmp_path):
+    a = Aufbau(tmp_path, schreibbar=False)
+    a.quelle.wert = 17.5
+    _ende(a)
+    _ende(a)
+    a.quelle.schreibbar = True
+    a.clock.advance(SOLL_ENDE_WIEDERHOLUNG_S)
+    a.worker.run_pending()
+    assert a.quelle.geschrieben == [21.0]  # eine Kette: nicht zweimal geschrieben
+
+
+@pytest.mark.parametrize("anzeige", [21.0, 23.0, 7.0])
+def test_ende_der_regelung_ist_erledigt_wenn_die_quelle_den_wunsch_oder_mehr_oder_frost_zeigt(tmp_path, anzeige):
+    a = Aufbau(tmp_path)
+    erledigt = _erledigt(a)
+    a.quelle.wert = anzeige
+    _ende(a)
+    assert a.quelle.geschrieben == [] and len(erledigt) == 1
+
+
+def test_ende_der_regelung_ist_bei_soll_quelle_aus_oder_ohne_quelle_erledigt(tmp_path):
+    a = Aufbau(tmp_path)
+    erledigt = _erledigt(a)
+    a.worker.post(Event(EV_SOLL_MODUS, {"mode": "off"}))
+    a.worker.run_pending()
+    _ende(a)
+    assert len(erledigt) == 1
+    worker = RegulationWorker(FakeClock())
+    ohne = []
+    worker.register(EV_SOLL_ENDE_ERLEDIGT, lambda event: ohne.append(event))
+    SollEingang(worker, a.store, None, wunsch=lambda *args: 21.0, soll_quelle_aus=lambda *args: None, entprellen_s=0.0)
+    worker.post(Event(EV_SOLL_ENDE, {}))
+    worker.run_pending()
+    assert len(ohne) == 1
+
+
+def test_ende_der_regelung_holt_den_offenen_wunsch_nach_dem_entprellen_nach(tmp_path):
+    a = Aufbau(tmp_path, entprellen_s=30.0)
+    erledigt = _erledigt(a)
+    a.post(23.0, SOURCE_THERMOSTAT, herkunft="soll_entity")  # der Kunde dreht gerade
+    a.quelle.wert = 23.0
+    _ende(a)
+    assert a.quelle.geschrieben == [] and erledigt == []  # der Merker bleibt offen
+    a.clock.advance(30)
+    a.worker.run_pending()
+    assert len(erledigt) == 1 and a.store.value == 23.0 and a.quelle.geschrieben == []

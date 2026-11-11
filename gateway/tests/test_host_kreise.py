@@ -3,7 +3,7 @@ Geraet, Zigbee-Spiegel, lokaler Bus, Cloud-Zaehler und Abmelde-Markierung."""
 import copy
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from configs import THERMOSTAT, dokumente_schreiben, konfiguration
@@ -11,6 +11,7 @@ from conftest import VICARE_PARAMETER
 from world import GatewayWorld
 
 from smartheat_core import rastung
+from smartheat_device import prozess
 from smartheat_device.geraet_host_basis import abmeldung_abwarten
 from smartheat_gateway.drivers.simulation import SimulationDriver
 from smartheat_gateway.drivers.vicare_cloud.driver import QUOTA, ViCareCloudDriver
@@ -321,3 +322,81 @@ def test_die_aufnahme_aus_dem_ruhezustand_ersetzt_den_abfrager_des_kreises(world
 
     assert isinstance(world.kreis(1), Runtime) and len(laufend) == 2
     assert id(alter_treiber) not in laufend and id(world.anlage.hosts[1].driver) in laufend
+
+
+def _abo_seit(world, kreis: int, tage: int = 31) -> None:
+    """Das Abo des Kreises ist seit `tage` Tagen inaktiv (Wanduhr der Welt, die echte Fristpruefung)."""
+    entitlement.mark_inactive(world.paths.entitlement(kreis), world.wall.now() - timedelta(days=tage))
+
+
+def _prozess_neu_starten(world) -> None:
+    """Ein Neustart des Prozesses wie Compose: erst sauber trennen, dann alles neu auf denselben Dateien."""
+    prozess.beenden(world.device, None, None)
+    world.start_runtime()
+    world.connect()
+    world.bedienung_senden(zwei_bedienung(), 2)
+
+
+def test_nach_dem_ende_bleibt_der_kreis_auch_bei_unsicherer_uhr_im_ruhezustand(world):
+    _abo_seit(world, 1)
+    _starten(world, zwei_kreise(abo_1="inaktiv"))
+    assert isinstance(world.kreis(1), IdleBridge) and world.kreis(1).reason == "abo_beendet"
+    assert entitlement.ist_beendet(world.paths.entitlement(1))
+    world.zeitdienst(False)  # der Neustart kommt vor dem Zeitabgleich (Pi ohne Echtzeituhr)
+    vorher = _gesetzt(world, THERMOSTAT)
+    _prozess_neu_starten(world)
+    world.advance(120)
+    assert isinstance(world.kreis(1), IdleBridge) and world.kreis(1).reason == "abo_beendet"
+    assert _gesetzt(world, THERMOSTAT) == vorher  # kein Thermostat-Schreiben des beendeten Kreises
+    assert world.anlage.hosts[1].driver is None or world.anlage.hosts[1].driver.physical_writes == 0
+    assert isinstance(world.kreis(2), Runtime)  # der andere Kreis regelt weiter
+
+
+def test_das_erste_ende_bei_unsicherer_uhr_bleibt_offen_und_ist_nicht_beendet(world):
+    _abo_seit(world, 1)
+    world.zeitdienst(False)
+    _starten(world, zwei_kreise(abo_1="inaktiv"))
+    assert isinstance(world.kreis(1), Runtime)  # die Frist wird nie auf einer unsicheren Uhr beendet
+    assert not entitlement.ist_beendet(world.paths.entitlement(1))
+    world.zeitdienst(True)
+    world.advance(120)
+    world.laufzeit.worker.run_pending()
+
+
+def _wunsch_merken(world, kreis: int, wert: float) -> None:
+    """Der gemerkte Wunsch des Kreises liegt im Soll-Speicher (wie nach einem Betrieb vor dem Ende)."""
+    pfad = world.paths.room_target(kreis)
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    pfad.write_text(json.dumps({"value": wert, "source": "portal", "ts": "x"}))
+
+
+def test_nach_dem_neustart_gilt_die_erste_bekannte_anzeige_als_wert_des_kunden_und_wird_nicht_ueberschrieben(world):
+    _wunsch_merken(world, 1, 22.0)
+    _abo_seit(world, 1)
+    _starten(world, zwei_kreise(abo_1="inaktiv"))  # das Thermostat des Kreises ist noch nicht bekannt
+    assert isinstance(world.kreis(1), IdleBridge) and world.kreis(1).reason == "abo_beendet"
+    assert load_backup(world.paths.backup(1))["soll_ende_offen"] is True and _gesetzt(world, THERMOSTAT) == []
+    world.zeitdienst(False)
+    _prozess_neu_starten(world)
+    world.z2m.report(THERMOSTAT, occupied_heating_setpoint=19.0, system_mode="heat", local_temperature=20.0)
+
+    world.advance(3600)
+
+    assert isinstance(world.kreis(1), IdleBridge) and world.kreis(1).reason == "abo_beendet"
+    assert _gesetzt(world, THERMOSTAT) == []  # der erste Versuch kannte die Anzeige nicht: die spaetere gehoert dem Kunden
+    assert load_backup(world.paths.backup(1)).get("soll_ende_offen") is not True
+
+
+@pytest.mark.parametrize("zustand", [{"occupied_heating_setpoint": 22.0}, {"occupied_heating_setpoint": 23.5},
+                                     {"occupied_heating_setpoint": 6.0},
+                                     {"occupied_heating_setpoint": 19.0, "system_mode": "off"}],
+                         ids=["gleich", "mehr", "frostschutz", "aus"])
+def test_das_soll_ende_senkt_nie_und_schreibt_nicht_auf_ein_ausgeschaltetes_thermostat(world, zustand):
+    _wunsch_merken(world, 1, 22.0)
+    _abo_seit(world, 1)
+    _starten(world, zwei_kreise(abo_1="inaktiv"))
+    world.z2m.report(THERMOSTAT, local_temperature=20.0, **{"system_mode": "heat", **zustand})
+
+    world.advance(3600)
+
+    assert _gesetzt(world, THERMOSTAT) == []

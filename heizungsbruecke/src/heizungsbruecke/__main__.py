@@ -236,7 +236,7 @@ def verdrahten(geraet: HaDeviceHost, device, ha_api, supervisor) -> GeraetStatus
         dokument = device.documents.aktuell(ANZEIGE)
         return dokument.inhalt if dokument is not None else None
 
-    lokal = lokale_sicht(geraet.konfiguration, _raum_soll, lambda kreis: (geraet.raum(kreis) or {}).get("ist"),
+    lokal = lokale_sicht(lambda: device.documents.aktuell(KONFIGURATION), _raum_soll, lambda kreis: (geraet.raum(kreis) or {}).get("ist"),
                          anzeige_inhalt)
     status = GeraetStatus(ha_api, device.identity.device_id, lokal,
                           laufzeit_merken=lambda event: setattr(geraet, "runtime_status_event", event))

@@ -17,6 +17,7 @@ from runtime_helpers import (
     _quiet_backup,
     _set_room_target,
     _start,
+    _start_bridge,
 )
 from test_runtime_kaelteschutz import (
     DAY,
@@ -55,6 +56,7 @@ from smartheat_runtime.runtime import (
     EV_TELEMETRY,
     Runtime,
 )
+from smartheat_runtime.soll_eingang import EV_SOLL_ENDE
 from smartheat_runtime.worker import Event
 
 AUSSER = "ausser_betrieb"
@@ -477,14 +479,14 @@ def test_zwei_kreise_laufen_unabhaengig(tmp_path, wall, uhr):  # noqa: F811
 # --- kreiszustand.pruefen (reine Entscheidung, ohne Anlage) ---
 
 def _stub(zustand, *, abo_finished=False, rueckgestellt=False, restore_ok=True):
-    aufrufe = []
+    aufrufe, ereignisse = [], []
     override = types.SimpleNamespace(restore_and_clear=lambda immer: aufrufe.append(immer) or restore_ok)
     state = types.SimpleNamespace(abo_finished=abo_finished, kaelteschutz_art=None,
                                   ausser_betrieb_rueckgestellt=rueckgestellt)
     store = types.SimpleNamespace(state=state, update=lambda **felder: state.__dict__.update(felder))
     rt = types.SimpleNamespace(
         config=types.SimpleNamespace(zustand_source=lambda: zustand), store=store, override=override,
-        zone_prepared=True)
+        zone_prepared=True, worker=types.SimpleNamespace(post=ereignisse.append), ereignisse=ereignisse)
     return rt, aufrufe
 
 
@@ -674,3 +676,69 @@ def test_ausser_betrieb_traegt_auch_mit_laufendem_frostlauf_keine_kennzeichen(en
     app._on_telemetry(bridge, Event(EV_TELEMETRY))
     neu = _mqtt(env).telemetry[vorher:]
     assert len(neu) == 1 and set(neu[0]) == TELEMETRIE_FELDER
+
+
+def test_die_rueckstellung_ausser_betrieb_beendet_auch_die_soll_quelle_einmal():
+    rt, _ = _stub(AUSSER)
+    kreiszustand.pruefen(rt)
+    kreiszustand.pruefen(rt)
+    assert [e.kind for e in rt.ereignisse] == [EV_SOLL_ENDE]  # nur beim Eintritt
+    offen, _ = _stub(AUSSER, restore_ok=False)
+    kreiszustand.pruefen(offen)
+    assert offen.ereignisse == []  # ohne gelungene Rueckstellung bleibt die Quelle, wie sie ist
+
+
+# --- Soll-Ende beim Eintritt: der Merker steht im selben Schritt wie die Rueckstellung ---
+
+def test_der_eintritt_setzt_den_merker_soll_ende_im_selben_schritt_wie_die_rueckstellung():
+    rt, _ = _stub(AUSSER)
+    schritte = []
+    update = rt.store.update
+    rt.store.update = lambda **felder: (schritte.append(dict(felder)), update(**felder))[1]
+    rt.store.state.soll_ende_offen = False
+    kreiszustand.pruefen(rt)
+    assert schritte == [{"ausser_betrieb_rueckgestellt": True, "soll_ende_offen": True}]
+    assert [Event(EV_SOLL_ENDE)] == rt.ereignisse
+
+
+def test_die_rueckkehr_nach_in_betrieb_setzt_den_merker_soll_ende_zurueck():
+    rt, _ = _stub(BETRIEB, rueckgestellt=True)
+    rt.store.state.soll_ende_offen = True
+    kreiszustand.pruefen(rt)
+    assert rt.store.state.ausser_betrieb_rueckgestellt is False and rt.store.state.soll_ende_offen is False
+
+
+def test_eine_gescheiterte_rueckstellung_setzt_den_merker_nicht():
+    rt, _ = _stub(AUSSER, restore_ok=False)
+    rt.store.state.soll_ende_offen = False
+    kreiszustand.pruefen(rt)
+    assert rt.store.state.soll_ende_offen is False and rt.ereignisse == []
+
+
+CLIMATE_SOLL = "climate.wz::temperature"
+
+
+def _ausser_mit_offenem_merker(env, angezeigt) -> None:
+    """Der Kreis steht ausser Betrieb und ist zurueckgestellt; ein Neustart kam vor dem Soll-Ende (Merker noch offen)."""
+    env.ha.states.update({"climate.wz": "heat", CLIMATE_SOLL: angezeigt})
+    env.paths["ROOM_TARGET_PATH"].parent.mkdir(parents=True, exist_ok=True)
+    env.paths["ROOM_TARGET_PATH"].write_text('{"value": 21.0, "source": "portal", "ts": "x"}')
+    _quiet_backup(env, ausser_betrieb_rueckgestellt=True, soll_ende_offen=True)
+
+
+def test_ein_neustart_ausser_betrieb_mit_offenem_merker_holt_das_soll_ende_nach(env):
+    _ausser_mit_offenem_merker(env, 19.0)
+    bridge = _start_bridge(env, entity_room_target=CLIMATE_SOLL, zustand=AUSSER)
+    assert _is_running(bridge)
+    bridge.worker.run_pending()
+
+    assert (CLIMATE_SOLL, 21.0) in env.ha.writes  # die Soll-Quelle zeigt wieder den gemerkten Wunsch
+    assert bridge.store.state.soll_ende_offen is False
+
+
+def test_ein_neustart_ausser_betrieb_ohne_merker_schreibt_die_soll_quelle_nicht(env):
+    _ausser_mit_offenem_merker(env, 19.0)
+    _quiet_backup(env, ausser_betrieb_rueckgestellt=True)  # Merker schon abgearbeitet
+    bridge = _start_bridge(env, entity_room_target=CLIMATE_SOLL, zustand=AUSSER)
+    bridge.worker.run_pending()
+    assert all(w[0] != CLIMATE_SOLL for w in env.ha.writes)  # eine Handaenderung des Bewohners bleibt stehen

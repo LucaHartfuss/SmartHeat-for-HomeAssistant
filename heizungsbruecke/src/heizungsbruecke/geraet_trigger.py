@@ -129,6 +129,15 @@ class HaSollQuelle:
             return None
         return float(value) if _is_number(value) else None
 
+    def aus(self) -> bool:
+        """Die Climate-Entity zeigt den Modus off (unlesbar zaehlt nicht als aus)."""
+        if not self._entity.startswith("climate."):
+            return False
+        try:
+            return self._ha.get_raw_state(self._entity) == "off"
+        except Exception:
+            return False
+
 
 def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_ref: str | None, *,
           tagestick: str | None, wache_s: float, wunsch, soll_quelle_aus,

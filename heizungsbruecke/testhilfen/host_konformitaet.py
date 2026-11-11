@@ -4,6 +4,8 @@ Sicht: Binden des Workers, Nachstellen von Neustart und Bedienung, Ursprungswert
 Abmelde-Markierung (verfaellt mit einer neuen Konfiguration derselben Anlage), Bedienwunsch. Rueckrufe des
 Geraetekerns werfen nie, bis auf konfiguration_vorbereiten (vor dem Speichern): laesst
 sich die Markierung nicht schreiben, geht der OSError an den Geraetekern, der das Dokument zurueckhaelt."""
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,6 +65,11 @@ class Welt:
     # Liest einen Fuehlerwert ueber die echte SignalSource des Hosts: der Fuehler meldet `roh` (Zahl oder Text wie
     # "unavailable"), die Antwort ist get_state(Fuehler-Referenz).
     fuehler_lesen: Callable[[float | str], float]
+    # Baut den Host der Laufzeit (HaHost bzw. GatewayHost) ueber den Geraete-Host; der Geraete-Host ist dann verbunden.
+    laufzeit_host: Callable[[], object]
+    # Stellt den Zeitdienst, den der Geraete-Host befragt, auf synchron (True) bzw. nicht synchron (False); gilt fuer
+    # Laufzeit-Hosts, die danach gebaut werden.
+    zeitdienst_setzen: Callable[[bool], None]
 
     def verbunden(self) -> KonformDevice:
         device = KonformDevice(dict(self.konfiguration))
@@ -365,6 +372,67 @@ def host_und_version(w: Welt) -> None:
     assert w.host.host in ("ha", "gateway") and isinstance(w.host.version, str) and w.host.version
 
 
+def _laufzeit_host(w: Welt):
+    w.verbunden()
+    return w.laufzeit_host()
+
+
+def die_uhr_der_laufzeit_ist_synchron_wenn_der_zeitdienst_es_meldet(w: Welt) -> None:
+    w.zeitdienst_setzen(True)
+    assert _laufzeit_host(w).uhr_synchron() is True
+
+
+def die_uhr_der_laufzeit_traegt_die_zeiten_der_synchronen_antwort(w: Welt) -> None:
+    w.zeitdienst_setzen(True)
+    antwort = _laufzeit_host(w).uhr_antwort()
+    assert antwort.synchron is True and antwort.wand is not None and antwort.wand.tzinfo is not None
+    assert isinstance(antwort.mono, float)
+
+
+def die_uhr_der_laufzeit_ist_nicht_synchron_wenn_der_zeitdienst_es_verneint(w: Welt) -> None:
+    w.zeitdienst_setzen(False)
+    assert _laufzeit_host(w).uhr_synchron() is False
+
+
+def nur_ein_echtes_true_des_geraete_hosts_macht_die_uhr_der_laufzeit_synchron(w: Welt) -> None:
+    for antwort, erwartet in ((True, True), (False, False), (None, False), ("ja", False), (1, False)):
+        w.host.uhr_synchron = lambda antwort=antwort: antwort
+        assert _laufzeit_host(w).uhr_synchron() is erwartet, antwort
+
+
+def wirft_der_geraete_host_gilt_die_uhr_der_laufzeit_als_nicht_synchron(w: Welt) -> None:
+    def werfen():
+        raise OSError("Zeitdienst weg")
+
+    w.host.uhr_synchron = werfen
+    assert _laufzeit_host(w).uhr_synchron() is False
+
+
+def die_uhr_der_laufzeit_haelt_den_takt_nicht_laenger_als_die_zwischenspeicherzeit_an(w: Welt) -> None:
+    """Haengt der Zeitdienst (HA: Supervisor ohne Antwort), kommt die Laufzeit nach hoechstens der Zwischenspeicherzeit
+    mit "nicht synchron" zurueck; der haengende Aufruf blockiert keinen weiteren."""
+    from smartheat_runtime import uhr
+
+    assert uhr.UHR_WARTEZEIT_S == 0.5  # absolute Schranke unten gilt nur fuer diese Wartezeit
+    frei, aufrufe = threading.Event(), []
+
+    def haengen():
+        aufrufe.append(1)
+        frei.wait(10)
+        return True
+
+    w.host.uhr_synchron = haengen
+    host = _laufzeit_host(w)
+    try:
+        for _ in range(2):
+            start = time.monotonic()
+            assert host.uhr_synchron() is False
+            assert time.monotonic() - start < 2.0  # absolut: ein Takt wartet nie auf den haengenden Zeitdienst (10 s)
+        assert len(aufrufe) == 1
+    finally:
+        frei.set()
+
+
 PRUEFUNGEN = (
     ohne_geraet_gelten_feste_leerwerte, dokumentsicht_fuer_die_laufzeit, bedienung_vor_dem_binden_wird_nachgestellt,
     nur_die_letzte_bedienung_vor_dem_binden_zaehlt, bedienung_nach_dem_binden_geht_sofort_an_den_worker,
@@ -380,6 +448,12 @@ PRUEFUNGEN = (
     eine_leere_oder_fremde_konfiguration_laesst_die_abmeldung_stehen,
     ohne_eigene_abmeldung_startet_dieselbe_konfiguration_nicht_neu, wunsch_und_soll_quelle_gehen_an_das_geraet,
     ein_ungueltiger_fuehlerwert_wirft_signal_ungueltig, host_und_version,
+    die_uhr_der_laufzeit_ist_synchron_wenn_der_zeitdienst_es_meldet,
+    die_uhr_der_laufzeit_traegt_die_zeiten_der_synchronen_antwort,
+    die_uhr_der_laufzeit_ist_nicht_synchron_wenn_der_zeitdienst_es_verneint,
+    nur_ein_echtes_true_des_geraete_hosts_macht_die_uhr_der_laufzeit_synchron,
+    wirft_der_geraete_host_gilt_die_uhr_der_laufzeit_als_nicht_synchron,
+    die_uhr_der_laufzeit_haelt_den_takt_nicht_laenger_als_die_zwischenspeicherzeit_an,
 )
 
 
