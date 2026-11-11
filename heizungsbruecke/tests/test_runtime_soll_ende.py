@@ -10,8 +10,12 @@ WIEDERHOLUNG = 60.0
 
 
 class Quelle:
-    def __init__(self, angezeigt, schreibbar=True):
+    def __init__(self, angezeigt, schreibbar=True, ausgeschaltet=False):
         self.angezeigt_wert, self.schreibbar, self.geschrieben = angezeigt, schreibbar, []
+        self.ausgeschaltet = ausgeschaltet
+
+    def aus(self):
+        return self.ausgeschaltet
 
     def angezeigt(self):
         if isinstance(self.angezeigt_wert, Exception):
@@ -51,20 +55,54 @@ def test_ohne_wunsch_oder_quelle_faellt_der_merker_ohne_schreiben(aufbau):
     assert store.state.soll_ende_offen is False
 
 
-@pytest.mark.parametrize("quelle", [Quelle(RuntimeError("weg")), Quelle(None), Quelle(19.0, schreibbar=False)],
-                         ids=["fehler", "anzeige_unbekannt", "schreiben_scheitert"])
+@pytest.mark.parametrize("quelle", [Quelle(RuntimeError("weg")), Quelle(19.0, schreibbar=False)],
+                         ids=["fehler", "schreiben_scheitert"])
 def test_ein_fehlschlag_laesst_den_merker_stehen_und_wiederholt_im_takt(aufbau, clock, quelle):
     store, worker = aufbau
     ruhezustand_abarbeiten(worker, store, lambda: SollEnde(21.0, quelle), WIEDERHOLUNG)
     assert store.state.soll_ende_offen is True and quelle.geschrieben == []
 
-    quelle.angezeigt_wert, quelle.schreibbar = 18.0, True
+    quelle.angezeigt_wert, quelle.schreibbar = 19.0, True  # die Anzeige ist unveraendert: nichts hat der Kunde geaendert
     worker.run_pending()
     assert store.state.soll_ende_offen is True  # noch nicht faellig
 
     clock.advance(WIEDERHOLUNG + 1)
     worker.run_pending()
     assert quelle.geschrieben == [21.0] and store.state.soll_ende_offen is False
+
+
+def test_bei_unbekannter_anzeige_wartet_es_und_die_erste_bekannte_gilt_als_wert_des_kunden(aufbau, clock):
+    store, worker = aufbau
+    quelle = Quelle(None)
+    ruhezustand_abarbeiten(worker, store, lambda: SollEnde(21.0, quelle), WIEDERHOLUNG)
+    clock.advance(WIEDERHOLUNG + 1)
+    worker.run_pending()
+    assert store.state.soll_ende_offen is True and quelle.geschrieben == []
+
+    quelle.angezeigt_wert = 18.0
+    clock.advance(WIEDERHOLUNG + 1)
+    worker.run_pending()
+    assert store.state.soll_ende_offen is False and quelle.geschrieben == []
+
+
+def test_aendert_der_kunde_nach_einem_gescheiterten_schreiben_die_anzeige_wird_nicht_mehr_geschrieben(aufbau, clock):
+    store, worker = aufbau
+    quelle = Quelle(19.0, schreibbar=False)
+    ruhezustand_abarbeiten(worker, store, lambda: SollEnde(21.0, quelle), WIEDERHOLUNG)
+    assert store.state.soll_ende_offen is True
+
+    quelle.angezeigt_wert, quelle.schreibbar = 17.0, True  # der Kunde hat inzwischen etwas anderes eingestellt
+    clock.advance(WIEDERHOLUNG + 1)
+    worker.run_pending()
+
+    assert quelle.geschrieben == [] and store.state.soll_ende_offen is False
+
+
+def test_eine_ausgeschaltete_quelle_gilt_als_erledigt_ohne_zu_schreiben(aufbau, clock):
+    store, worker = aufbau
+    quelle = Quelle(19.0, ausgeschaltet=True)
+    ruhezustand_abarbeiten(worker, store, lambda: SollEnde(21.0, quelle), WIEDERHOLUNG)
+    assert quelle.geschrieben == [] and store.state.soll_ende_offen is False
 
 
 def test_ein_fehler_beim_ermitteln_des_ziels_wird_wiederholt(aufbau, clock):

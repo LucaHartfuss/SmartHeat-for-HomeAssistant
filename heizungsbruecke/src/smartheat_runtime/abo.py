@@ -82,14 +82,16 @@ def finish_grace(rt: Runtime, *, always_restore: bool, final_notice: bool) -> bo
     Das erste Ende wird dauerhaft gemerkt (entitlement.mark_beendet) und setzt den Merker "Soll-Ende offen": die
     Soll-Quelle soll den gemerkten Wunsch zeigen, der Merker faellt erst nach Erfolg (soll_eingang.EV_SOLL_ENDE_ERLEDIGT).
     Ein weiterer Aufruf nach dem Ende tut nichts mehr. Reihenfolge: erst der Zustand, dann die Datei; stirbt der Prozess
-    dazwischen, wiederholt sich nur das erste Ende."""
+    dazwischen, wiederholt sich nur das erste Ende. Scheitert das Speichern der Datei, wiederholt der Takt des laufenden
+    Prozesses es (`ende_festhalten`: EV_HEALTH im Betrieb, EV_RECHECK im Ruhezustand)."""
     if rt.store.state.abo_finished:
         return True
     if not rt.override.restore_and_clear(always_restore):
         return False
     erstes = not entitlement.ist_beendet(rt.config.entitlement_path)
     try:
-        # Schreibfehler: der Zustand steht schon im Speicher, der Takt der Gesundheitspruefung holt das Schreiben nach
+        # Schreibfehler: der Zustand steht schon im Speicher; im laufenden Prozess holt der Takt EV_HEALTH das Schreiben
+        # nach, im Ruhezustand (die IdleBridge hat kein EV_HEALTH) gilt er bis zum Neustart
         if erstes:
             rt.store.update(abo_finished=True, soll_ende_offen=True)
         else:
@@ -97,15 +99,26 @@ def finish_grace(rt: Runtime, *, always_restore: bool, final_notice: bool) -> bo
     except StorageError:
         logger.exception("Das Ende der Regelung konnte in backup.json nicht gespeichert werden")
     if erstes:
-        try:
-            entitlement.mark_beendet(rt.config.entitlement_path)
-        except Exception:
-            logger.exception("Das Ende der Regelung konnte nicht gespeichert werden - es gilt nur bis zum Neustart")
+        ende_festhalten(rt)
     rt.worker.post(Event(EV_SOLL_ENDE))
     if final_notice:
         rt.notifier.notify("abo", "beendet", ABO_ENDED_MESSAGE, critical=True)
     else:
         logger.info("Abo-inaktiv-Frist ist bereits abgelaufen - Add-on bleibt ohne weitere Eingriffe im Ruhezustand.")
+    return True
+
+
+def ende_festhalten(rt: Runtime) -> bool:
+    """Speichert das Ende dauerhaft (entitlement.mark_beendet), solange es noch nicht steht. True = gespeichert. Bei
+    einem Fehler False und eine Warnung: der Aufrufer versucht es im naechsten Takt erneut, bis es gelingt."""
+    if entitlement.ist_beendet(rt.config.entitlement_path):
+        return True
+    try:
+        entitlement.mark_beendet(rt.config.entitlement_path)
+    except Exception as error:
+        logger.warning("Das Ende der Regelung konnte nicht gespeichert werden (%s) - erneuter Versuch im naechsten Takt",
+                       type(error).__name__)
+        return False
     return True
 
 

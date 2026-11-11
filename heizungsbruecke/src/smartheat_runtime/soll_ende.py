@@ -1,6 +1,7 @@
-"""Soll-Ende im Ruhezustand: nach dem Ende der Regelung (oder beim Abmelden) soll die Soll-Quelle den gemerkten Wunsch
-zeigen. Im Ruhezustand laeuft kein SollEingang; diese Funktion arbeitet den persistierten Merker `soll_ende_offen` ab
-und loescht ihn erst nach Erfolg (`soll_eingang.ende_schreiben`). Nur im Worker-Thread des Ruhezustands."""
+"""Soll-Ende im Ruhezustand: nach dem Ende der Regelung (Abo-Ende, ausser Betrieb) soll die Soll-Quelle den gemerkten
+Wunsch zeigen. Beim Abmelden wird nie auf das Thermostat geschrieben. Im Ruhezustand laeuft kein SollEingang; diese
+Funktion arbeitet den persistierten Merker `soll_ende_offen` ab und loescht ihn erst nach Erfolg
+(`soll_eingang.ende_schreiben`). Nur im Worker-Thread des Ruhezustands."""
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -34,21 +35,21 @@ def ruhezustand_abarbeiten(worker: RegulationWorker, store, soll_ende: Callable[
                            wiederholung_s: float) -> None:
     """Arbeitet einen offenen Merker `soll_ende_offen` im Worker des Ruhezustands ab: sofort ein Versuch, bei
     unbekannter Anzeige oder gescheitertem Schreiben im Takt `wiederholung_s` erneut. Ohne Wunsch oder Quelle (Host liefert
-    None) ist nichts zu schreiben und der Merker faellt. Ein Fehler der Quelle wird wie ein gescheiterter Versuch
-    behandelt. Ohne offenen Merker passiert nichts."""
+    None) und bei ausgeschalteter Quelle ist nichts zu schreiben und der Merker faellt. Ein Fehler der Quelle wird wie ein
+    gescheiterter Versuch behandelt. Ohne offenen Merker passiert nichts.
+
+    Die Wiederholung ist begrenzt: nur der erste Versuch dieses Laufs darf auf jeden Anzeigewert schreiben. Danach gilt
+    die erste bekannte Anzeige als Wert des Kunden (kein Schreiben, der Merker faellt); nur ein gescheitertes Schreiben
+    wird wiederholt, solange die Anzeige unveraendert ist."""
     if not store.state.soll_ende_offen:
         return
+    zustand = {"erster": True, "gescheitert_bei": None}
 
     def _versuch(event: Event | None = None) -> None:
         if not store.state.soll_ende_offen:
             return
         try:
-            ziel = soll_ende()
-            if ziel is None:
-                logger.info("Soll-Ende: kein gemerkter Wunsch oder keine schreibbare Soll-Quelle, nichts zu schreiben")
-                erledigt = True
-            else:
-                erledigt = ende_schreiben(ziel.wunsch, ziel.quelle)
+            erledigt = _pruefen_und_schreiben()
         except Exception:
             logger.exception("Soll-Ende gescheitert - erneuter Versuch in %s s", wiederholung_s)
             erledigt = False
@@ -56,6 +57,25 @@ def ruhezustand_abarbeiten(worker: RegulationWorker, store, soll_ende: Callable[
             merker_setzen(store, False)
             return
         worker.schedule(wiederholung_s, Event(EV_RUHE_SOLL_ENDE))
+
+    def _pruefen_und_schreiben() -> bool:
+        ziel = soll_ende()
+        if ziel is None:
+            logger.info("Soll-Ende: kein gemerkter Wunsch oder keine schreibbare Soll-Quelle, nichts zu schreiben")
+            return True
+        if ziel.quelle.aus():
+            return True
+        angezeigt = ziel.quelle.angezeigt()
+        erster, zustand["erster"] = zustand["erster"], False
+        if angezeigt is None:
+            return False
+        if not erster and angezeigt != zustand["gescheitert_bei"]:
+            logger.info("Soll-Ende: die Anzeige ist der Wert des Kunden, nichts zu schreiben")
+            return True
+        if ende_schreiben(ziel.wunsch, ziel.quelle):
+            return True
+        zustand["gescheitert_bei"] = angezeigt
+        return False
 
     worker.register(EV_RUHE_SOLL_ENDE, _versuch)
     _versuch()

@@ -99,17 +99,19 @@ def test_das_soll_ende_uebersteht_den_neustart_auch_bei_unsicherer_uhr(env, wall
     assert _backup(env).get("soll_ende_offen") is not True
 
 
-def test_das_soll_ende_bleibt_offen_solange_die_anzeige_unbekannt_ist_und_wird_im_takt_nachgeholt(env, wall):
+def test_das_soll_ende_bleibt_offen_solange_die_anzeige_unbekannt_ist_und_endet_mit_der_ersten_bekannten(env, wall):
     _climate_welt(env, wall, angezeigt=_unbekannt())
     _climate_start(env)
     neu = _climate_start(env, zeit_synchron=False)
-    assert _soll_schreiben(env) == [] and _backup(env)["soll_ende_offen"] is True
+    env.clock.advance(3600)
+    neu.worker.run_pending()
+    assert _soll_schreiben(env) == [] and _backup(env)["soll_ende_offen"] is True  # weiter unbekannt: Merker bleibt
     env.ha.states[CLIMATE_SOLL] = 18.0
 
     env.clock.advance(3600)  # weit ueber dem Wiederholtakt des Ruhezustands
     neu.worker.run_pending()
 
-    assert _soll_schreiben(env) == [(CLIMATE_SOLL, WUNSCH)]
+    assert _soll_schreiben(env) == []  # der jetzt gezeigte Wert ist der des Kunden, er wird nicht ueberschrieben
     assert _backup(env).get("soll_ende_offen") is not True
 
 
@@ -142,25 +144,118 @@ def _climate_abgemeldet(env, *, angezeigt, **kwargs):
     return _climate_start(env, abgemeldet=True, **kwargs)
 
 
-def test_abmelden_zeigt_an_der_soll_quelle_den_gemerkten_wunsch(env):
+def test_abmelden_schreibt_nie_auf_die_soll_quelle(env):
     bridge = _climate_abgemeldet(env, angezeigt=19.0)
     assert isinstance(bridge, app.IdleBridge) and bridge.reason == "abgemeldet"
-    assert _soll_schreiben(env) == [(CLIMATE_SOLL, WUNSCH)]
+    assert _soll_schreiben(env) == []  # die Einstellung des Kunden bleibt, auch wenn sie unter dem Wunsch liegt
+    assert _backup(env).get("soll_ende_offen") is not True  # und es wird nichts vorgemerkt
+
+
+def test_ein_wiederholter_start_im_zustand_abgemeldet_ueberschreibt_die_einstellung_des_kunden_nicht(env):
+    _climate_abgemeldet(env, angezeigt=19.0)
+    env.ha.states[CLIMATE_SOLL] = 17.5  # der Kunde hat nach dem Abmelden heruntergedreht
+
+    neu = _climate_start(env, abgemeldet=True)
+    env.clock.advance(3600)
+    neu.worker.run_pending()
+
+    assert isinstance(neu, app.IdleBridge) and neu.reason == "abgemeldet"
+    assert _soll_schreiben(env) == [] and env.ha.states[CLIMATE_SOLL] == 17.5
     assert _backup(env).get("soll_ende_offen") is not True
 
 
-def test_abmelden_mit_unbekannter_anzeige_bleibt_offen_und_holt_es_im_takt_nach(env):
+def test_abmelden_mit_unbekannter_anzeige_schreibt_auch_spaeter_nicht(env):
     bridge = _climate_abgemeldet(env, angezeigt=_unbekannt())
-    assert _soll_schreiben(env) == [] and _backup(env)["soll_ende_offen"] is True
     env.ha.states[CLIMATE_SOLL] = 18.0
 
     env.clock.advance(3600)
     bridge.worker.run_pending()
 
-    assert _soll_schreiben(env) == [(CLIMATE_SOLL, WUNSCH)]
+    assert _soll_schreiben(env) == []
     assert _backup(env).get("soll_ende_offen") is not True
 
 
-def test_abmelden_senkt_nie(env):
-    _climate_abgemeldet(env, angezeigt=22.5)
+# --- Ausgeschaltet gilt als erledigt, eine spaeter bekannte Anzeige als Wert des Kunden -----------------------------------
+
+def test_ein_ausgeschaltetes_climate_gilt_als_erledigt_ohne_zu_schreiben(env, wall):
+    _climate_welt(env, wall, angezeigt=_unbekannt())
+    _climate_start(env)
+    env.ha.states.update({CLIMATE: "off", CLIMATE_SOLL: 19.0})  # Modus aus, die Soll-Temperatur steht noch darunter
+
+    neu = _climate_start(env, zeit_synchron=False)
+    env.clock.advance(3600)
+    neu.worker.run_pending()
+
     assert _soll_schreiben(env) == []
+    assert _backup(env).get("soll_ende_offen") is not True  # kein endloser Versuch
+
+
+def test_der_erste_gezeigte_wert_nach_dem_ende_gilt_als_wert_des_kunden(env, wall):
+    _climate_welt(env, wall, angezeigt=_unbekannt())
+    _climate_start(env)
+    neu = _climate_start(env, zeit_synchron=False)  # auch beim Neustart noch unbekannt
+    env.ha.states[CLIMATE_SOLL] = 18.0  # erste bekannte Anzeige: der Kunde hat so eingestellt
+
+    env.clock.advance(3600)
+    neu.worker.run_pending()
+    env.ha.states[CLIMATE_SOLL] = 17.0
+    env.clock.advance(3600)
+    neu.worker.run_pending()
+
+    assert _soll_schreiben(env) == []
+    assert _backup(env).get("soll_ende_offen") is not True
+
+
+# --- Das Ende bleibt nicht unbemerkt ungespeichert; nur ein aktives Abo hebt es auf -----------------------------------
+
+def test_scheitert_das_speichern_des_endes_wird_es_im_takt_des_ruhezustands_wiederholt(env, wall, monkeypatch):
+    _abo_seit(env, wall)
+    echte = entitlement.mark_beendet
+    versuche = []
+
+    def scheitert(pfad):
+        versuche.append(pfad)
+        raise OSError("Datentraeger voll")
+
+    monkeypatch.setattr(entitlement, "mark_beendet", scheitert)
+    bridge = _start_bridge(env)
+    assert isinstance(bridge, app.IdleBridge) and bridge.reason == "abo_beendet"
+    assert not entitlement.ist_beendet(env.paths["ENTITLEMENT_PATH"])
+
+    env.clock.advance(3600)
+    bridge.worker.run_pending()
+    assert len(versuche) >= 2 and not entitlement.ist_beendet(env.paths["ENTITLEMENT_PATH"])  # es bleibt nicht still
+
+    monkeypatch.setattr(entitlement, "mark_beendet", echte)
+    env.clock.advance(3600)
+    bridge.worker.run_pending()
+    assert entitlement.ist_beendet(env.paths["ENTITLEMENT_PATH"])
+    anzahl = len(versuche)
+    env.clock.advance(3600)
+    bridge.worker.run_pending()
+    assert len(versuche) == anzahl  # danach keine weiteren Versuche
+
+
+def test_ein_unbekannter_abo_status_nach_dem_ende_bleibt_im_ruhezustand(env, wall):
+    _abo_seit(env, wall)
+    _start_bridge(env)
+    assert entitlement.ist_beendet(env.paths["ENTITLEMENT_PATH"])
+    env.abo["status"] = entitlement.UNKNOWN  # accounts-api nicht erreichbar
+    env.ha.writes.clear()
+
+    neu = _start_bridge(env)
+
+    assert isinstance(neu, app.IdleBridge) and neu.reason == "abo_beendet"
+    assert env.ha.writes == [] and _links(env) == []
+    assert entitlement.ist_beendet(env.paths["ENTITLEMENT_PATH"])  # das Ende bleibt gespeichert
+
+
+def test_nur_ein_aktives_abo_hebt_das_gespeicherte_ende_auf(env, wall):
+    _abo_seit(env, wall)
+    _start_bridge(env)
+    env.abo["status"] = entitlement.ACTIVE
+
+    neu = _start_bridge(env)
+
+    assert not isinstance(neu, app.IdleBridge)
+    assert not entitlement.ist_beendet(env.paths["ENTITLEMENT_PATH"])

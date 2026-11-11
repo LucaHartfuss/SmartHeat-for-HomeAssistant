@@ -48,14 +48,20 @@ class SollQuelle(Protocol):
         """Was die Quelle gerade zeigt; None = unbekannt."""
         ...
 
+    def aus(self) -> bool:
+        """Die Quelle zeigt „aus“ (Modus off): sie gehoert dem Kunden."""
+        ...
+
 
 def ende_schreiben(wunsch: float, quelle: SollQuelle, *,
                    geschrieben: Callable[[float], None] | None = None) -> bool:
     """Soll-Ende an der Quelle: sie zeigt danach den gemerkten Wunsch, nie weniger. True = erledigt (nichts zu tun oder
     geschrieben), False = spaeter erneut (Anzeige unbekannt oder Schreiben gescheitert). Bei unbekannter Anzeige wird
     nicht geschrieben: ein hoeherer Wert des Kunden koennte dort stehen. Zeigt die Quelle gleich viel oder mehr, bleibt
-    sie; bei einer Frostschutz-Stellung gehoert sie dem Kunden. `geschrieben` bekommt nach einem Schreiben den vorher
-    angezeigten Wert."""
+    sie; bei „aus“ oder einer Frostschutz-Stellung gehoert sie dem Kunden. `geschrieben` bekommt nach einem Schreiben
+    den vorher angezeigten Wert."""
+    if quelle.aus():
+        return True
     angezeigt = quelle.angezeigt()
     if angezeigt is None:
         return False

@@ -339,3 +339,17 @@ def test_finish_grace_ohne_gelungene_rueckstellung_beendet_die_soll_quelle_nicht
     assert abo.finish_grace(rt, always_restore=True, final_notice=True) is False
 
     assert EV_SOLL_ENDE not in _posted(rt)
+
+
+def test_ende_festhalten_wiederholt_das_speichern_bis_es_gelingt(make_store, tmp_path, monkeypatch):
+    rt = _abgelaufen(tmp_path, make_store, monkeypatch, vertrauen=True)
+    echte = entitlement.mark_beendet
+    monkeypatch.setattr(entitlement, "mark_beendet", lambda pfad: (_ for _ in ()).throw(OSError("voll")))
+    assert abo.finish_grace(rt, always_restore=True, final_notice=True) is True
+    assert rt.store.state.abo_finished is True and not entitlement.ist_beendet(rt.config.entitlement_path)
+
+    assert abo.ende_festhalten(rt) is False  # scheitert weiter: der Aufrufer versucht es im naechsten Takt erneut
+    monkeypatch.setattr(entitlement, "mark_beendet", echte)
+    assert abo.ende_festhalten(rt) is True
+    assert entitlement.ist_beendet(rt.config.entitlement_path)
+    assert abo.ende_festhalten(rt) is True  # schon gespeichert: nichts mehr zu tun

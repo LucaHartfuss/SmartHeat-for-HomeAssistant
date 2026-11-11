@@ -370,7 +370,7 @@ def _wunsch_merken(world, kreis: int, wert: float) -> None:
     pfad.write_text(json.dumps({"value": wert, "source": "portal", "ts": "x"}))
 
 
-def test_das_soll_ende_wird_nach_dem_neustart_bei_unsicherer_uhr_nachgeholt(world):
+def test_nach_dem_neustart_gilt_die_erste_bekannte_anzeige_als_wert_des_kunden_und_wird_nicht_ueberschrieben(world):
     _wunsch_merken(world, 1, 22.0)
     _abo_seit(world, 1)
     _starten(world, zwei_kreise(abo_1="inaktiv"))  # das Thermostat des Kreises ist noch nicht bekannt
@@ -383,7 +383,7 @@ def test_das_soll_ende_wird_nach_dem_neustart_bei_unsicherer_uhr_nachgeholt(worl
     world.advance(3600)
 
     assert isinstance(world.kreis(1), IdleBridge) and world.kreis(1).reason == "abo_beendet"
-    assert _gesetzt(world, THERMOSTAT) == [22.0]  # die Soll-Quelle zeigt wieder den gemerkten Wunsch
+    assert _gesetzt(world, THERMOSTAT) == []  # der erste Versuch kannte die Anzeige nicht: die spaetere gehoert dem Kunden
     assert load_backup(world.paths.backup(1)).get("soll_ende_offen") is not True
 
 

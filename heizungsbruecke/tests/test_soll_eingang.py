@@ -33,6 +33,9 @@ class Quelle:
     def angezeigt(self):
         return self.wert
 
+    def aus(self):
+        return False
+
 
 class Aufbau:
     def __init__(self, tmp_path: Path, *, schreibbar=True, entprellen_s=0.0):

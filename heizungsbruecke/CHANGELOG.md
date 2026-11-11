@@ -12,11 +12,14 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
   stimmt. Haken für die kritische Mindestversion (30 Tage, lokal ab dem ersten Empfang gezählt) ist vorbereitet, aber noch
   nicht verdrahtet.
 - Das Ende der Regelung übersteht den Neustart: es wird dauerhaft gemerkt (`entitlement_state.json`, Feld `beendet`), ein
-  Neustart danach bleibt auch bei unsicherer Uhr im Ruhezustand und schreibt nichts. Nur das erste Ende braucht eine
-  vertrauenswürdige Uhr. Das Zurückstellen der Soll-Quelle auf den gemerkten Wunsch wird vorgemerkt und nach einem Neustart,
-  im Ruhezustand und beim Abmelden nachgeholt, bis es gelungen ist. Bei unbekannter Anzeige der Soll-Quelle wird nichts
-  geschrieben. Ein bereits beendetes Gerät durchläuft das erste Ende einmal erneut (mit vertrauenswürdiger Uhr), danach gilt
-  das gemerkte Ende.
+  Neustart danach bleibt auch bei unsicherer Uhr und bei unbekanntem Abo-Status im Ruhezustand und schreibt nichts; nur ein
+  aktives Abo hebt das Ende auf. Nur das erste Ende braucht eine vertrauenswürdige Uhr. Scheitert das Speichern des Endes,
+  wird es im Takt wiederholt, bis es gelungen ist. Das Zurückstellen der Soll-Quelle auf den gemerkten Wunsch wird
+  vorgemerkt und nach einem Neustart und im Ruhezustand nachgeholt, bis es gelungen ist: höchstens bis zur ersten bekannten
+  Anzeige nach dem Ende, danach gilt die gezeigte Einstellung als Wert des Kunden. Bei unbekannter Anzeige, bei „aus“ und bei
+  Frostschutz-Stellung wird nichts geschrieben. Ein bereits beendetes Gerät durchläuft das erste Ende einmal erneut (mit
+  vertrauenswürdiger Uhr), danach gilt das gemerkte Ende.
+- Das Abmelden schreibt nie auf das Thermostat bzw. die Soll-Entity: die Einstellung des Kunden bleibt, wie sie ist.
 
 - Neue Abhängigkeit `tzdata` 2026.5 (mit Hash): das Image hat keine Systemzonendaten, die Zone `Europe/Berlin` kommt aus dem
   Paket.
