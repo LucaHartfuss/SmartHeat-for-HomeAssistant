@@ -1,10 +1,11 @@
 """vicare_cloud als PlantBinding gegen den Fake-ViCare-Server."""
+import copy
 import json
 import threading
 
 import pytest
 from bindung_beispiele import VIESSMANN_VICARE_BINDING as BINDING
-from fake_vicare.server import GOOD_CODE, FakeVicare
+from fake_vicare.server import DEFAULT, GOOD_CODE, FakeVicare
 from test_vicare_capabilities import GARBAGE, good_features, number
 from test_vicare_capabilities import feature as feature_dict
 
@@ -25,9 +26,9 @@ PARAMETER = {"installation_id": 2012345, "gateway_serial": "7637415000000001", "
 REDIRECT = "https://portal.test/oauth/callback"
 
 
-@pytest.fixture
-def env(tmp_path, clock, monkeypatch):
-    server = FakeVicare()
+def _umgebung(tmp_path, clock, monkeypatch, recordings=None):
+    """Fake (ohne `recordings` mit Hausmodell, sonst statisch) und ein angemeldeter, einmal abgefragter Treiber."""
+    server = FakeVicare(recordings)
     base = server.start()
     monkeypatch.setenv("SHG_TEST_ENDPOINTS", "1")
     monkeypatch.setenv("SHG_VICARE_IAM_BASE", base)
@@ -39,8 +40,22 @@ def env(tmp_path, clock, monkeypatch):
     assert set(challenge) == {"code_challenge", "code_challenge_method"} and challenge["code_challenge_method"] == "S256"
     driver.login_finish({"phase": "finish", "driver_id": "vicare_cloud", "code": GOOD_CODE, "redirect_uri": REDIRECT})
     driver.poll_once()
-    yield server, driver, paths, clock
-    server.stop()
+    return server, driver, paths, clock
+
+
+@pytest.fixture
+def env(tmp_path, clock, monkeypatch):
+    umgebung = _umgebung(tmp_path, clock, monkeypatch)
+    yield umgebung
+    umgebung[0].stop()
+
+
+@pytest.fixture
+def env_statisch(tmp_path, clock, monkeypatch):
+    """Wie `env`, aber mit den unveraenderlichen Features der Aufzeichnung: Tests setzen Werte von Hand."""
+    umgebung = _umgebung(tmp_path, clock, monkeypatch, {"0": copy.deepcopy(DEFAULT)})
+    yield umgebung
+    umgebung[0].stop()
 
 
 def test_parameters_are_checked_by_the_driver(tmp_path):
@@ -593,9 +608,9 @@ def test_after_prepare_any_non_foreign_program_of_the_cloud_confirms(env):
     assert driver.read_aux() == {"mode_select": "reduced"} and driver.is_prepared()
 
 
-def test_delivery_signals_are_reported_when_the_cloud_has_the_features(env):
+def test_delivery_signals_are_reported_when_the_cloud_has_the_features(env_statisch):
     # Betriebsstunden, Starts, Brennerstatus und Betriebsart als Signale
-    server, driver, paths, clock = env
+    server, driver, paths, clock = env_statisch
     assert not {"generator_hours", "generator_starts", "generator_state", "operating_mode"} & set(driver.signals())
     for feature in server.features["0"]:
         if feature["feature"] == "heating.burners.0":
