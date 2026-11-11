@@ -33,12 +33,14 @@ from smartheat_runtime.raum import RaumPublisher
 from smartheat_runtime.roles import ChannelManifest, ManifestError
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef, BootInfo, RuntimeConfig
 from smartheat_runtime.soll_eingang import FROSTSCHUTZ_BIS
+from smartheat_runtime.soll_ende import SollEnde
 from smartheat_runtime.soll_speicher import (
     BEDIENBEREICH_MAX,
     BEDIENBEREICH_MIN,
     DEFAULT_RAUM_SOLL,
     TargetStore,
     bedienung_start,
+    gespeicherter_wunsch,
 )
 from smartheat_runtime.texts import HA_TEXTS, HostTexts
 from smartheat_runtime.uhr import UhrPort
@@ -151,6 +153,19 @@ class HaHost:
 
     def ursprungswerte_server(self) -> dict:
         return self._geraet.ursprungswerte_server(self._konfiguration, self._leer_abmelden, self.kreis)
+
+    def soll_ende(self) -> SollEnde | None:
+        """Der gemerkte Wunsch und die Soll-Entity fuers Soll-Ende im Ruhezustand (nur lesend, wirft nie): None ohne
+        gemerkten Wunsch, ohne Bindung oder wenn die Soll-Entity keine Climate-Entity (also nicht schreibbar) ist."""
+        try:
+            b = dokument.bindung(self._konfiguration, self.kreis)
+            wunsch = gespeicherter_wunsch(config.room_target_path(self.kreis))
+        except Exception as error:
+            logger.warning("Soll-Ende: Wunsch oder Bindung nicht lesbar (%s)", type(error).__name__)
+            return None
+        if wunsch is None or not b.soll_entity or not b.soll_entity.partition("::")[0].startswith("climate."):
+            return None
+        return SollEnde(wunsch, HaSollQuelle(self._ha_api, b.soll_entity))
 
     def sign_off_parts(self) -> RestoreParts | None:
         """Es wird kein Hilfssensor angelegt: fuer das Zuruecksetzen reichen die Hebel und die Clamps."""

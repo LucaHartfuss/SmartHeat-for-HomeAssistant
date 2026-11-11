@@ -8,6 +8,7 @@ from smartheat_runtime import entitlement
 from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.soll_eingang import EV_SOLL_ENDE
+from smartheat_runtime.state import StorageError
 from smartheat_runtime.worker import Event
 
 logger = logging.getLogger(__name__)
@@ -76,10 +77,30 @@ def finish_grace(rt: Runtime, *, always_restore: bool, final_notice: bool) -> bo
     """Fristende (always_restore, final_notice) bzw. Abschluss-Start (beides False): laufende
     Boosts beenden, die Werte von vor dem ersten Schreiben auf die Anlage. Danach darf kein lokaler Check mehr
     schreiben (abo_finished). False, wenn die Wiederherstellung scheitert: dann keine
-    Abschlussmeldung, der Aufrufer versucht es erneut."""
+    Abschlussmeldung, der Aufrufer versucht es erneut.
+
+    Das erste Ende wird dauerhaft gemerkt (entitlement.mark_beendet) und setzt den Merker "Soll-Ende offen": die
+    Soll-Quelle soll den gemerkten Wunsch zeigen, der Merker faellt erst nach Erfolg (soll_eingang.EV_SOLL_ENDE_ERLEDIGT).
+    Ein weiterer Aufruf nach dem Ende tut nichts mehr. Reihenfolge: erst der Zustand, dann die Datei; stirbt der Prozess
+    dazwischen, wiederholt sich nur das erste Ende."""
+    if rt.store.state.abo_finished:
+        return True
     if not rt.override.restore_and_clear(always_restore):
         return False
-    rt.store.update(abo_finished=True)
+    erstes = not entitlement.ist_beendet(rt.config.entitlement_path)
+    try:
+        # Schreibfehler: der Zustand steht schon im Speicher, der Takt der Gesundheitspruefung holt das Schreiben nach
+        if erstes:
+            rt.store.update(abo_finished=True, soll_ende_offen=True)
+        else:
+            rt.store.update(abo_finished=True)
+    except StorageError:
+        logger.exception("Das Ende der Regelung konnte in backup.json nicht gespeichert werden")
+    if erstes:
+        try:
+            entitlement.mark_beendet(rt.config.entitlement_path)
+        except Exception:
+            logger.exception("Das Ende der Regelung konnte nicht gespeichert werden - es gilt nur bis zum Neustart")
     rt.worker.post(Event(EV_SOLL_ENDE))
     if final_notice:
         rt.notifier.notify("abo", "beendet", ABO_ENDED_MESSAGE, critical=True)
@@ -156,6 +177,8 @@ def check_grace_end(rt: Runtime) -> None:
     Wiederherstellung, laeuft die lokale Regelung weiter und der naechste Check versucht es
     erneut."""
     since = rt.store.state.abo_inactive_since
+    if rt.store.state.abo_finished or entitlement.ist_beendet(rt.config.entitlement_path):
+        return  # das Ende ist schon abgewickelt (Regelung beendet), nichts mehr zu tun
     if since is None or not rt.uhr_vertrauen() or not entitlement.grace_expired(since, wallclock.now()):
         return  # eine unsichere Uhr beendet nie: die Frist verlaengert sich hoechstens
     if entitlement.query(rt.config) == entitlement.ACTIVE:

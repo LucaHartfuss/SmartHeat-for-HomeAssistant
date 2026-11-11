@@ -9,7 +9,14 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
   Soll-Quelle (Thermostat bzw. Soll-Entity) den gemerkten Wunsch, nie weniger als vorher. Bei ausgeschalteter Soll-Quelle
   und bei einem Wunsch, der gerade gedreht wird, ändert sich nichts. Die Abo-Frist beginnt und endet nur bei
   vertrauenswürdiger Uhr: ohne verlässliche Uhr verlängert sie sich höchstens, sie beginnt nachträglich, sobald die Uhr
-  stimmt. Haken für die kritische Mindestversion (30 Tage nach „wirksam ab“) ist vorbereitet, aber noch nicht verdrahtet.
+  stimmt. Haken für die kritische Mindestversion (30 Tage, lokal ab dem ersten Empfang gezählt) ist vorbereitet, aber noch
+  nicht verdrahtet.
+- Das Ende der Regelung übersteht den Neustart: es wird dauerhaft gemerkt (`entitlement_state.json`, Feld `beendet`), ein
+  Neustart danach bleibt auch bei unsicherer Uhr im Ruhezustand und schreibt nichts. Nur das erste Ende braucht eine
+  vertrauenswürdige Uhr. Das Zurückstellen der Soll-Quelle auf den gemerkten Wunsch wird vorgemerkt und nach einem Neustart,
+  im Ruhezustand und beim Abmelden nachgeholt, bis es gelungen ist. Bei unbekannter Anzeige der Soll-Quelle wird nichts
+  geschrieben. Ein bereits beendetes Gerät durchläuft das erste Ende einmal erneut (mit vertrauenswürdiger Uhr), danach gilt
+  das gemerkte Ende.
 
 - Neue Abhängigkeit `tzdata` 2026.5 (mit Hash): das Image hat keine Systemzonendaten, die Zone `Europe/Berlin` kommt aus dem
   Paket.

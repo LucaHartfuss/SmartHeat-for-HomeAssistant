@@ -6,6 +6,7 @@ Add-on-Prozess (FakeDevice, FakeSupervisor, Device, _host) und Beispieldokumente
 (gateway_konfiguration, ha_konfiguration)."""
 import copy
 import json
+import time
 from types import SimpleNamespace
 
 import bindung_beispiele
@@ -114,11 +115,14 @@ class FakeGeraet:
     laufzeit_konfiguration = GeraetHostBasis.laufzeit_konfiguration
     ursprungswerte_server = GeraetHostBasis.ursprungswerte_server
 
+    #: die Uhr kommt wie im echten Geraete-Host vom Supervisor (dt_synchronized, zwischengespeichert)
+    uhr_synchron = geraet_host.HaDeviceHost.uhr_synchron
+
     def __init__(self, konfiguration, *, bedienung=None, dirty=False, abo=entitlement.ACTIVE, ha=None, log=None,
-                 start_markierung=None):
+                 start_markierung=None, clock=time.monotonic):
         self._konfiguration, self._bedienung, self._dirty, self._abo = konfiguration, bedienung, dirty, abo
         self.start_markierung = start_markierung  # die beim Start gelesene Aufraeum-Markierung (aufraeumen.entscheiden)
-        self.uhr = True  # was der Zeitdienst des Hosts meldet (uhr_synchron)
+        self._supervisor, self._clock, self._uhr = Supervisor(), clock, None  # Zustand fuer uhr_synchron
         self.wuensche, self.aus, self.status = [], [], []
         self.wunsch_kreise: list[int] = []  # der Kreis jedes Wunschs, parallel zu wuensche
         self.gemeldet: list[dict] = []  # Ursprungswerte, die die Laufzeit dem Host gab
@@ -135,8 +139,10 @@ class FakeGeraet:
             ha, GERAET_ID, lokale_sicht(self.konfiguration, self._raum_soll, self._raum_ist, lambda: None),
             laufzeit_merken=self.status.append)
 
-    def uhr_synchron(self):
-        return self.uhr
+    def zeitdienst_setzen(self, synchron):
+        """Was der Zeitdienst des Hosts dem Supervisor meldet; gilt ab der naechsten Abfrage (nach dem Zwischenspeicher)."""
+        self._supervisor.info = {"dt_synchronized": synchron}
+        self._uhr = None
 
     def neustart(self):
         self.neustarts.append(1)
@@ -189,7 +195,8 @@ class FakeGeraet:
 
 
 def start_bridge(env, *, options, abo=entitlement.ACTIVE, abgemeldet=False, bedienung=None, log=None,
-                 verbunden=True, leer_mit_markierung=False, ursprungswerte=None, neustart=None, **option_overrides):
+                 verbunden=True, leer_mit_markierung=False, ursprungswerte=None, neustart=None, zeit_synchron=True,
+                 **option_overrides):
     """Startet die Laufzeit auf dem Dokument aus den Test-Optionen (options, z. B. runtime_helpers.OPTIONS; plus
     Overrides). Liefert (bridge, geraet); die gesendeten Nachrichten stehen in geraet.sent, der Kanal in geraet.channel.
     Ohne bedienung ist die Bedienung des Servers der Wert, den die Soll-Entity gerade zeigt (wie nach einem Wunsch,
@@ -200,7 +207,8 @@ def start_bridge(env, *, options, abo=entitlement.ACTIVE, abgemeldet=False, bedi
     verbunden=False: der Link ist beim Start der Laufzeit noch nicht verbunden (der Test meldet die Verbindung spaeter,
     channel.verbunden).
     ursprungswerte: Feld `ursprungswerte` der Konfiguration.
-    neustart: Rueckruf des Hosts fuer app.start; ohne ihn zaehlt geraet.neustarts die Neustarts."""
+    neustart: Rueckruf des Hosts fuer app.start; ohne ihn zaehlt geraet.neustarts die Neustarts.
+    zeit_synchron: was der Zeitdienst des Hosts dem Supervisor meldet (dt_synchronized)."""
     options = {**options, **option_overrides}
     konfiguration = konfiguration_aus_optionen(options)
     if ursprungswerte is not None:
@@ -218,7 +226,8 @@ def start_bridge(env, *, options, abo=entitlement.ACTIVE, abgemeldet=False, bedi
         angezeigt = env.ha.states.get(options["entity_room_target"], 21.0)
         bedienung = {"raum_soll": angezeigt if isinstance(angezeigt, int | float) else 21.0}
     geraet = FakeGeraet(konfiguration, abo=abo, ha=env.ha, bedienung=bedienung, log=log,
-                        start_markierung=start_markierung)
+                        start_markierung=start_markierung, clock=env.clock)
+    geraet.zeitdienst_setzen(zeit_synchron)
     geraet.sent.connected = verbunden
     geraet.host = HaHost(geraet, env.ha, clock=env.clock)
     # wie die Laufzeit der Kreise: ein Statussammler fasst das Ereignis des einen Kreises fuer die Statussenke zusammen

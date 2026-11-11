@@ -4570,6 +4570,7 @@
     }
    },
    "runtime/kreis-1/entitlement_state.json": {
+    "beendet": true,
     "inactive_since": "2026-02-15T13:08:00+01:00"
    },
    "runtime/kreis-1/failsafe_state.json": {
@@ -4768,6 +4769,7 @@
     }
    },
    "runtime/kreis-1/entitlement_state.json": {
+    "beendet": true,
     "inactive_since": "2026-02-15T13:08:00+01:00"
    },
    "runtime/kreis-1/failsafe_state.json": {

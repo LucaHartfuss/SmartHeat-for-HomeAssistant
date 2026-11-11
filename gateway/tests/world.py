@@ -11,6 +11,7 @@ from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
 from geraet_fakes import FakeLink, KeinBootstrap, zugang_ablegen
 
+from smartheat_core import dateien
 from smartheat_device import prozess
 from smartheat_device.device import Device
 from smartheat_gateway import befehle, runtime_main
@@ -49,6 +50,7 @@ class GatewayWorld:
         self.zugang = zugang_ablegen(self.paths.device_dir, self.ca)
         self.links: list[FakeLink] = []
         self.restarts = 0
+        self.zeit_synchron = True  # was der Zeitdienst des Hosts in host/status.json meldet
         self.laufzeit = self.anlage = self.geraet = self.device = None
         self._geraete: list = []  # jeder Prozessstart baut einen neuen Geraete-Host samt Hintergrund-Thread
         monkeypatch.setenv("SHG_ALIVE_FILE", str(data_dir / "alive"))
@@ -80,12 +82,19 @@ class GatewayWorld:
     def _wall(self) -> float:
         return self.wall.now().timestamp()
 
+    def zeitdienst(self, synchron: bool) -> None:
+        """Der Zeitdienst des Hosts meldet die Uhr als (nicht) abgeglichen: der Dienst hoststatus schreibt
+        host/status.json mit der Wanduhrzeit, die der Geraete-Host dort liest (Produktionspfad)."""
+        self.zeit_synchron = synchron
+        status = {"netz": True, "dns": True, "zeit_synchron": synchron, "ts": self.wall.now().isoformat()}
+        dateien.schreiben_json(self.host_dir / "status.json", status, modus=dateien.LESBAR)
+
     def start_runtime(self):
         ausstehend = runtime_main.aufraeumen(self.paths)  # wie main(): bevor der Geraetekern startet
+        self.zeitdienst(self.zeit_synchron)
         mirror = ZigbeeMirror(self.bus, self.clock)
         mirror.start()
         self.geraet = GatewayDeviceHost(self.paths, mirror, host_dir=self.host_dir, clock=self.clock, wall=self._wall)
-        self.geraet.uhr_synchron = lambda: True  # der Zeitdienst des Hosts meldet die Uhr als abgeglichen
         self.geraet.start_markierung = ausstehend
         self._geraete.append(self.geraet)
         self.device = Device(self.geraet, self.paths.data, "https://accounts.example.test", clock=self.clock,
@@ -111,6 +120,7 @@ class GatewayWorld:
         """Geraetekern und Worker abarbeiten; ein gewollter Neustart startet einen neuen Prozess wie Compose."""
         for _ in range(5):
             try:
+                self.zeitdienst(self.zeit_synchron)  # der Dienst schreibt den Status laufend neu
                 self.device.schritt()
                 self.laufzeit.worker.run_pending()
                 self.device.schritt()

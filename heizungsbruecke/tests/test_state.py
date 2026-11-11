@@ -608,3 +608,30 @@ def test_revert_to_saved_loescht_die_schreibmarke_nur_wenn_nichts_mehr_fehlt(mak
 
     store.revert_to_saved("boost_active")
     assert not store.storage_failed
+
+
+def test_der_merker_soll_ende_offen_uebersteht_den_neustart_und_steht_nur_gesetzt_in_der_datei(make_store, tmp_path):
+    store = make_store(CURRENT_BACKUP)
+    assert store.state.soll_ende_offen is False
+    assert "soll_ende_offen" not in json.loads((tmp_path / "backup.json").read_text())
+
+    store.update(soll_ende_offen=True)
+
+    assert json.loads((tmp_path / "backup.json").read_text())["soll_ende_offen"] is True
+    assert make_store().state.soll_ende_offen is True
+    store.update(soll_ende_offen=False)
+    assert "soll_ende_offen" not in json.loads((tmp_path / "backup.json").read_text())
+    assert make_store().state.soll_ende_offen is False
+
+
+def test_ein_bestandsstand_ohne_merker_soll_ende_gilt_als_nicht_offen(make_store):
+    assert make_store(V016_BACKUP).state.soll_ende_offen is False
+
+
+def test_eine_andere_anlage_verwirft_den_merker_soll_ende(make_store):
+    from smartheat_runtime.state import bind_to_tenant
+
+    store = make_store({**CURRENT_BACKUP, "tenant_id": "s1", "plant_id": "anlage-a", "soll_ende_offen": True})
+    assert store.state.soll_ende_offen is True
+    assert bind_to_tenant(store, "s2", "anlage-b") == "andere_anlage"
+    assert store.state.soll_ende_offen is False

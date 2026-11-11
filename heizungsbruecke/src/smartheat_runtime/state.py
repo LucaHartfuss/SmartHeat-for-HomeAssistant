@@ -28,9 +28,10 @@ class StorageError(OSError):
     bleiben gueltig."""
 
 _NUMBER_FIELDS = ("last_room_target", "last_published_target_rt")
-_FLAG_FIELDS = ("boost_active", "emergency_boost_active", "testphase_rueckgestellt", "ausser_betrieb_rueckgestellt")
+_FLAG_FIELDS = ("boost_active", "emergency_boost_active", "testphase_rueckgestellt", "ausser_betrieb_rueckgestellt",
+                "soll_ende_offen")
 #: Merker, die nur gesetzt in backup.json stehen (ein Bestandsstand bleibt gleich und gilt als "nicht zurueckgestellt").
-_OMITTED_FLAGS = ("testphase_rueckgestellt", "ausser_betrieb_rueckgestellt")
+_OMITTED_FLAGS = ("testphase_rueckgestellt", "ausser_betrieb_rueckgestellt", "soll_ende_offen")
 _TEXT_FIELDS = (
     "last_daily_trigger_date", "last_ack_at", "boost_since", "tenant_id", "plant_id", "kaelteschutz_art",
     "kaelteschutz_seit",
@@ -73,6 +74,10 @@ class BridgeState:
     # nach `in_betrieb`, setzt den Merker zurueck. Fehlt er (Bestandsstand), gilt: nicht zurueckgestellt.
     testphase_rueckgestellt: bool = False
     ausser_betrieb_rueckgestellt: bool = False
+    # Das Soll-Ende ist offen: nach dem Ende der Regelung bzw. der Rueckstellung ausser Betrieb steht der gemerkte Wunsch
+    # noch nicht an der Soll-Quelle. Der Merker wird im selben Schritt wie das Ende gesetzt und erst nach dem erfolgreichen
+    # Schreiben (oder wenn nichts zu schreiben ist) geloescht (soll_ende.py), auch ueber einen Neustart hinweg.
+    soll_ende_offen: bool = False
     # Beginn des laufenden Comfort-Boosts (ISO), fuer die Hoechstdauer; None ohne Boost.
     boost_since: str | None = None
     # Laufender Kaelteschutz (regulation.py): Art ("soll" oder "frost") und Beginn (ISO mit Zeitzone); beide None ohne
@@ -485,7 +490,7 @@ class StateStore:
 # Einrichtung (bei jeder neuen Einrichtung zurueckgesetzt: Erstkontakt-Tick, frische Zustellung).
 _PLANT_BOUND = (
     "restore_point", "originals", "aux_originals", "learned", "boost_active", "emergency_boost_active", "boost_since",
-    "testphase_rueckgestellt", "ausser_betrieb_rueckgestellt", "kaelteschutz_art", "kaelteschutz_seit",
+    "testphase_rueckgestellt", "ausser_betrieb_rueckgestellt", "soll_ende_offen", "kaelteschutz_art", "kaelteschutz_seit",
     "kaelteschutz_zaehlung", "manual_override", "manual_override_pending", "write_budget", "deferred_levers", "energy_state",
     "lifetime_writes", "last_room_target",
 )

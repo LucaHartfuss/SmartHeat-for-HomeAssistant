@@ -235,3 +235,36 @@ def test_portal_confirming_a_local_wish_keeps_the_source_lokal(tmp_path, clock):
 
     assert store.apply_portal(23.0)            # anderer Wert: die Bedienung des Servers gilt
     assert (store.value, store.source, len(changes)) == (23.0, SOURCE_PORTAL, 2)
+
+
+def _wunsch_datei(tmp_path, inhalt) -> "os.PathLike":
+    pfad = tmp_path / "room_target.json"
+    pfad.write_text(inhalt if isinstance(inhalt, str) else json.dumps(inhalt))
+    return pfad
+
+
+@pytest.mark.parametrize("quelle", [SOURCE_PORTAL, SOURCE_LOKAL, SOURCE_THERMOSTAT])
+def test_gespeicherter_wunsch_liefert_den_gemerkten_wert(tmp_path, quelle):
+    from smartheat_runtime.soll_speicher import gespeicherter_wunsch
+
+    pfad = _wunsch_datei(tmp_path, {"value": 21.5, "source": quelle, "ts": "x"})
+    assert gespeicherter_wunsch(pfad) == 21.5
+
+
+@pytest.mark.parametrize("inhalt", [
+    {"value": 3.0, "source": SOURCE_PORTAL}, {"value": 99.0, "source": SOURCE_PORTAL},
+    {"value": "21", "source": SOURCE_PORTAL}, {"value": None, "source": SOURCE_PORTAL},
+    {"value": 21.0, "source": "fremd"}, {"value": 21.0}, [], "{kaputt",
+])
+def test_gespeicherter_wunsch_verwirft_unbrauchbares(tmp_path, inhalt):
+    from smartheat_runtime.soll_speicher import gespeicherter_wunsch
+
+    assert gespeicherter_wunsch(_wunsch_datei(tmp_path, inhalt)) is None
+
+
+def test_gespeicherter_wunsch_ohne_datei_legt_keine_an(tmp_path):
+    from smartheat_runtime.soll_speicher import gespeicherter_wunsch
+
+    pfad = tmp_path / "unter" / "room_target.json"
+    assert gespeicherter_wunsch(pfad) is None
+    assert not pfad.exists() and not pfad.parent.exists()

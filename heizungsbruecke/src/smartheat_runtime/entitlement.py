@@ -47,6 +47,29 @@ def mark_inactive(path: Path, now: datetime) -> tuple[datetime, bool]:
     return now, True
 
 
+def _lesen(path: Path) -> dict:
+    """Der Inhalt der Datei als Objekt; fehlende oder unlesbare Datei: leer."""
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def ist_beendet(path: Path) -> bool:
+    """Ob die Regelung dieses Kreises beendet ist (das Ende der Frist wurde schon einmal abgewickelt). Ein fehlendes
+    Feld, eine fehlende oder eine unlesbare Datei heisst "nicht beendet": nur ein ausdruecklich gespeichertes True gilt."""
+    return _lesen(path).get("beendet") is True
+
+
+def mark_beendet(path: Path) -> None:
+    """Merkt das Ende der Regelung dauerhaft, neben dem Beginn der Frist. Das Ende gilt ueber Neustarts hinweg, auch bei
+    unsicherer Uhr, bis das Abo wieder aktiv ist (`clear`). Wirft bei einem Schreibfehler."""
+    inhalt = _lesen(path)
+    inhalt["beendet"] = True
+    dateien.schreiben_json(path, inhalt, modus=dateien.PRIVAT)
+
+
 def clear(path: Path) -> None:
     path.unlink(missing_ok=True)
 
@@ -60,7 +83,9 @@ def grace_expired(inactive_since: datetime, now: datetime) -> bool:
 
 
 def kritische_mindestversion_abgelaufen(wirksam_ab: datetime | None, jetzt: datetime) -> bool:
-    """Eine kritische Mindestversion gilt 30 Tage nach ihrem "wirksam ab"; danach endet die Regelung wie beim Ende der
-    Abo-Frist (Hebel zurueck auf die Ursprungswerte, Soll-Quelle auf den gemerkten Wunsch). None: keine kritische
-    Mindestversion. Der Aufrufer prueft vorher, dass die Uhr vertrauenswuerdig ist."""
+    """Nur der Vergleich, noch nicht an die Hosts angeschlossen. Der Beginn der 30 Tage darf nicht ein vom Server genanntes
+    "wirksam ab" sein, sondern wird lokal ab dem ersten Empfang der kritischen Mindestversion gezaehlt, gemessen mit
+    vertrauenswuerdiger Uhr und dauerhaft gespeichert (wie `inactive_since`). Die lokale Frostnaehe-Sicherung bleibt
+    dabei aktiv. Ein Ende nach dieser Frist liefe ueber `abo.finish_grace` (Ende dauerhaft mit `mark_beendet`, das erste
+    Ende braucht eine vertrauenswuerdige Uhr). None: keine kritische Mindestversion."""
     return wirksam_ab is not None and jetzt >= wirksam_ab + GRACE_PERIOD
