@@ -16,6 +16,7 @@ from pathlib import Path
 import requests
 
 from smartheat_core import dateien
+from smartheat_core.zeitquelle import echte_epoche
 from smartheat_device import commands, fehler, nachrichten, wire
 from smartheat_device import identity as identity_module
 from smartheat_device.tls import ALPN_443, IOT_PORTS
@@ -88,7 +89,7 @@ class BootstrapClient:
     """Signierte Anfragen an register und certificate (Signatur wie die Polling-API)."""
 
     def __init__(self, base_url: str, ident: identity_module.Identity, *, session=None,
-                 now: Callable[[], float] = time.time, timeout: float = TIMEOUT_SECONDS) -> None:
+                 now: Callable[[], float] = echte_epoche, timeout: float = TIMEOUT_SECONDS) -> None:
         self._base = base_url.rstrip("/")
         self._ident, self._now, self._timeout = ident, now, timeout
         self._session = session or requests.Session()

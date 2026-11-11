@@ -34,15 +34,6 @@ ZUORDNUNG: list[tuple[str, str, str, str, str]] = [
     ("smartheat_core/zeitquelle.py", "echte_epoche", "time.time", "echt",
      "die einzige Stelle des Kerns, die die Systemuhr liest; die fachliche Wanduhr (Fristen, Plan, Uhr-Vertrauen) "
      "und die fachliche Epoche addieren den Versatz darauf, echte_epoche bleibt unverschoben"),
-    ("smartheat_device/device.py", "Device.__init__", "time.time", "fachlich",
-     "Vorgabe von wall: Zeitstempel der Nachrichten, die der Server gegen seine fachliche Zeit liest; wall geht heute "
-     "auch an den Bootstrap-Client, dessen Signaturzeit echt sein muss"),
-    ("smartheat_device/bootstrap.py", "BootstrapClient.__init__", "time.time", "echt",
-     "Signaturzeit der Bootstrap-Anfragen; der Server prueft sie gegen die echte Zeit"),
-    ("heizungsbruecke/geraet_nachweis.py", "senden", "time.time", "echt",
-     "Zeitstempel des signierten Besitznachweises; der Server prueft die Signatur gegen die echte Zeit"),
-    ("heizungsbruecke/__main__.py", "stdin_anhaengen", "time.time", "echt",
-     "reicht die Uhr des Besitznachweises durch (Signaturzeit)"),
     ("smartheat_gateway/geraet_host.py", "GatewayDeviceHost.__init__", "time.time", "fachlich",
      "Vorgabe von wall: Zeitstempel der Nachrichten und des Zustands; dieselbe Uhr prueft heute auch das Alter von "
      "host/status.json, das echte Zeit traegt"),

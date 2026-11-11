@@ -52,10 +52,11 @@ def test_der_zeitstempel_sind_ganze_unix_sekunden_aus_der_uhr_des_aufrufers(iden
     assert type(ha.events[0][1]["zeitstempel"]) is int
 
 
-def test_die_standarduhr_ist_die_wanduhr():
+def test_die_standarduhr_ist_die_echte_zeit():
     import inspect
-    import time
-    assert inspect.signature(geraet_nachweis.senden).parameters["uhr"].default is time.time
+
+    from smartheat_core import zeitquelle
+    assert inspect.signature(geraet_nachweis.senden).parameters["uhr"].default is zeitquelle.echte_epoche
 
 
 def test_die_signatur_besteht_die_serverpruefung_und_nur_sie(ident):

@@ -27,6 +27,7 @@ from typing import TypeVar
 from smartheat_core import config_check, kreisansicht
 from smartheat_core.logtext import lesbar
 from smartheat_core.zahlen import ist_endliche_zahl
+from smartheat_core.zeitquelle import echte_epoche, fachliche_epoche
 from smartheat_device import bootstrap, commands, fehler, identity, inventory, nachrichten, wire, wish
 from smartheat_device.documents import ANZEIGE, BEDIENUNG, KONFIGURATION, DocumentStore, angebot_aus
 from smartheat_device.host import Anzeige, DeviceHost
@@ -108,15 +109,17 @@ def _vergleichbar(body: dict) -> dict:
 
 class Device:
     def __init__(self, host: DeviceHost, data_dir: Path, bootstrap_url: str, *,
-                 clock: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time,
+                 clock: Callable[[], float] = time.monotonic, wall: Callable[[], float] = fachliche_epoche,
+                 echt: Callable[[], float] = echte_epoche,
                  bootstrap_client: Callable[[identity.Identity], bootstrap.BootstrapClient] | None = None,
                  link_factory: Callable[..., Link] = Link,
                  befehl_fehler: Callable[[Exception], commands.Failed | None] = lambda error: None) -> None:
         self.host = host
         self._dir = data_dir / DEVICE_DIR
         self._clock, self._wall = clock, wall
+        # wall ist die fachliche Zeit der Nachrichten; die Signaturzeit des Bootstraps prueft der Server gegen die echte
         self._client_for = bootstrap_client or (
-            lambda ident: bootstrap.BootstrapClient(bootstrap_url, ident, now=wall))
+            lambda ident: bootstrap.BootstrapClient(bootstrap_url, ident, now=echt))
         self._link_factory = link_factory
         self._inbox: queue.Queue = queue.Queue()
         self._stop = threading.Event()
