@@ -31,8 +31,9 @@ MODULE = frozenset({"time", "datetime"})
 # (Datei unter src, Umfeld, Referenz, Zuordnung, Grund). Umfeld: Klasse und Funktion, in der die Referenz steht (ein
 # Vorgabewert zaehlt zur Funktion, die ihn traegt); ohne Funktion `<modul>`. Eine Referenz je Zeile.
 ZUORDNUNG: list[tuple[str, str, str, str, str]] = [
-    ("smartheat_core/wallclock.py", "_system_now", "datetime.datetime.now", "fachlich",
-     "die Wanduhr des Kerns (Fristen, Plan, Uhr-Vertrauen); die einzige Stelle, die sie liest"),
+    ("smartheat_core/zeitquelle.py", "echte_epoche", "time.time", "echt",
+     "die einzige Stelle des Kerns, die die Systemuhr liest; die fachliche Wanduhr (Fristen, Plan, Uhr-Vertrauen) "
+     "und die fachliche Epoche addieren den Versatz darauf, echte_epoche bleibt unverschoben"),
     ("smartheat_device/device.py", "Device.__init__", "time.time", "fachlich",
      "Vorgabe von wall: Zeitstempel der Nachrichten, die der Server gegen seine fachliche Zeit liest; wall geht heute "
      "auch an den Bootstrap-Client, dessen Signaturzeit echt sein muss"),
