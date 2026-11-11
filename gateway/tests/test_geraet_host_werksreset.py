@@ -27,7 +27,8 @@ def neustarts(welt, clock):
     """Ersetzt den Host durch einen mit eigenem Neustart-Weg (Konstruktor-Argument)."""
     aufrufe: list[int] = []
     welt.host = gh.GatewayDeviceHost(welt.paths, welt.mirror, host_dir=welt.host_dir, clock=clock,
-                                     wall=lambda: welt.wall["t"], neustart=lambda: aufrufe.append(1))
+                                     wall=lambda: welt.wall["t"], echt=lambda: welt.wall["t"],
+                                     neustart=lambda: aufrufe.append(1))
     welt.host.verbinden(welt.device)
     return aufrufe
 
@@ -127,7 +128,7 @@ def test_eine_beim_start_vorhandene_schon_beantwortete_anfrage_gilt_nicht_als_ne
                            {"seq": 2, "ts": "2027-01-15T08:00:00+00:00", "ursprungswerte": True}, modus=dateien.LESBAR)
     aufrufe: list[int] = []
     neu = gh.GatewayDeviceHost(welt.paths, welt.mirror, host_dir=welt.host_dir, clock=clock, wall=lambda: welt.wall["t"],
-                               neustart=lambda: aufrufe.append(1))
+                               echt=lambda: welt.wall["t"], neustart=lambda: aufrufe.append(1))
     neu.verbinden(welt.device)
     for _ in range(3):
         _takt(neu)
@@ -141,7 +142,7 @@ def test_eine_beim_start_vorhandene_unbeantwortete_anfrage_wird_bearbeitet(welt,
     _anfrage(welt, seq=2)
     aufrufe: list[int] = []
     neu = gh.GatewayDeviceHost(welt.paths, welt.mirror, host_dir=welt.host_dir, clock=clock, wall=lambda: welt.wall["t"],
-                               neustart=lambda: aufrufe.append(1))
+                               echt=lambda: welt.wall["t"], neustart=lambda: aufrufe.append(1))
     neu.verbinden(welt.device)
     _takt(neu)
     assert aufrufe == [1] and dokument_config.abmelden(welt.paths.abgemeldet, ANLAGE) is False
@@ -237,7 +238,7 @@ def _verworfen(welt):
 
 def _neuer_host(welt, clock, aufrufe):
     neu = gh.GatewayDeviceHost(welt.paths, welt.mirror, host_dir=welt.host_dir, clock=clock, wall=lambda: welt.wall["t"],
-                               neustart=lambda: aufrufe.append(1))
+                               echt=lambda: welt.wall["t"], neustart=lambda: aufrufe.append(1))
     neu.verbinden(welt.device)
     return neu
 

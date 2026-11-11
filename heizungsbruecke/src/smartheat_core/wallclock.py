@@ -1,13 +1,16 @@
 """Wanduhr des Clients (Port Clock). Die monotone Uhr wird als Callable uebergeben; die
 Wanduhr ist prozessweit, weil auch reine Kernfunktionen (Tagesbudget, Zeitstempel im Zustand) sie brauchen. Beide
-Hosts nutzen die Systemzeit; Tests setzen `_now` per monkeypatch."""
+Hosts nutzen die Zeitquelle (Systemzeit, in einem Testlauf um einen Versatz verschoben); Tests setzen `_now` per
+monkeypatch."""
 from collections.abc import Callable
 from datetime import date, datetime
 from typing import NamedTuple
 
+from smartheat_core import zeitquelle
+
 
 def _system_now() -> datetime:
-    return datetime.now().astimezone()
+    return zeitquelle.fachliche_wanduhr()
 
 
 _now: Callable[[], datetime] = _system_now

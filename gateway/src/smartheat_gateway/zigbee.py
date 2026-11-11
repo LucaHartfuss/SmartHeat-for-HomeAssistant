@@ -9,11 +9,11 @@ Geraete-Hooks aus."""
 import contextlib
 import logging
 import threading
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from smartheat_core.zeitquelle import echte_epoche
 from smartheat_gateway import topics
 from smartheat_gateway.bus import Bus, decode
 from smartheat_gateway.thermostat_profil import ThermostatPflege
@@ -75,7 +75,7 @@ def _art(faehigkeiten: frozenset[str]) -> str:
 
 class ZigbeeMirror:
     def __init__(self, bus: Bus, clock: Callable[[], float], max_age: float = DEFAULT_MAX_AGE_SECONDS,
-                 wall: Callable[[], float] = time.time) -> None:
+                 wall: Callable[[], float] = echte_epoche) -> None:
         self._bus = bus
         self._clock = clock
         self._wall = wall

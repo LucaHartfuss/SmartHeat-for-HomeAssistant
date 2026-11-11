@@ -1,5 +1,11 @@
 """Fake-ViCare: IAM-Token-Endpunkt und die Teile der ViCare-API, die vicare_cloud braucht, auf stdlib
-http.server. Steuerung ueber POST /__control. Nur fuer Tests und die E2E; kein Anspruch auf Vollstaendigkeit."""
+http.server. Steuerung ueber POST /__control. Nur fuer Tests und die E2E; kein Anspruch auf Vollstaendigkeit.
+
+Ohne `recordings` fuehrt der Fake das Haus H1 des Hausmodell-Kerns mit dem Vaillant-Potenzgesetz: Kurve und Soll-
+Temperatur der Features sind die Eingaenge, Vorlauf, Raumfuehler, Brennerstunden und -starts werden bei jeder Abfrage
+aus dem Kern fortgeschrieben (5-min-Schritte der Uhr `clock`, ein Rest bleibt fuer die naechste Abfrage liegen). Die
+Aussentemperatur bleibt konstant (Feature `heating.sensors.temperature.outside`), die Tageszeit bestimmt nichts. Mit
+`recordings` bleiben die Features statisch."""
 import copy
 import json
 import secrets
@@ -9,16 +15,39 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from smartheat_core import hausmodell
+from smartheat_core.zahlen import ist_endliche_zahl
+
 DEFAULT = json.loads((Path(__file__).parent / "default_features.json").read_text())
 INSTALLATION, GATEWAY, DEVICE = 2012345, "7637415000000001", "0"
 GOOD_CODE = "ok-code"
+
+CURVE = "heating.circuits.0.heating.curve"
+NORMAL = "heating.circuits.0.operating.programs.normal"
+SUPPLY = "heating.circuits.0.sensors.temperature.supply"
+ROOM = "heating.circuits.0.sensors.temperature.room"
+OUTSIDE = "heating.sensors.temperature.outside"
+BURNER = "heating.burners.0"
+STATISTICS = "heating.burners.0.statistics"
+ERZEUGER = hausmodell.Potenzgesetz(a=2.54, b=0.78)  # Vaillant, wie der Simulationstreiber
+HEAT_LIMIT = 16.0
+KERN_STUNDE = 12.0  # ausserhalb der Warmwasserpausen: die Tageszeit darf die Lieferung nicht bestimmen
+START_ROOM = 20.0
+START_BURNER_HOURS = 1000.0
+UNDELIVERED_SUPPLY = 29.5  # Vorlauf ohne Waermelieferung
+
+
+def _zahl(feature: dict | None, name: str, default: float) -> float:
+    raw = (((feature or {}).get("properties") or {}).get(name) or {}).get("value")
+    return float(raw) if ist_endliche_zahl(raw) else default
 
 
 class FakeVicare:
     def __init__(self, recordings: dict[str, list[dict]] | None = None, *, clock=time.time) -> None:
         self._clock = clock
         self._lock = threading.RLock()
-        self._recordings = recordings or {DEVICE: DEFAULT}
+        self._model = recordings is None
+        self._recordings = {DEVICE: DEFAULT} if recordings is None else recordings
         self.reset()
         self._http: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -34,6 +63,62 @@ class FakeVicare:
             self.pending: list[tuple[float, str, str, tuple[str, dict]]] = []  # (sichtbar_ab, dev, feature, aend.)
             self.switches = {"invalid_grant": False, "offline": False, "rate_limit_after": None, "token_ttl": 3600,
                              "settle": 0.0}
+            if self._model:
+                self._start_model()
+
+    # --- Hausmodell ---
+
+    def _start_model(self) -> None:
+        self._zustand = hausmodell.Anlagenzustand(room=START_ROOM, burner_hours=START_BURNER_HOURS)
+        self._letzter: hausmodell.Anlagenschritt | None = None
+        self._last_model = self._clock()
+        self._rest = 0.0
+        items = self.features[DEVICE]
+        for name, properties in ((ROOM, {"value": {"type": "number", "value": START_ROOM}}),
+                                 (STATISTICS, {"hours": {"type": "number", "value": START_BURNER_HOURS},
+                                               "starts": {"type": "number", "value": self._zustand.burner_starts}})):
+            if all(item["feature"] != name for item in items):
+                items.append({"feature": name, "isEnabled": True, "properties": properties, "commands": {}})
+
+    def _inputs(self) -> tuple[tuple[float, float, float], float, float]:
+        """Eingaenge des Kerns aus den Features: (Steigung, Verschiebung, Heizgrenze), Mindestvorlauf, Aussen. Die
+        Verschiebung der Heizkurve ist das Niveau, das Soll das Raum-Soll; fehlt ein Feature, gilt der Startwert."""
+        by_name = {item["feature"]: item for item in self.features[DEVICE]}
+        soll = _zahl(by_name.get(NORMAL), "temperature", START_ROOM)
+        shift = _zahl(by_name.get(CURVE), "shift", 0.0)
+        slope = _zahl(by_name.get(CURVE), "slope", 1.0)
+        return (slope, soll + shift, HEAT_LIMIT), soll, _zahl(by_name.get(OUTSIDE), "value", 5.0)
+
+    def _advance(self) -> None:
+        now = self._clock()
+        self._rest += max(now - self._last_model, 0.0)
+        self._last_model = now
+        steps = int(self._rest // hausmodell.DT)
+        self._rest -= steps * hausmodell.DT
+        hebel, minimum, outdoor = self._inputs()
+        for _ in range(min(steps, hausmodell.STEPS_PER_DAY)):
+            self._letzter = hausmodell.anlage_schritt(
+                self._zustand, hausmodell.HOUSES["H1"], ERZEUGER, hebel, outdoor, 0.0, KERN_STUNDE, minimum,
+                hausmodell.Betriebsflags(), None)
+
+    def _publish(self) -> None:
+        """Schreibt den Stand des Kerns in die Features, die der Fake fuehrt (vorhandene; fehlt eines, bleibt es weg)."""
+        hebel, minimum, outdoor = self._inputs()
+        flow = max(ERZEUGER.flow(hebel[0], hebel[1], outdoor), minimum)
+        delivers = self._letzter is None or self._letzter.geliefert
+        values = {
+            (SUPPLY, "value"): round(flow, 1) if delivers else UNDELIVERED_SUPPLY,
+            (ROOM, "value"): round(self._zustand.room, 2),
+            (STATISTICS, "hours"): round(self._zustand.burner_hours, 3),
+            (STATISTICS, "starts"): self._zustand.burner_starts,
+        }
+        for item in self.features[DEVICE]:
+            for (feature, name), value in values.items():
+                if item["feature"] == feature:
+                    item.setdefault("properties", {})[name] = {"type": "number", "value": value}
+            if item["feature"] == BURNER:
+                item.setdefault("properties", {})["active"] = {
+                    "type": "boolean", "value": bool(self._letzter and self._letzter.brenner)}
 
     # --- Token ---
 
@@ -69,7 +154,11 @@ class FakeVicare:
             limit = self.switches["rate_limit_after"]
             if limit is not None and len(self.calls) > limit:
                 return 429, {"error": "RATE_LIMIT_EXCEEDED"}, {"Retry-After": "60"}
+            if self._model:
+                self._advance()  # mit den Eingaengen bis jetzt; ein Befehl wirkt erst ab seinem Zeitpunkt
             self._apply_pending()
+            if self._model:
+                self._publish()
             if path.startswith("/iot/v2/equipment/installations"):
                 devices = [{"id": device, "deviceType": "heating", "modelId": "Fake"} for device in self.features]
                 return 200, {"data": [{"id": INSTALLATION, "gateways": [{"serial": GATEWAY, "devices": devices}]}]}, {}

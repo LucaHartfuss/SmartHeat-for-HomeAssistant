@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 
 from smartheat_core import dateien
 from smartheat_core.zahlen import ist_endliche_zahl
+from smartheat_core.zeitquelle import fachliche_epoche
 from smartheat_device import fehler, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, InvalidPayload, Outcome, Waiting
 from smartheat_device.geraet_host_basis import SIGN_OFF_WAIT_SECONDS, abmeldung_abwarten
@@ -53,7 +54,7 @@ class Kontext:
     neustart: Callable[[], None]
     diagnostics: Callable[[], dict] = dict
     clock: Callable[[], float] = time.monotonic
-    wall: Callable[[], float] = time.time
+    wall: Callable[[], float] = fachliche_epoche
     hintergrund: Hintergrund = field(default_factory=Hintergrund)
 
 

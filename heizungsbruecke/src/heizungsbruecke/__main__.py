@@ -45,6 +45,7 @@ from heizungsbruecke.host import HaAnlagenHost
 from heizungsbruecke.supervisor import SupervisorApi
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import zustandspfade
+from smartheat_core.zeitquelle import echte_epoche
 from smartheat_device import prozess
 from smartheat_device.device import DEVICE_DIR, Device
 from smartheat_device.documents import ANZEIGE, KONFIGURATION, DocumentStore
@@ -284,7 +285,7 @@ def stdin_quelle() -> BinaryIO | None:
 
 
 def stdin_anhaengen(geraet: HaDeviceHost, device, quelle: BinaryIO, ha_api,
-                    uhr: Callable[[], float] = time.time) -> threading.Thread:
+                    uhr: Callable[[], float] = echte_epoche) -> threading.Thread:
     """Lokale Befehle `entfernen <eigene Geraete-ID>` und `nachweis <eigene Geraete-ID>` aus quelle lesen; `entfernen`
     meldet das Geraet im Geraete-Thread ab (HaDeviceHost.lokal_abmelden ueber das Postfach, nie nebenlaeufig zum
     Befehlsregister), `nachweis` sendet das signierte Ereignis smartheat_nachweis ueber ha_api (Zeit aus uhr). Eine fremde
