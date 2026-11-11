@@ -34,18 +34,9 @@ ZUORDNUNG: list[tuple[str, str, str, str, str]] = [
     ("smartheat_core/zeitquelle.py", "echte_epoche", "time.time", "echt",
      "die einzige Stelle des Kerns, die die Systemuhr liest; die fachliche Wanduhr (Fristen, Plan, Uhr-Vertrauen) "
      "und die fachliche Epoche addieren den Versatz darauf, echte_epoche bleibt unverschoben"),
-    ("smartheat_gateway/geraet_host.py", "GatewayDeviceHost.__init__", "time.time", "fachlich",
-     "Vorgabe von wall: Zeitstempel der Nachrichten und des Zustands; dieselbe Uhr prueft heute auch das Alter von "
-     "host/status.json, das echte Zeit traegt"),
-    ("smartheat_gateway/befehle.py", "Kontext", "time.time", "fachlich",
-     "Vorgabe von wall im Befehlskontext (der Host reicht seine Uhr durch): last_seen der Geraete, Fenster der Inventur"),
     ("smartheat_gateway/drivers/simulation.py", "SimulationDriver.__init__", "time.time", "fachlich",
      "Tagesgang der Aussentemperatur und Wartezeit, bis ein geschriebener Hebel sichtbar wird; die Registry reicht "
      "keine Uhr durch"),
-    ("smartheat_gateway/zigbee.py", "ZigbeeMirror.__init__", "time.time", "echt",
-     "Alter der retained Meldungen gegen last_seen von Zigbee2MQTT, das echte Zeit traegt"),
-    ("smartheat_gateway/quota.py", "QuotaGuard.__init__", "time.time", "echt",
-     "Fenster des Herstellerkontingents und Sperre bis zum Zeitpunkt der Rate-Limit-Antwort"),
     ("smartheat_gateway/drivers/vicare_cloud/api.py", "ViCareApi.__init__", "time.time", "echt",
      "Sperrzeit nach Retry-After der Hersteller-API"),
     ("smartheat_gateway/drivers/vicare_cloud/oauth.py", "TokenStore.__init__", "time.time", "echt",

@@ -5,13 +5,13 @@ bis zum Ende des Fensters weiter; die Sperre nach HTTP 429 (`gesperrt_bis`) gilt
 import json
 import math
 import threading
-import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 from smartheat_core import dateien
+from smartheat_core.zeitquelle import echte_epoche
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ def _lock_for(path: Path) -> threading.Lock:
 
 
 class QuotaGuard:
-    def __init__(self, path: Path, spec: QuotaSpec, now: Callable[[], float] = time.time) -> None:
+    def __init__(self, path: Path, spec: QuotaSpec, now: Callable[[], float] = echte_epoche) -> None:
         self._path = path
         self._lock = _lock_for(path)
         self._spec = spec

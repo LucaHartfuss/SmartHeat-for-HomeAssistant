@@ -38,6 +38,7 @@ from pathlib import Path
 
 from smartheat_core import dateien, zustandspfade
 from smartheat_core.logtext import lesbar
+from smartheat_core.zeitquelle import echte_epoche, fachliche_epoche
 from smartheat_device import fehler, nachrichten, wire
 from smartheat_device.commands import CommandRegister
 from smartheat_device.geraet_host_basis import GeraetHostBasis
@@ -189,13 +190,16 @@ class GatewayDeviceHost(GeraetHostBasis):
     wunsch_herkunft = "thermostat"
 
     def __init__(self, paths: Paths, mirror: ZigbeeMirror, *, host_dir: Path,
-                 clock: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time,
+                 clock: Callable[[], float] = time.monotonic, wall: Callable[[], float] = fachliche_epoche,
+                 echt: Callable[[], float] = echte_epoche,
                  neustart: Callable[[], None] | None = None) -> None:
         super().__init__()
         self.paths, self.mirror, self._host_dir = paths, mirror, host_dir
         #: Neustart der Laufzeit nach dem Markieren (sign_off und Werksreset); Standard: EV_RELOAD an den Worker
         self._neustart_weg = neustart if neustart is not None else self.neustart_anfordern
-        self._clock, self._wall = clock, wall
+        #: `wall` ist die fachliche Zeit (Zeitstempel der Nachrichten und des Zustands, kann im Test versetzt sein);
+        #: `echt` die Systemzeit, in der der Host-Dienst seine Dateien schreibt (host/status.json, Werksreset-Anfrage)
+        self._clock, self._wall, self._echt = clock, wall, echt
         self.zustand = GeraetZustand()
         self.status_sink = StatusSink(self.zustand)
         self._datei = ZustandsDatei(paths.agent_state, lambda: _iso(self._wall()), clock)
@@ -260,7 +264,7 @@ class GatewayDeviceHost(GeraetHostBasis):
             ts = datetime.fromisoformat(raw_ts)
         except ValueError:
             return None
-        if ts.tzinfo is None or abs(self._wall() - ts.timestamp()) > UHR_MAX_ALTER_SECONDS:
+        if ts.tzinfo is None or abs(self._echt() - ts.timestamp()) > UHR_MAX_ALTER_SECONDS:
             return None
         value = status.get("zeit_synchron")
         return value if isinstance(value, bool) else None
@@ -421,7 +425,7 @@ class GatewayDeviceHost(GeraetHostBasis):
 
     def _reset_antworten(self, anfrage: tuple[int, str], ursprungswerte: bool) -> None:
         dateien.schreiben_json(self.paths.werksreset_bereit,
-                               {"seq": anfrage[0], "ts": _iso(self._wall()), "ursprungswerte": ursprungswerte},
+                               {"seq": anfrage[0], "ts": _iso(self._echt()), "ursprungswerte": ursprungswerte},
                                modus=dateien.LESBAR)
         logger.warning("Werksreset: Anfrage beantwortet (Ursprungswerte zurueckgesetzt: %s)", "ja" if ursprungswerte else "nein")
 

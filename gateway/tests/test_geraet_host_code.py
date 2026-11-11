@@ -43,7 +43,7 @@ def _led_datei(welt):
 def _neu_gestartet(welt, clock):
     """Ein frischer Prozess auf denselben Dateien (Neustart des Containers oder Stromzyklus)."""
     host = gh.GatewayDeviceHost(welt.paths, welt.mirror, host_dir=welt.host_dir, clock=clock,
-                                wall=lambda: welt.wall["t"])
+                                wall=lambda: welt.wall["t"], echt=lambda: welt.wall["t"])
     host.verbinden(welt.device)
     return host
 

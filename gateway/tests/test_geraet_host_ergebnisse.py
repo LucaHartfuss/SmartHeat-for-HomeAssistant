@@ -126,7 +126,8 @@ class LedWelt:
         self.clock = clock
         self.wall = {"t": WALL}
         self.host = gh.GatewayDeviceHost(self.paths, ZigbeeMirror(FakeBus(), clock), host_dir=tmp_path / "host",
-                                         clock=clock, wall=lambda: self.wall["t"])
+                                         clock=clock, wall=lambda: self.wall["t"],
+                                         echt=lambda: self.wall["t"])
 
     def led(self) -> dict:
         return json.loads(self.paths.agent_state.read_text())

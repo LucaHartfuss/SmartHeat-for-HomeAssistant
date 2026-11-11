@@ -413,7 +413,7 @@ def test_software_results_go_up_once_per_seq_across_a_runtime_restart(welt, cloc
     welt.host.anzeigen(_anzeige())
     # Neustart der Laufzeit: neuer Host und neues Geraet auf denselben Dateien
     neu = gh.GatewayDeviceHost(welt.paths, welt.mirror, host_dir=welt.host_dir, clock=clock,
-                               wall=lambda: welt.wall["t"])
+                               wall=lambda: welt.wall["t"], echt=lambda: welt.wall["t"])
     geraet = FakeDevice()
     neu.verbinden(geraet)
     neu.anzeigen(_anzeige())

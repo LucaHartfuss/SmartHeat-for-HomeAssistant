@@ -65,7 +65,7 @@ class Welt:
         self.wall = {"t": WALL}
         self.mirror = ZigbeeMirror(FakeBus(), clock)
         self.host = gh.GatewayDeviceHost(self.paths, self.mirror, host_dir=self.host_dir, clock=clock,
-                                         wall=lambda: self.wall["t"])
+                                         wall=lambda: self.wall["t"], echt=lambda: self.wall["t"])
         self.device = FakeDevice()
         self.host.verbinden(self.device)
         self.worker = RegulationWorker(clock=clock)
