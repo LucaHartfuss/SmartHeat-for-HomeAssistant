@@ -32,6 +32,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
+from kalender import plus_monate
+
 ROOT_CN = "Setwell Gateway Release Root"
 TEST_ROOT_CN = "Setwell Gateway Release Root (Test)"
 BLATT_CN = "Setwell Gateway Release"
@@ -48,19 +50,6 @@ class CaFehler(Exception):
 
 def _jetzt() -> datetime:
     return datetime.now(UTC).replace(microsecond=0)
-
-
-def _plus_monate(start: datetime, monate: int) -> datetime:
-    """`monate` Kalendermonate spaeter, am Monatsende auf den letzten Tag des Zielmonats gekuerzt (31.1. + 1 = 28.2.)."""
-    index = start.year * 12 + start.month - 1 + monate
-    jahr, monat = divmod(index, 12)
-    monat += 1
-    for tag in range(start.day, 0, -1):
-        try:
-            return start.replace(year=jahr, month=monat, day=tag)
-        except ValueError:
-            continue
-    raise AssertionError("unerreichbar: Tag 1 gibt es in jedem Monat")
 
 
 def _name(cn: str) -> x509.Name:
@@ -81,7 +70,7 @@ def _root_zertifikat(key: ec.EllipticCurvePrivateKey, cn: str, jetzt: datetime) 
                           encipher_only=False, decipher_only=False)
     return (x509.CertificateBuilder().subject_name(_name(cn)).issuer_name(_name(cn)).public_key(key.public_key())
             .serial_number(x509.random_serial_number())
-            .not_valid_before(jetzt).not_valid_after(_plus_monate(jetzt, 12 * ROOT_JAHRE))
+            .not_valid_before(jetzt).not_valid_after(plus_monate(jetzt, 12 * ROOT_JAHRE))
             .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
             .add_extension(usage, critical=True)
             .sign(key, hashes.SHA256()))
@@ -94,7 +83,7 @@ def _blatt(root_cert: x509.Certificate, root_key: ec.EllipticCurvePrivateKey, pu
         raise CaFehler(f"Monate muessen zwischen 1 und {MAX_MONATE} liegen")
     if not root_cert.not_valid_before_utc <= jetzt <= root_cert.not_valid_after_utc:
         raise CaFehler("Root ist abgelaufen oder noch nicht gueltig")
-    bis = min(_plus_monate(jetzt, monate), root_cert.not_valid_after_utc)
+    bis = min(plus_monate(jetzt, monate), root_cert.not_valid_after_utc)
     usage = x509.KeyUsage(digital_signature=True, content_commitment=False, key_encipherment=False,
                           data_encipherment=False, key_agreement=False, key_cert_sign=False, crl_sign=False,
                           encipher_only=False, decipher_only=False)

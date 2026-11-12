@@ -1,6 +1,7 @@
 import hashlib
 import json
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ def _system(**over) -> bytes:
 def _manifest(**over):
     data = {"version": "0.3.0", "min_updater_version": "0.2.0",
             "files": {"docker-compose.yml": "b" * 64, "mosquitto.conf": "c" * 64},
-            "images": {"gateway": IMAGE}, "archiv": dict(ARCHIV)}
+            "images": {"gateway": IMAGE}, "archiv": dict(ARCHIV), "art": "funktion", "ablauf": "2027-11-12T08:30:00Z"}
     data.update(over)
     return json.dumps(data).encode()
 
@@ -51,6 +52,21 @@ def test_parse_manifest():
     assert manifest.version == "0.3.0" and set(manifest.files) == set(bundles.MANIFEST_FILES)
     assert manifest.archiv == bundles.Archiv(**ARCHIV)
     assert manifest.archiv.ref == IMAGE
+
+
+@pytest.mark.parametrize("art", bundles.ARTEN)
+def test_jede_bekannte_art_wird_gelesen(art):
+    assert bundles.parse_manifest(_manifest(art=art)).art == art
+
+
+def test_die_bekannten_arten_sind_sicherheit_funktion_und_treiberfix():
+    assert set(bundles.ARTEN) == {"sicherheit", "funktion", "treiberfix"}
+
+
+def test_der_ablauf_wird_als_utc_gelesen():
+    manifest = bundles.parse_manifest(_manifest(ablauf="2027-11-12T08:30:15Z"))
+    assert manifest.ablauf == datetime(2027, 11, 12, 8, 30, 15, tzinfo=UTC)
+    assert manifest.ablauf.utcoffset() == timedelta(0)
 
 
 def test_ein_manifest_ohne_system_hat_kein_system():
@@ -137,6 +153,15 @@ def test_the_archive_may_be_exactly_as_large_as_the_limit():
     _archiv(sha256="zz"), _archiv(sha256="E" * 64), _archiv(sha256=None),
     _archiv(name="ghcr.io/x/gw"), _archiv(name="andere"), _archiv(name=None),
     _archiv(datei="../gateway-image.oci.tar"), _archiv(datei="andere.tar"), _archiv(datei=None),
+    # art: fehlt, unbekannt, andere Schreibweise, kein Text
+    _ohne("art"), _manifest(art="kritisch"), _manifest(art="Sicherheit"), _manifest(art=" funktion"),
+    _manifest(art=""), _manifest(art=None), _manifest(art=1), _manifest(art=["funktion"]),
+    # ablauf: fehlt, ohne Uhrzeit, ohne Z, mit Versatz, mit Bruchteil, unmoeglich, kein Text
+    _ohne("ablauf"), _manifest(ablauf="2027-11-12"), _manifest(ablauf="2027-11-12T08:30:00"),
+    _manifest(ablauf="2027-11-12T08:30:00+00:00"), _manifest(ablauf="2027-11-12T09:30:00+01:00"),
+    _manifest(ablauf="2027-11-12T08:30:00.5Z"), _manifest(ablauf="2027-13-12T08:30:00Z"),
+    _manifest(ablauf="2027-11-12T25:30:00Z"), _manifest(ablauf="2027-11-12T08:30:00Z\n"),
+    _manifest(ablauf=""), _manifest(ablauf=None), _manifest(ablauf=1800000000),
 ])
 def test_bad_manifests(raw):
     with pytest.raises(bundles.ManifestError):

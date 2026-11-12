@@ -11,6 +11,7 @@ from fakes import FakeClock, FakeHa
 
 from heizungsbruecke import geraet_trigger, ha_trigger_client
 from heizungsbruecke.ha_api import HomeAssistantApi
+from heizungsbruecke.integration_stand import IntegrationStand
 from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
@@ -25,7 +26,7 @@ SOLL = f"{CLIMATE}::temperature"
 
 
 class Aufbau:
-    def __init__(self, tmp_path: Path, soll=SOLL, room_actual="sensor.raum", ha=None):
+    def __init__(self, tmp_path: Path, soll=SOLL, room_actual="sensor.raum", ha=None, stand=None):
         self.clock = FakeClock()
         self.worker = RegulationWorker(self.clock)
         self.ha = ha or FakeHa()
@@ -37,7 +38,8 @@ class Aufbau:
         self.client = geraet_trigger.build(
             manifest, self.ha, self.worker, self.store, soll, tagestick="12:00", wache_s=300,
             wunsch=lambda v, h, d: self.wuensche.append((v, h, d)) or min(max(v, 15.0), 25.0),
-            soll_quelle_aus=lambda aus, wirksam: self.aus.append((aus, wirksam)))
+            soll_quelle_aus=lambda aus, wirksam: self.aus.append((aus, wirksam)),
+            integration_stand=stand, uhr=self.clock)
         self.fire = self.client._on_trigger_event
 
     def run(self):
@@ -60,6 +62,63 @@ def test_trigger_list(tmp_path):
     assert {"platform": "event", "event_type": "smartheat_wunsch"} in triggers
     assert {"platform": "time", "at": "12:00"} in triggers
     assert len(triggers) == 5
+    assert {"platform": "event", "event_type": "smartheat_integration"} not in triggers  # ohne Stand kein Abonnement
+
+
+# --- Lebenszeichen der Integration (smartheat_integration) ---
+
+def _lebenszeichen(daten, context=None):
+    return {"platform": "event", "event": {"event_type": "smartheat_integration", "data": daten,
+                                           "context": context or {}}}
+
+
+def test_with_a_stand_the_integration_event_is_subscribed(tmp_path):
+    triggers = Aufbau(tmp_path, stand=IntegrationStand()).client._triggers
+    assert {"platform": "event", "event_type": "smartheat_integration"} in triggers
+    assert {"platform": "event", "event_type": "smartheat_wunsch"} in triggers
+    assert len(triggers) == 6
+
+
+def test_the_integration_event_feeds_the_stand_with_the_clock_of_the_build(tmp_path):
+    stand = IntegrationStand()
+    a = Aufbau(tmp_path, stand=stand)
+    a.fire(_lebenszeichen({"schema": 1, "version": "0.4.2", "v5_schemas": [4]}))
+    assert stand.version(a.clock()) == "0.4.2"
+    a.clock.advance(899)
+    assert stand.version(a.clock()) == "0.4.2"
+    a.clock.advance(1)
+    assert stand.version(a.clock()) is None
+
+
+def test_the_integration_event_is_no_wish_and_no_local_check(tmp_path):
+    a = Aufbau(tmp_path, stand=IntegrationStand())
+    a.fire(_lebenszeichen({"schema": 1, "version": "0.4.2", "v5_schemas": [4]}))
+    a.run()
+    assert a.wuensche == [] and a.checks == []
+
+
+def test_an_unreadable_integration_event_is_ignored_without_a_log_of_its_content(tmp_path, caplog):
+    stand = IntegrationStand()
+    a = Aufbau(tmp_path, stand=stand)
+    with caplog.at_level(logging.DEBUG):
+        a.fire(_lebenszeichen({"schema": 1, "version": "geheim<x>", "v5_schemas": "x"}))
+        a.fire(_lebenszeichen(None))
+    assert stand.version(a.clock()) is None and "geheim" not in caplog.text
+
+
+def test_a_wish_event_still_works_beside_the_integration_event(tmp_path):
+    a = Aufbau(tmp_path, stand=IntegrationStand())
+    a.fire(_lebenszeichen({"schema": 1, "version": "0.4.2", "v5_schemas": [4]}))
+    a.ereignis(23.0, {"user_id": "u1"})
+    a.run()
+    assert a.wuensche == [(23.0, "ha", "nutzer")]
+
+
+def test_the_integration_event_without_a_stand_is_not_taken_for_a_wish(tmp_path):
+    a = Aufbau(tmp_path)
+    a.fire(_lebenszeichen({"schema": 1, "version": "0.4.2", "v5_schemas": [4], "raum_soll": 30.0, "kreis": 1}))
+    a.run()
+    assert a.wuensche == []
 
 
 def test_the_trigger_is_on_the_real_entity_not_on_the_manifest_ref(tmp_path):

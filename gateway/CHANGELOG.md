@@ -2,6 +2,12 @@
 
 ## Unveroeffentlicht
 
+- Das Manifest nennt die Art der Aenderung (`art`: `sicherheit`, `funktion` oder `treiberfix`) und ein Ablaufdatum
+  (`ablauf`, UTC). Der Updater installiert ein abgelaufenes Manifest nicht (Ergebnis `manifest_abgelaufen`, nicht in der
+  Liste der abgelehnten Manifeste, eine neu signierte Fassung derselben Version bleibt annehmbar), ebenso keines mit
+  unbekannter Art und keines ohne synchrone Uhr. Das Release-Werkzeug verlangt `--art`, setzt den Ablauf auf zwoelf
+  Monate (beim Signieren neu, nie ueber das Zertifikat hinaus) und prueft beides; bei `sicherheit` lehnt es ab, wenn der
+  Changelog der Version einen Eintrag unter `### Funktion` hat.
 - Die lokale Seite (Anmeldung und Diagnose) erscheint nach dem Kopf `Accept-Language` auf Deutsch oder Englisch
   (ohne passenden Eintrag Englisch; `lang` der Seite folgt). Die festen Texte stehen in `lokale_texte.json`; der Kopf
   wird nie ausgegeben. Die Seite zeigt keine neue Angabe.

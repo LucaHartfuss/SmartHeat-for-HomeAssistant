@@ -2,12 +2,14 @@ import hashlib
 import json
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from oci_helper import make_oci_archive
 
 from build_bundle import build
+from kalender import plus_monate
 from smartheat_host import bundles
 from verify_bundle import BundleRejected, main, verify
 
@@ -27,7 +29,7 @@ def archive(tmp_path):
 @pytest.fixture
 def bundle(tmp_path, archive):
     out = tmp_path / "bundle"
-    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out)
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out, art="funktion")
     return out
 
 
@@ -37,7 +39,7 @@ def _built_from(tmp_path, compose_text: str, archive: Path) -> Path:
     source = tmp_path / "source-compose.yml"
     source.write_text(compose_text)
     out = tmp_path / "evil"
-    build(source, MOSQUITTO_CONF, archive, "0.2.0", out)
+    build(source, MOSQUITTO_CONF, archive, "0.2.0", out, art="funktion")
     return out
 
 
@@ -57,7 +59,7 @@ def system_bundle(tmp_path, archive):
     roh = tmp_path / "gateway.raucb"
     roh.write_bytes(b"signiertes-rauc-bundle" * 100)
     out = tmp_path / "bundle-mit-system"
-    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out, roh)
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out, roh, art="funktion")
     return out
 
 
@@ -228,3 +230,97 @@ def test_script_runs_without_pythonpath(bundle):
     result = subprocess.run([sys.executable, str(SCRIPT), str(bundle), "0.2.0"],
                             capture_output=True, text=True, env=_ENV_OHNE_PYTHONPATH, check=False)
     assert result.returncode == 0, result.stderr
+
+
+# --- art, ablauf und Changelog-Gate --------------------------------------------------------------------------------
+
+JETZT = datetime(2026, 11, 12, 8, 30, tzinfo=UTC)
+
+
+def _bundle_zu(tmp_path, archive, art="funktion", ablauf=None):
+    out = tmp_path / "bundle-art"
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out, art=art, ablauf=ablauf, jetzt=JETZT)
+    return out
+
+
+def _changelog(tmp_path, *zeilen: str) -> Path:
+    pfad = tmp_path / "CHANGELOG.md"
+    pfad.write_text("# Changelog\n\n## 0.2.0\n\n" + "\n".join(zeilen) + "\n\n## 0.1.0\n\n- alt\n", encoding="utf-8")
+    return pfad
+
+
+def test_der_ablauf_muss_nach_dem_jetzt_liegen(tmp_path, archive):
+    bundle = _bundle_zu(tmp_path, archive, ablauf=JETZT)
+    for jetzt in (JETZT, JETZT + timedelta(seconds=1), JETZT + timedelta(days=400)):
+        with pytest.raises(BundleRejected, match="abgelaufen"):
+            verify(bundle, "0.2.0", jetzt=jetzt)
+    verify(bundle, "0.2.0", jetzt=JETZT - timedelta(seconds=1))  # Gegenprobe: eine Sekunde davor ist es gueltig
+
+
+def test_der_ablauf_darf_hoechstens_zwoelf_monate_vorausliegen(tmp_path, archive):
+    grenze = plus_monate(JETZT, 12)
+    verify(_bundle_zu(tmp_path, archive, ablauf=grenze), "0.2.0", jetzt=JETZT)
+    zu_weit = tmp_path / "zu-weit"
+    zu_weit.mkdir()
+    bundle = _bundle_zu(zu_weit, archive, ablauf=grenze + timedelta(seconds=1))
+    with pytest.raises(BundleRejected, match="zwoelf Monate"):
+        verify(bundle, "0.2.0", jetzt=JETZT)
+
+
+def test_ein_nachsignierter_ablauf_im_rahmen_besteht_weiter(tmp_path, archive):
+    """Nachsignieren setzt nur den Ablauf neu; der Neubau nimmt ihn aus dem Manifest, die Dateien bleiben gleich."""
+    bundle = _bundle_zu(tmp_path, archive)
+    _rewrite(bundle, ablauf="2027-01-02T03:04:05Z")
+    verify(bundle, "0.2.0", jetzt=JETZT)
+
+
+def test_art_aus_dem_manifest_geht_in_den_neubau(tmp_path, archive):
+    bundle = _bundle_zu(tmp_path, archive, art="treiberfix")
+    verify(bundle, "0.2.0", jetzt=JETZT)
+    _rewrite(bundle, art="funktion")  # ein anderer gueltiger Wert ist ein anderes, in sich stimmiges Manifest
+    verify(bundle, "0.2.0", jetzt=JETZT)
+
+
+def test_sicherheit_mit_eintrag_unter_funktion_wird_verweigert(tmp_path, archive):
+    bundle = _bundle_zu(tmp_path, archive, art="sicherheit")
+    log = _changelog(tmp_path, "### Sicherheit", "", "- Luecke geschlossen", "", "### Funktion", "", "- neue Ansicht")
+    with pytest.raises(BundleRejected, match="Funktion"):
+        verify(bundle, "0.2.0", jetzt=JETZT, changelog=log)
+
+
+def test_sicherheit_ohne_eintrag_unter_funktion_besteht(tmp_path, archive):
+    bundle = _bundle_zu(tmp_path, archive, art="sicherheit")
+    verify(bundle, "0.2.0", jetzt=JETZT, changelog=_changelog(tmp_path, "### Sicherheit", "", "- Luecke geschlossen"))
+    leer = tmp_path / "leer"
+    leer.mkdir()
+    verify(bundle, "0.2.0", jetzt=JETZT,
+           changelog=_changelog(leer, "### Sicherheit", "", "- Luecke", "", "### Funktion", ""))  # Ueberschrift ohne Eintrag
+    flach = tmp_path / "flach"
+    flach.mkdir()
+    verify(bundle, "0.2.0", jetzt=JETZT, changelog=_changelog(flach, "- Luecke geschlossen"))
+
+
+@pytest.mark.parametrize("art", ["funktion", "treiberfix"])
+def test_funktion_und_treiberfix_brauchen_das_gate_nicht(tmp_path, archive, art):
+    bundle = _bundle_zu(tmp_path, archive, art=art)
+    verify(bundle, "0.2.0", jetzt=JETZT, changelog=_changelog(tmp_path, "### Funktion", "", "- neue Ansicht"))
+    verify(bundle, "0.2.0", jetzt=JETZT, changelog=tmp_path / "gibt-es-nicht.md")  # wird gar nicht gelesen
+
+
+def test_sicherheit_ohne_abschnitt_oder_datei_im_changelog_wird_verweigert(tmp_path, archive):
+    bundle = _bundle_zu(tmp_path, archive, art="sicherheit")
+    ohne = tmp_path / "ohne.md"
+    ohne.write_text("# Changelog\n\n## 0.1.0\n\n- alt\n", encoding="utf-8")
+    for log in (ohne, tmp_path / "gibt-es-nicht.md"):
+        with pytest.raises(BundleRejected, match="Changelog"):
+            verify(bundle, "0.2.0", jetzt=JETZT, changelog=log)
+
+
+def test_cli_prueft_das_gate_mit_changelog_und_ablauf(tmp_path, archive, capsys):
+    bundle = _bundle_zu(tmp_path, archive, art="sicherheit")
+    log = _changelog(tmp_path, "### Funktion", "", "- neue Ansicht")
+    assert main([str(bundle), "0.2.0", "--changelog", str(log)]) == 1
+    assert "Funktion" in capsys.readouterr().err
+    gut = tmp_path / "gut"
+    gut.mkdir()
+    assert main([str(bundle), "0.2.0", "--changelog", str(_changelog(gut, "- Luecke geschlossen"))]) == 0

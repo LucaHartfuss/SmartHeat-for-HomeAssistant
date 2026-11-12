@@ -53,7 +53,7 @@ def main() -> int:
     for version in VERSIONS:
         target = args.out / version
         build(broken if version == VERSIONS[-1] else compose, GATEWAY / "compose" / "mosquitto.conf",
-              args.archive_dir / f"{version}.oci.tar", version, target)
+              args.archive_dir / f"{version}.oci.tar", version, target, art="funktion")
         raw = (target / "manifest.json").read_bytes()
         signature = signiere(release_key, release_cert, raw)
         (target / "manifest.json.sig").write_text(signature)

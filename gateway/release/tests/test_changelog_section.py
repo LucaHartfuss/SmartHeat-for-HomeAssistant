@@ -2,6 +2,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from changelog_section import unterabschnitt
+
 SCRIPT = Path(__file__).resolve().parents[1] / "changelog_section.py"
 TEXT = "# Changelog\n\n## Unveröffentlicht\n\n- offen\n\n## 0.4.0\n\n- neu\n- mehr\n\n## 0.3.0\n\n- alt\n"
 
@@ -46,3 +48,26 @@ def test_version_prefixes_do_not_match(tmp_path):
     for heading in ("## 0.4.01", "## 0.4.0x", "## 10.4.0", "## 0.4.0-rc1"):
         result = _run_text(tmp_path, f"{heading}\n\n- falsch\n", "0.4.0")
         assert result.returncode == 1, heading
+
+
+MIT_UNTERABSCHNITTEN = (
+    "# Changelog\n\n## 0.4.0\n\n### Sicherheit\n\n- Luecke\n\n### Funktion\n\n- neue Ansicht\n- mehr\n\n"
+    "### Sonstiges\n\n- anderes\n\n## 0.3.0\n\n### Funktion\n\n- alt\n")
+
+
+def test_unterabschnitt_liefert_nur_den_eigenen_text_der_version():
+    assert unterabschnitt(MIT_UNTERABSCHNITTEN, "0.4.0", "Funktion") == "- neue Ansicht\n- mehr\n"
+    assert unterabschnitt(MIT_UNTERABSCHNITTEN, "0.4.0", "Sicherheit") == "- Luecke\n"
+    assert unterabschnitt(MIT_UNTERABSCHNITTEN, "0.3.0", "Funktion") == "- alt\n"  # nicht der der Nachbarversion
+
+
+def test_unterabschnitt_ohne_ueberschrift_oder_ohne_eintrag_ist_leer():
+    assert unterabschnitt("## 0.4.0\n\n- flach\n", "0.4.0", "Funktion") == ""
+    assert unterabschnitt("## 0.4.0\n\n### Funktion\n\n### Sonstiges\n\n- x\n", "0.4.0", "Funktion") == ""
+    assert unterabschnitt("## 0.4.0\n\n### Funktion\n   \n", "0.4.0", "Funktion") == ""
+    assert unterabschnitt("## 0.4.0\n\n### Funktionen\n\n- x\n", "0.4.0", "Funktion") == ""  # nur die ganze Ueberschrift
+
+
+def test_unterabschnitt_ohne_abschnitt_der_version_ist_none():
+    assert unterabschnitt(MIT_UNTERABSCHNITTEN, "9.9.9", "Funktion") is None
+    assert unterabschnitt("## 0.4.0\n\n", "0.4.0", "Funktion") is None

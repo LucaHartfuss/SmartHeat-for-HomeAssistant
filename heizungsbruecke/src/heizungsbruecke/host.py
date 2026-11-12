@@ -264,12 +264,16 @@ class HaHost:
         geraet = self._geraet
         # eine Soll-Quelle fuer Start und Betrieb: scheitert das Angleichen beim Start, holt der Trigger es nach
         quelle = HaSollQuelle(self._ha_api, self.soll_entity) if self.soll_entity else None
+        anlagenkreise = frozenset(self._anlagenkreise())
         client = geraet_trigger.build(
             manifest, self._ha_api, worker, self.store, self.soll_entity,
             tagestick=self._runtime.daily_trigger_time, wache_s=self._runtime.local_check_interval,
             wunsch=lambda wert, herkunft, durch: geraet.wunsch(wert, herkunft=herkunft, durch=durch, kreis=self.kreis),
             soll_quelle_aus=geraet.soll_quelle_aus, quelle=quelle, kreis=self.kreis,
-            anlagenkreise=frozenset(self._anlagenkreise()))
+            anlagenkreise=anlagenkreise,
+            # das Lebenszeichen der Integration gilt der Anlage: nur der Client des kleinsten Kreises abonniert es
+            integration_stand=geraet.integration_stand if self.kreis == min(anlagenkreise) else None,
+            uhr=self._clock)
         if self._angleichen and quelle is not None:
             self._soll_entity_angleichen(quelle)
         raum = self.raum

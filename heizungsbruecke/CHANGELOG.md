@@ -5,6 +5,10 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 ## Unveröffentlicht
 
+- Das Add-on liest das Lebenszeichen der Integration (Version, gelesene Status-Schemata; nach 900 Sekunden ohne
+  Ereignis gilt die Version als unbekannt) und kann den Schalter „Automatisch aktualisieren“ des Add-ons lesen
+  (nur lesen, nie setzen; ist er nicht lesbar, gilt er als unbekannt). Sichtbar wird das erst mit der Meldung an den
+  Server.
 - Die Dokumentation (Abschnitt „Entfernen“) nennt jetzt die Reihenfolge zum vollständigen Entfernen (Eintrag löschen,
   „Abgemeldet“ im Portal abwarten, Add-on deinstallieren, Integration in HACS entfernen), die Warnung vor der falschen
   Reihenfolge und das Löschen der Hilfssensoren von Hand nach hartem Entfernen.

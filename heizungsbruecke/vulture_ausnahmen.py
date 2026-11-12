@@ -59,3 +59,6 @@ _.leistung  # Server: tests/generic (Feld des Anlagenschritts); der Simulationst
 
 # --- Kritische Mindestversion (smartheat_runtime/entitlement.py): der Zeitpunkt "wirksam ab" kommt mit dem Versionspruefer; bis dahin ruft nur der Test ---
 _.kritische_mindestversion_abgelaufen  # smartheat_runtime/entitlement.py: Haken fuer das Ende der Regelung 30 Tage nach dem lokalen ersten Empfang (tests/test_entitlement.py), noch ohne Aufrufer in den Hosts
+
+# --- Stand des Add-ons (supervisor.py): die Meldung an den Server liest den Schalter erst mit der Statusmeldung der Version; bis dahin ruft nur der Test ---
+_.addon_auto_update  # supervisor.py: liest den Schalter "Automatisch aktualisieren" (nur lesen), noch ohne Aufrufer in den Hosts (tests/test_supervisor.py)

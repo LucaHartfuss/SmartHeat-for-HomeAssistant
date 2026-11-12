@@ -56,7 +56,7 @@ def _bundle(path: Path) -> Path:
     """Ein Bundle des Betreibers wie von build_bundle.py (echte Compose-Datei, Manifest, OCI-Archiv) plus Signatur."""
     archive = path.parent / (path.name + "-quelle.oci.tar")
     make_oci_archive(archive)
-    build(GW / "compose" / "docker-compose.yml", GW / "compose" / "mosquitto.conf", archive, "0.3.0", path)
+    build(GW / "compose" / "docker-compose.yml", GW / "compose" / "mosquitto.conf", archive, "0.3.0", path, art="funktion")
     archive.unlink()
     (path / "manifest.json.sig").write_text("sig\n")
     return path
