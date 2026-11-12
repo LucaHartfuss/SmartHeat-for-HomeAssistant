@@ -103,7 +103,29 @@ Komfort- und Absenk-Sollwert, bei Viessmann Neigung, Niveau, Raumtemperatur Norm
 Zurückstellen nicht, versucht das Add-on es erneut und meldet es mit den noch eingestellten Werten. Beim nächsten Start
 löscht es den anlagengebundenen Zustand und die angelegten Hilfssensoren, solange keine neue Einrichtung gekommen ist;
 ist Home Assistant dabei nicht bereit, holt ein späterer Start das Löschen der Hilfssensoren nach. Die Geräte-Identität
-bleibt, das Gerät kann neu eingerichtet werden. Zum endgültigen Entfernen das Add-on deinstallieren.
+bleibt, das Gerät kann neu eingerichtet werden.
+
+### SmartHeat vollständig entfernen
+
+Genau in dieser Reihenfolge:
+
+1. Den Eintrag „SmartHeat“ unter Einstellungen → Geräte & Dienste löschen (oder das Gerät im Portal entfernen).
+2. Im Portal abwarten, bis die Anlage „Abgemeldet“ zeigt. Dann sind die ursprünglichen Werte der Heizung wieder
+   gesetzt.
+3. Dieses Add-on unter Einstellungen → Add-ons deinstallieren.
+4. Die Integration „SmartHeat“ in HACS entfernen.
+
+**Warnung:** Wer zuerst das Add-on deinstalliert oder die Integration entfernt, lässt die Heizung auf den zuletzt
+geschriebenen Werten, und Home Assistant meldet das nicht. Weder der Supervisor noch HACS rufen beim Deinstallieren
+Code von SmartHeat auf, der die Heizung zurücksetzen könnte. Ohne das Add-on bleibt die Anlage auf den letzten Werten
+(bei Vaillant: Zone „Manuell“ und die gelernte Heizgrenze); mit dem Add-on, aber ohne die Integration, regelt SmartHeat
+weiter, und Home Assistant zeigt davon nichts mehr. Meldet die Integration „Add-on nicht installiert“, ist das Add-on
+schon weg: Die Heizung bleibt auf den letzten Werten, die Wunschtemperatur wird nicht mehr weitergegeben, und ein
+erneut installiertes Add-on ist ein neues Gerät.
+
+**Hilfssensoren von Hand löschen:** Beim geordneten Entfernen verschwinden die Hilfssensoren des Add-ons beim nächsten
+Start nach der Abmeldung. Wurde das Add-on dagegen ohne vorherige Abmeldung deinstalliert, bleiben sie in Home
+Assistant stehen: Sie unter Einstellungen → Geräte & Dienste → Helfer von Hand löschen.
 
 Auch das Löschen des Eintrags „SmartHeat“ in Home Assistant meldet das Gerät ab, genau wie das Entfernen im Portal
 (die Integration schickt dem Add-on dazu den lokalen Befehl; er wirkt nur für die eigene Geräte-ID). Aus dem Konto

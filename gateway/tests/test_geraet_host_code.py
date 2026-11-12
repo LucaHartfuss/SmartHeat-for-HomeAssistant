@@ -11,7 +11,8 @@ from geraet_welt import Welt
 from smartheat_core import dateien
 from smartheat_device.host import Anzeige
 from smartheat_gateway import geraet_host as gh
-from smartheat_gateway.diagnose import CODE_HINWEIS_TEXTE, render_html, seite
+from smartheat_gateway.diagnose import render_html, seite
+from smartheat_gateway.lokale_texte import gruppe
 
 TS = "2027-01-15T07:00:00+00:00"
 
@@ -161,7 +162,7 @@ def test_ohne_server_kein_code_und_hinweis(welt):
     assert welt.host.code_sichtbar() is False and _led_datei(welt)["code_fenster"] is False
     data = seite(welt.host, welt.device)
     assert data["code"] is None and data["code_hinweis"] == "keine_verbindung"
-    page = render_html(data)
+    page = render_html(data, "de")
     assert "Keine Verbindung zum Server – kein Code" in page and "ABCDEFGHIJKL" not in page
 
 
@@ -193,8 +194,8 @@ def test_uebernommenes_geraet_zeigt_uebernommen(welt):
     assert welt.host.code_sichtbar() is False and _led_datei(welt)["code_fenster"] is False
     data = seite(welt.host, welt.device)
     assert data["code"] is None and data["code_hinweis"] == "uebernommen"
-    page = render_html(data)
-    assert CODE_HINWEIS_TEXTE["uebernommen"] == "übernommen"
+    page = render_html(data, "de")
+    assert gruppe("de", "code_hinweis")["uebernommen"] == "übernommen"
     assert "<p>übernommen</p>" in page and "ABCDEFGHIJKL" not in page
 
 

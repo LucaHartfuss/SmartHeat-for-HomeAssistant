@@ -106,12 +106,16 @@ jar="$DATA/cookies.txt"
 [ "$(curl -s -o /dev/null -w '%{http_code}' -c "$jar" -d 'passwort=Etikett-Passwort' http://127.0.0.1:8080/anmelden 2>/dev/null)" = 303 ] \
   || fail "richtiges Passwort nicht 303"
 grep -q "shg_sitzung" "$jar" || fail "kein Sitzungs-Cookie nach der Anmeldung"
-page="$(curl -fsS -b "$jar" http://127.0.0.1:8080/ 2>/dev/null)"
+page="$(curl -fsS -b "$jar" -H 'Accept-Language: de' http://127.0.0.1:8080/ 2>/dev/null)"
+page_en="$(curl -fsS -b "$jar" -H 'Accept-Language: en' http://127.0.0.1:8080/ 2>/dev/null)"
 printf '%s' "$page" | grep -q "SHG-0001" || fail "Diagnoseseite zeigt die Seriennummer nicht"
 printf '%s' "$page" | grep -q "SmartHeat-Gateway" || fail "Diagnoseseite antwortet nicht"
-! printf '%s' "$page" | grep -q "Übernahme-Code" || fail "Diagnoseseite zeigt nach der Uebernahme den Code"
-printf '%s' "$page" | grep -q "übernommen und wartet auf die Einrichtung" || fail "Diagnoseseite ohne Zustandstext"
-unset page
+# Gegenprobe: nach der Uebernahme erscheint der Code in keiner Sprache (Beschriftung de und en)
+! printf '%s' "$page" | grep -q "Übernahme-Code" || fail "Diagnoseseite zeigt nach der Uebernahme den Code (de)"
+! printf '%s' "$page_en" | grep -q "Claim code" || fail "Diagnoseseite zeigt nach der Uebernahme den Code (en)"
+printf '%s' "$page" | grep -q "übernommen und wartet auf die Einrichtung" || fail "Diagnoseseite ohne Zustandstext (de)"
+printf '%s' "$page_en" | grep -q "has been claimed and is waiting for setup" || fail "Diagnoseseite ohne Zustandstext (en)"
+unset page page_en
 # up/hello am Fake-Broker (Rolle Dienst): hello ging beim ersten Verbinden vor jedem Abo raus; das Abo laeuft deshalb
 # vor einem Neustart der Laufzeit, deren neuer Prozess sich mit derselben Identitaet meldet.
 dienst_wait "$NET" "$PKI" "smartheat/$device_id/up/hello" 90 >"$DATA/hello" & waiter=$!

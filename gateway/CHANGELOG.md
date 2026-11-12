@@ -2,6 +2,9 @@
 
 ## Unveroeffentlicht
 
+- Die lokale Seite (Anmeldung und Diagnose) erscheint nach dem Kopf `Accept-Language` auf Deutsch oder Englisch
+  (ohne passenden Eintrag Englisch; `lang` der Seite folgt). Die festen Texte stehen in `lokale_texte.json`; der Kopf
+  wird nie ausgegeben. Die Seite zeigt keine neue Angabe.
 - Uhrbeurteilung genauer: Ein Sprung der Systemuhr kurz nach einer „synchron“-Meldung des Hosts nimmt jetzt das
   Vertrauen in die Uhr (Beleg zum Zeitpunkt der Antwort); zur Zeitumstellung gilt die tatsaechlich vergangene Zeit.
   Die kritische Mindestversion im Status-Ereignis nimmt nur ASCII-Ziffern und als Endung `-…`, `+…` oder `.devN` an.

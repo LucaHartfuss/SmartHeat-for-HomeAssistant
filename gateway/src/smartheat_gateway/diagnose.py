@@ -6,6 +6,7 @@ keine Version. Zeigt den Zustand des Geraetekerns (wie die LED), die Seriennumme
 Gateway nicht uebernommen ist (Anzeige.code_zeigen) und nach einem Knopfdruck das Code-Fenster (15 min) offen ist,
 Geraete-ID und Uebernahme-Code (kein QR-Code, kein Portal-Link mit Code, GW 7.1) - nur lokal; sonst nach einem Druck den Hinweis "keine Verbindung"
 bzw. "uebernommen".
+Die festen Texte stehen in lokale_texte.json (de, en); Accept-Language waehlt nur zwischen den beiden (sonst en) und wird nie ausgegeben.
 Den Uebernahmestand meldet der Server (claim_state, new_claim_code); bis dahin gilt der Stand des Bootstraps. /healthz
 fuer den Updater.
 
@@ -25,6 +26,7 @@ import urllib.parse
 from collections.abc import Callable, Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from smartheat_gateway import lokale_texte
 from smartheat_gateway.anmeldung import Zugang
 
 logger = logging.getLogger(__name__)
@@ -39,21 +41,6 @@ CROSS_SITE = ("cross-site", "same-site")  # Sec-Fetch-Site: eine fremde Seite lo
 FORMULAR_TYP = "application/x-www-form-urlencoded"
 MAX_VERBINDUNGEN = 64  # gleichzeitig bediente Verbindungen; weitere werden sofort geschlossen
 ANFRAGE_MAX_BYTES = 16384  # alles, was eine Verbindung lesen darf (Anfragezeile, Kopf, Koerper); mehr schliesst sie
-ZUSTAND_TEXTE = {
-    "startet": "Das Gateway startet.",
-    "nicht_uebernommen": "Das Gateway ist noch keinem Konto zugeordnet. Bitte im Portal übernehmen.",
-    "keine_verbindung": "Keine Verbindung zum SmartHeat-Server. Netz und Internetzugang prüfen.",
-    "wartet_auf_einrichtung": "Das Gateway ist übernommen und wartet auf die Einrichtung im Portal.",
-    "regelt": "Das Gateway regelt die Heizung.",
-    "stoerung": "Die Regelung meldet eine Störung; Details im Portal.",
-    "gesperrt": "Dieses Gateway ist gesperrt oder wurde ersetzt und verbindet sich nicht mehr. "
-                "Bitte den Support kontaktieren.",
-    "update_noetig": "Die Software ist zu alt für die Einrichtung; das Gateway aktualisiert sich. "
-                     "Bleibt der Zustand, bitte den Support kontaktieren.",
-}
-
-
-CODE_HINWEIS_TEXTE = {"keine_verbindung": "Keine Verbindung zum Server – kein Code", "uebernommen": "übernommen"}
 
 
 def seite(geraet, device) -> dict:
@@ -113,8 +100,9 @@ def client_allowed(address: str) -> bool:
     return ip.is_loopback or ip.is_link_local or (ip.is_private and not ip.is_global)
 
 
-def _row(label: str, value) -> str:
-    text = "unbekannt" if value is None else ("ja" if value is True else "nein" if value is False else str(value))
+def _row(label: str, value, t: dict[str, str]) -> str:
+    text = (t["wert.unbekannt"] if value is None else
+            t["wert.ja"] if value is True else t["wert.nein"] if value is False else str(value))
     return f"<tr><th>{html.escape(label)}</th><td>{html.escape(text)}</td></tr>"
 
 
@@ -125,56 +113,61 @@ def _liste(titel: str, eintraege: list[str]) -> str:
     return f"<h2>{html.escape(titel)}</h2><ul>{items}</ul>"
 
 
-def render_html(data: dict) -> str:
+def render_html(data: dict, sprache: str = lokale_texte.STANDARD) -> str:
+    """Die Seite in `sprache` (de oder en, sonst die Standardsprache); alle festen Texte stehen in lokale_texte.json."""
+    sprache = sprache if sprache in lokale_texte.SPRACHEN else lokale_texte.STANDARD
+    t = lokale_texte.alle(sprache)
+    zustaende = lokale_texte.gruppe(sprache, "zustand")
     host = data.get("host", {})
     zustand = data.get("zustand", "startet")
     rows = "".join([
-        _row("Zustand", ZUSTAND_TEXTE.get(zustand, zustand)),
-        _row("Eingerichtet", data["eingerichtet"]), _row("Seriennummer", data.get("seriennummer")),
-        _row("Server erreichbar", data["server_ok"]), _row("Netz", host.get("netz")), _row("DNS", host.get("dns")),
-        _row("Uhrzeit synchron", host.get("zeit_synchron")), _row("Zigbee-Stick erkannt", data["zigbee_stick"]),
-        _row("Regelung", data["laufzeit"]),
+        _row(t["label.zustand"], zustaende.get(zustand, zustand), t),
+        _row(t["label.eingerichtet"], data["eingerichtet"], t),
+        _row(t["label.seriennummer"], data.get("seriennummer"), t),
+        _row(t["label.server_ok"], data["server_ok"], t), _row(t["label.netz"], host.get("netz"), t),
+        _row(t["label.dns"], host.get("dns"), t), _row(t["label.zeit_synchron"], host.get("zeit_synchron"), t),
+        _row(t["label.zigbee_stick"], data["zigbee_stick"], t), _row(t["label.regelung"], data["laufzeit"], t),
     ])
     abgelehnt = data.get("konfiguration_abgelehnt")
-    hinweise = _liste("Hinweise", [eintrag.get("text", "") for eintrag in data.get("hinweise", [])])
-    meldungen = _liste("Meldungen des Geräts", [eintrag.get("text", "") for eintrag in data.get("meldungen", [])])
-    ablehnung = (f"<h2>Einrichtung abgelehnt</h2><p>{html.escape(abgelehnt)}</p>" if abgelehnt else "")
+    hinweise = _liste(t["abschnitt.hinweise"], [eintrag.get("text", "") for eintrag in data.get("hinweise", [])])
+    meldungen = _liste(t["abschnitt.meldungen"], [eintrag.get("text", "") for eintrag in data.get("meldungen", [])])
+    ablehnung = (f"<h2>{html.escape(t['abschnitt.abgelehnt'])}</h2><p>{html.escape(abgelehnt)}</p>" if abgelehnt else "")
     claim = ""
+    uebernehmen = html.escape(t["abschnitt.uebernehmen"])
+    code_hinweise = lokale_texte.gruppe(sprache, "code_hinweis")
     if data.get("code"):
         code = html.escape(data["code"])
-        claim = (f"<h2>Gerät übernehmen</h2><p>Gerät: <strong>{html.escape(str(data.get('geraet')))}</strong></p>"
-                 f"<p>Übernahme-Code: <strong>{code}</strong></p>")
-    elif data.get("code_hinweis") in CODE_HINWEIS_TEXTE:
-        claim = f"<h2>Gerät übernehmen</h2><p>{html.escape(CODE_HINWEIS_TEXTE[data['code_hinweis']])}</p>"
+        claim = (f"<h2>{uebernehmen}</h2><p>{html.escape(t['label.geraet'])}: "
+                 f"<strong>{html.escape(str(data.get('geraet')))}</strong></p>"
+                 f"<p>{html.escape(t['label.code'])}: <strong>{code}</strong></p>")
+    elif data.get("code_hinweis") in code_hinweise:
+        claim = f"<h2>{uebernehmen}</h2><p>{html.escape(code_hinweise[data['code_hinweis']])}</p>"
+    titel = html.escape(t["titel"])
     return (
-        '<!doctype html><html lang="de"><head><meta charset="utf-8">'
+        f'<!doctype html><html lang="{sprache}"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f'<meta http-equiv="refresh" content="{REFRESH_SECONDS}"><title>SmartHeat-Gateway</title>'
+        f'<meta http-equiv="refresh" content="{REFRESH_SECONDS}"><title>{titel}</title>'
         "<style>body{font-family:sans-serif;margin:16px;max-width:640px}th{text-align:left;padding-right:12px}</style>"
-        f"</head><body><h1>SmartHeat-Gateway</h1><table>{rows}</table>{ablehnung}{hinweise}{meldungen}{claim}"
+        f"</head><body><h1>{titel}</h1><table>{rows}</table>{ablehnung}{hinweise}{meldungen}{claim}"
         "</body></html>"
     )
 
 
-ANMELDUNG_MELDUNGEN = {
-    "falsch": "Das Passwort ist falsch.",
-    "gesperrt": "Zu viele Fehlversuche. Bitte später erneut versuchen.",
-    "belegt": "Es läuft gerade eine andere Anmeldung. Bitte gleich erneut versuchen.",
-    "kein_werk": "Dieses Gerät ist nicht bespielt; eine Anmeldung ist nicht möglich.",
-}
-
-
-def render_anmeldung(ergebnis: str | None = None) -> str:
+def render_anmeldung(ergebnis: str | None = None, sprache: str = lokale_texte.STANDARD) -> str:
     """Das Anmeldeformular: nur das Passwort, keine Daten des Geraets, keine Version."""
-    meldung = f"<p>{html.escape(ANMELDUNG_MELDUNGEN[ergebnis])}</p>" if ergebnis in ANMELDUNG_MELDUNGEN else ""
+    sprache = sprache if sprache in lokale_texte.SPRACHEN else lokale_texte.STANDARD
+    t = lokale_texte.alle(sprache)
+    meldungen = lokale_texte.gruppe(sprache, "anmeldung")
+    meldung = f"<p>{html.escape(meldungen[ergebnis])}</p>" if ergebnis in meldungen else ""
+    titel = html.escape(t["titel"])
     return (
-        '<!doctype html><html lang="de"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1"><title>SmartHeat-Gateway</title>'
+        f'<!doctype html><html lang="{sprache}"><head><meta charset="utf-8">'
+        f'<meta name="viewport" content="width=device-width, initial-scale=1"><title>{titel}</title>'
         "<style>body{font-family:sans-serif;margin:16px;max-width:640px}</style></head><body>"
-        f"<h1>SmartHeat-Gateway</h1>{meldung}"
-        '<form method="post" action="/anmelden"><p><label>Passwort (siehe Etikett am Gerät) '
+        f"<h1>{titel}</h1>{meldung}"
+        f'<form method="post" action="/anmelden"><p><label>{html.escape(t["formular.passwort"])} '
         '<input type="password" name="passwort" maxlength="128" autocomplete="current-password" autofocus></label></p>'
-        '<p><button type="submit">Anmelden</button></p></form></body></html>'
+        f'<p><button type="submit">{html.escape(t["formular.knopf"])}</button></p></form></body></html>'
     )
 
 
@@ -337,6 +330,10 @@ def start_server(
                     return True
             return False
 
+        def _sprache(self) -> str:
+            """de oder en nach Accept-Language (sonst en); der Kopf selbst wird nie ausgegeben."""
+            return lokale_texte.sprache_waehlen(self.headers.get("Accept-Language"))
+
         def _zugelassen(self) -> bool:
             """Client im privaten Netz und erlaubter Host-Header (auch der Hostname aus werk.json); sonst 403."""
             if not client_allowed(self.client_address[0]):
@@ -361,7 +358,7 @@ def start_server(
             if not self._zugelassen():
                 return
             if self.path == "/anmelden" and not nur_health:
-                self._seite(200, render_anmeldung())
+                self._seite(200, render_anmeldung(None, self._sprache()))
                 return
             if self.path not in (("/healthz",) if nur_health else ("/", "/healthz")):
                 if nur_health or self._angemeldet():
@@ -383,7 +380,7 @@ def start_server(
                 return
             werk = zugang.werk() if zugang is not None else None
             data = {**data, "seriennummer": werk["seriennummer"] if werk is not None else None}
-            self._seite(200, render_html(data))
+            self._seite(200, render_html(data, self._sprache()))
 
         def do_POST(self):
             if not self._zugelassen():
@@ -432,7 +429,7 @@ def start_server(
                 logger.warning("Anmeldung fehlgeschlagen von %s", self.client_address[0])  # nie die Eingabe
             code = {"falsch": 401, "gesperrt": 429, "belegt": 429, "kein_werk": 503}[ergebnis]
             warten = (("Retry-After", str(zugang.pruefstelle.sperre_rest() if ergebnis == "gesperrt" else 1)),)
-            self._seite(code, render_anmeldung(ergebnis), warten if code == 429 else ())
+            self._seite(code, render_anmeldung(ergebnis, self._sprache()), warten if code == 429 else ())
 
     server = _BegrenzterServer(("0.0.0.0", port), Handler, MAX_VERBINDUNGEN)
     threading.Thread(target=server.serve_forever, name="diagnose", daemon=True).start()

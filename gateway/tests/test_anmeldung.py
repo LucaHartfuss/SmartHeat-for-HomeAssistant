@@ -415,8 +415,8 @@ def test_ein_fremdes_oder_abgelaufenes_cookie_gilt_nicht(seite):
 
 
 def test_falsches_passwort_zaehlt(seite, pruefer):
-    status, koerper, kopf = seite.anmelden("falsch")
-    assert status == 401 and b"falsch" in koerper and "Set-Cookie" not in kopf
+    status, koerper, kopf = seite.anmelden("falsch", kopf_zusatz={"Accept-Language": "de"})
+    assert status == 401 and b"Das Passwort ist falsch" in koerper and "Set-Cookie" not in kopf
     assert pruefer.aufrufe == 1
     for _ in range(3):
         assert seite.anmelden("falsch")[0] == 401

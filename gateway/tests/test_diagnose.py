@@ -5,6 +5,7 @@ gueltigen Sitzung (COOKIE), der Gesundheitsserver braucht keine."""
 import contextlib
 import http.client
 import json
+import re
 import socket
 import threading
 import time
@@ -19,17 +20,19 @@ from smartheat_core import dateien
 from smartheat_device import wire
 from smartheat_device.host import Anzeige
 from smartheat_gateway import diagnose as diagnostics
+from smartheat_gateway import lokale_texte
 from smartheat_gateway.anmeldung import Zugang
 from smartheat_gateway.diagnose import (
-    ZUSTAND_TEXTE,
     host_allowed,
     parse_hostnames,
+    render_anmeldung,
     render_html,
     seite,
     start_server,
 )
 from smartheat_gateway.paths import Paths
 
+ZUSTAND_TEXTE = lokale_texte.gruppe("de", "zustand")
 ZUGANG = Zugang(Path("/gibt/es/nicht/werk.json"))  # ohne Werk; die Sitzung genuegt fuer die Seite
 COOKIE = f"shg_sitzung={ZUGANG.sitzungen.neu()}"
 SNAPSHOT = {
@@ -83,8 +86,8 @@ def test_the_page_has_no_qr_code_and_no_portal_link_with_the_code():
 
 @pytest.mark.parametrize("zustand", ["gesperrt", "update_noetig"])
 def test_blocking_states_are_explained_on_the_page(zustand):
-    page = render_html({**SNAPSHOT, "zustand": zustand, "code": None})
-    assert ZUSTAND_TEXTE[zustand] in page
+    page = render_html({**SNAPSHOT, "zustand": zustand, "code": None}, "de")
+    assert ZUSTAND_TEXTE[zustand] in page and lokale_texte.gruppe("en", "zustand")[zustand] not in page
 
 
 def test_page_lists_hints_own_messages_and_a_rejected_configuration():
@@ -601,3 +604,130 @@ def test_a_flood_of_connections_with_huge_headers_keeps_the_memory_of_the_proces
         server.server_close()
     assert not any(faden.is_alive() for faden in faeden)
     assert spitze < 16 * 1024 * 1024, spitze
+
+
+# --- Sprache der Seite: Accept-Language waehlt nur de oder en, der Kopf wird nie ausgegeben ---
+
+LANG_RE = re.compile(r'<html lang="(de|en)">')
+VOLL = {**SNAPSHOT, "eingerichtet": True, "zustand": "regelt", "code": None, "seriennummer": "SHG-0001",
+        "host": {"netz": True, "dns": False, "zeit_synchron": None}, "laufzeit": "ok",
+        "hinweise": [{"key": "a", "text": "Hinweistext"}], "meldungen": [{"key": "b", "text": "Meldungstext"}],
+        "konfiguration_abgelehnt": "Ablehnungstext"}
+
+
+@pytest.mark.parametrize(("kopf", "erwartet"), [
+    (None, "en"), ("", "en"), ("de", "de"), ("DE", "de"), ("en", "en"), ("de-AT", "de"), ("en-GB", "en"),
+    ("de-DE,de;q=0.9,en;q=0.8", "de"), ("en;q=0.4, de;q=0.9", "de"), ("de;q=0.4, en;q=0.9", "en"),
+    ("fr, en;q=0.5", "en"), ("fr, de;q=0.5", "de"), ("fr", "en"), ("*", "en"), ("de;q=0", "en"),
+    ("de;q=0, en;q=0.1", "en"), ("de;q=abc", "en"), ("de;q=1.5", "en"), ("deutsch", "en"), ("d e", "en"),
+    ("de;q=0.5, en;q=0.5", "de"), ("en;q=0.5, de;q=0.5", "en"), (" de ; q=0.7 ", "de"),
+    ("x" * 5000 + ", de", "en"), (",".join(["fr"] * 400) + ", de", "en"), ("de\x00", "en"),
+])
+def test_accept_language_waehlt_nur_de_oder_en(kopf, erwartet):
+    assert lokale_texte.sprache_waehlen(kopf) == erwartet
+
+
+@pytest.mark.parametrize(("davor", "erwartet"), [(31, "de"), (32, "en"), (40, "en")])
+def test_accept_language_zaehlt_nur_die_ersten_32_eintraege(davor, erwartet):
+    kopf = ",".join(["fr"] * davor + ["de"])
+    assert len(kopf) < lokale_texte.KOPF_MAX_ZEICHEN
+    assert lokale_texte.sprache_waehlen(kopf) == erwartet
+
+
+def test_schluessel_de_gleich_en_und_nur_einfache_platzhalter():
+    de, en = lokale_texte.alle("de"), lokale_texte.alle("en")
+    assert de.keys() == en.keys() and de
+    for sprache in (de, en):
+        for schluessel, text in sprache.items():
+            assert text.strip(), schluessel
+            assert "{" not in text and "}" not in text, schluessel  # {produkt} ist eingesetzt, sonst nichts
+            assert "<" not in text and "&" not in text, schluessel
+    assert "SmartHeat" in de["titel"] and "SmartHeat" in en["titel"]
+    rohe = json.loads((Path(lokale_texte.__file__).parent / "lokale_texte.json").read_text(encoding="utf-8"))
+    assert set(rohe) == {"de", "en"}
+    for sprache in rohe.values():
+        for text in sprache.values():
+            assert set(re.findall(r"\{[^}]*\}", text)) <= {"{produkt}"}
+
+
+def test_jeder_zustand_und_jedes_anmeldeergebnis_hat_einen_text_in_beiden_sprachen():
+    for sprache in ("de", "en"):
+        assert set(lokale_texte.gruppe(sprache, "zustand")) == set(wire.ZUSTAENDE)
+        assert set(lokale_texte.gruppe(sprache, "anmeldung")) == {"falsch", "gesperrt", "belegt", "kein_werk"}
+        assert set(lokale_texte.gruppe(sprache, "code_hinweis")) == {"keine_verbindung", "uebernommen"}
+
+
+def _gerippe(page: str) -> list[str]:
+    """Nur die Tags in Reihenfolge, ohne Text und ohne den Wert von lang."""
+    return [re.sub(r' lang="(de|en)"', "", tag) for tag in re.findall(r"<[^>]+>", page)]
+
+
+def test_de_und_en_zeigen_dieselben_angaben_in_derselben_Gestalt():
+    """Keine neue Angabe auf der Seite: gleiche Tags, gleiche Werte (Seriennummer, Code, Geraete-ID), nur die Sprache."""
+    for data in (VOLL, SNAPSHOT, {**SNAPSHOT, "code": None, "code_hinweis": "uebernommen"},
+                 {**SNAPSHOT, "code": None, "code_hinweis": "keine_verbindung", "zustand": "keine_verbindung"}):
+        de, en = render_html(data, "de"), render_html(data, "en")
+        assert _gerippe(de) == _gerippe(en)
+        assert LANG_RE.search(de).group(1) == "de" and LANG_RE.search(en).group(1) == "en"
+        assert de != en
+        for wert in ("ABCDEFGHJKLM", "shg-abcdefghijklmnop", "SHG-0001"):
+            assert (wert in de) == (wert in en) and de.count(wert) == en.count(wert)
+        for text in ("Hinweistext", "Meldungstext", "Ablehnungstext"):
+            assert (text in de) == (text in en)
+        assert "{produkt}" not in de and "{produkt}" not in en
+
+
+def test_die_seite_ohne_sprache_ist_englisch_und_mit_de_deutsch():
+    assert LANG_RE.search(render_html(VOLL)).group(1) == "en"
+    assert "Eingerichtet" not in render_html(VOLL) and "Set up" in render_html(VOLL)
+    de = render_html(VOLL, "de")
+    assert "Eingerichtet" in de and ">ja<" in de and ">nein<" in de and ">unbekannt<" in de
+    en = render_html(VOLL, "en")
+    assert ">yes<" in en and ">no<" in en and ">unknown<" in en and "ja" not in re.sub(r"<[^>]+>", " ", en).split()
+
+
+def test_die_anmeldeseite_gibt_es_in_beiden_sprachen():
+    for ergebnis in (None, "falsch", "gesperrt", "belegt", "kein_werk"):
+        de, en = render_anmeldung(ergebnis, "de"), render_anmeldung(ergebnis, "en")
+        assert _gerippe(de) == _gerippe(en) and de != en
+        assert LANG_RE.search(de).group(1) == "de" and LANG_RE.search(en).group(1) == "en"
+    assert "Passwort" in render_anmeldung(None, "de") and "Password" in render_anmeldung(None, "en")
+    assert LANG_RE.search(render_anmeldung()).group(1) == "en"
+
+
+def _mit_sprache(port: int, pfad: str, accept: str | None, method: str = "GET", body: bytes | None = None):
+    kopf = {"Cookie": COOKIE}
+    if accept is not None:
+        kopf["Accept-Language"] = accept
+    if body is not None:
+        kopf["Content-Type"] = "application/x-www-form-urlencoded"
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        connection.request(method, pfad, body=body, headers=kopf)
+        antwort = connection.getresponse()
+        return antwort.status, antwort.read().decode()
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(("accept", "erwartet"), [
+    (None, "en"), ("de", "de"), ("de-DE,de;q=0.9,en;q=0.8", "de"), ("fr, en;q=0.5", "en"), ("fr", "en"),
+    ("en, de;q=0.1", "en"),
+])
+def test_die_seite_folgt_dem_kopf_ueber_http(lan_server, accept, erwartet):
+    for pfad in ("/", "/anmelden"):
+        status, page = _mit_sprache(lan_server.port, pfad, accept)
+        assert status == 200 and LANG_RE.search(page).group(1) == erwartet
+    status, page = _mit_sprache(lan_server.port, "/anmelden", accept, "POST", b"passwort=x")
+    assert LANG_RE.search(page).group(1) == erwartet  # auch die Antwort auf eine Anmeldung (hier ohne Werk: 503)
+
+
+@pytest.mark.parametrize("fremd", [
+    '"><script>alert(1)</script>', "xx-ZZ-evil", "de\"; onload=\"x", "FR-ch;q=0.9, <b>fett</b>", "../../etc/passwd",
+])
+def test_der_sprachkopf_wird_nie_ausgegeben(lan_server, fremd):
+    for pfad in ("/", "/anmelden"):
+        status, page = _mit_sprache(lan_server.port, pfad, fremd)
+        assert status == 200 and LANG_RE.search(page).group(1) == "en"
+        assert fremd not in page and "evil" not in page and "<script" not in page and "fett" not in page
+    assert "Accept-Language" not in page

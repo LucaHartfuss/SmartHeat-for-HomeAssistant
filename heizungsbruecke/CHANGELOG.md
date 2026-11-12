@@ -5,6 +5,12 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 ## Unveröffentlicht
 
+- Die Dokumentation (Abschnitt „Entfernen“) nennt jetzt die Reihenfolge zum vollständigen Entfernen (Eintrag löschen,
+  „Abgemeldet“ im Portal abwarten, Add-on deinstallieren, Integration in HACS entfernen), die Warnung vor der falschen
+  Reihenfolge und das Löschen der Hilfssensoren von Hand nach hartem Entfernen.
+- Das Status-Ereignis für die Integration trägt zwei weitere Anlagenfelder: die Notify-Dienste der Handys für den Push
+  (`benachrichtigung`, nur Dienste `notify.mobile_app_…`, höchstens 10) und die stummgeschalteten Hinweis-Kategorien
+  (`hinweise_aus`). Ohne Konfiguration sind beide Listen leer.
 - Uhrbeurteilung genauer: Ein Sprung der Systemuhr innerhalb von 30 Sekunden nach einer „synchron“-Meldung des
   Zeitdienstes nimmt jetzt das Vertrauen in die Uhr (der Beleg stammt vom Zeitpunkt der Antwort, nicht des Aufrufs);
   zur Zeitumstellung gilt die tatsächlich vergangene Zeit, kein Sprung. Die kritische Mindestversion im Status-Ereignis
