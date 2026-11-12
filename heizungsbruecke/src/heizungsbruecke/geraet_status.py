@@ -1,7 +1,8 @@
 """Status-Ereignis des HA-Add-ons: smartheat_status Schema 4 = die Felder der Anlage aus dem Laufzeit-Status
 (Schema 2, smartheat_runtime.status, unveraendert fuer Gateway und up/status), Geraet (ID, Zustand, Verbindung),
 Anlagenname, Version des Konfigurationsdokuments und dessen kritische Mindestversion der Integration, Hinweise fuer die
-Reparatur-Hinweise der Integration, dazu `kreise`: je Kreis der Konfiguration
+Reparatur-Hinweise der Integration, die Ziele des Push (`benachrichtigung`, nur Handy-Dienste, hoechstens 10) und die
+stummgeschalteten Hinweis-Kategorien (`hinweise_aus`) der Bindung, dazu `kreise`: je Kreis der Konfiguration
 Name, Raum (Ist, wirksamer Soll aus dem Soll-Speicher), die Kreisfelder der Laufzeit (Boost, Abo, Hebel, Zustand,
 Kaelteschutz ...) und die Felder des Anzeige-Dokuments. Nie der Uebernahme-Code (der steht nur in der Discovery):
 ins Ereignis kommen nur die benannten Felder, nie ein ganzes Objekt der Quellen. Der Kreisname ist ein
@@ -14,18 +15,23 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 
+from heizungsbruecke import dokument as ha_dokument
 from heizungsbruecke.ha_sinks import EVENT_TYPE
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import kreisansicht
+from smartheat_core.config_check import HA_DIENST, HA_HINWEISE
 from smartheat_device.documents import Dokument
 from smartheat_device.host import Anzeige
 from smartheat_runtime import status
+from smartheat_runtime.dokument_config import ConfigError
 
 logger = logging.getLogger(__name__)
 
 EVENT_SCHEMA = 4
 GERAET_FIELDS = ("geraet_id", "geraet_zustand", "server_verbunden", "geraet_hinweise", "anlage_name",
-                 "konfig_version", "mindest_integration")
+                 "konfig_version", "mindest_integration", "benachrichtigung", "hinweise_aus")
+#: Hoechstzahl der Notify-Dienste im Ereignis: was darueber liegt, geht nie hinaus (die Integration pusht an diese Ziele).
+MAX_ZIELE = 10
 #: Form der kritischen Mindestversion der Integration im Ereignis (wortgleich mit der Pruefung der Integration): drei
 #: Ziffernfolgen (nur ASCII-Ziffern), hoechstens eine Endung (`-`/`+` mit Buchstaben und Ziffern oder `.dev` mit Zahl),
 #: hoechstens 32 Zeichen; was nicht passt, geht nie ins Ereignis (kein Freitext des Servers, keine Domain-Endung).
@@ -78,12 +84,28 @@ def _mindest_integration(konf: Mapping | None) -> str | None:
     return wert if isinstance(wert, str) and MINDEST_INTEGRATION_RE.fullmatch(wert) else None
 
 
+def _ziele(konf: Mapping | None) -> tuple[list[str], list[str]]:
+    """Ziele des Push und stummgeschaltete Hinweis-Kategorien der Bindung (anlagenweit: die des ersten Kreises, wie sie
+    der Host fuer die Senke liest). Nur Handy-Dienste nach `HA_DIENST` (hoechstens `MAX_ZIELE`) und Kategorien aus
+    `HA_HINWEISE`, jeweils ohne Doppelte und in der Reihenfolge des Dokuments; Verworfenes wird nicht protokolliert (die
+    Dienstnamen sind Kundendaten). Ohne Dokument oder mit unlesbarer Bindung beide Listen leer."""
+    try:
+        bindung = ha_dokument.bindung(konf)
+    except ConfigError:
+        return [], []
+    dienste = list(dict.fromkeys(d for d in bindung.benachrichtigung if HA_DIENST.fullmatch(d)))
+    kategorien = list(dict.fromkeys(h for h in bindung.hinweise_aus if h in HA_HINWEISE))
+    return dienste[:MAX_ZIELE], kategorien
+
+
 def lokale_sicht(konfiguration: Callable[[], Dokument | None], soll: Callable[[int], float | None],
                  raum_ist: Callable[[int], float | None], anzeige: Callable[[], Mapping | None]) -> Callable[[], dict]:
     """Die lokale Sicht des Ereignisses: Anlagenname, Version des Konfigurationsdokuments und dessen kritische
     Mindestversion der Integration (beide null ohne Dokument bzw. ohne gueltigen Wert) und je Kreis der Konfiguration
     Name, Soll (Soll-Speicher), Ist des Raums und die Felder des Anzeige-Dokuments (heute ohne Befund: null/null/[]).
-    Version und Inhalt kommen aus einem Dokument, damit sie zusammenpassen. Liest nur, ohne Sperre."""
+    Version und Inhalt kommen aus einem Dokument, damit sie zusammenpassen. Dazu die Ziele des Push (`benachrichtigung`)
+    und die stummgeschalteten Hinweis-Kategorien (`hinweise_aus`) der Bindung, leer ohne Dokument. Liest nur, ohne
+    Sperre."""
     def sicht() -> dict:
         dokument_konf = konfiguration()
         konf = dokument_konf.inhalt if dokument_konf is not None else None
@@ -104,8 +126,10 @@ def lokale_sicht(konfiguration: Callable[[], Dokument | None], soll: Callable[[i
                 "testphase_bis": angezeigt.get("testphase_bis"), "befunde": list(befunde) if isinstance(befunde, list) else [],
             }
         name = konf.get("anlage_name") if isinstance(konf, Mapping) else None
+        dienste, kategorien = _ziele(konf)
         return {"anlage_name": name if isinstance(name, str) else None, "konfig_version": _version(dokument_konf),
-                "mindest_integration": _mindest_integration(konf), "kreise": kreise}
+                "mindest_integration": _mindest_integration(konf), "benachrichtigung": dienste,
+                "hinweise_aus": kategorien, "kreise": kreise}
     return sicht
 
 
@@ -165,7 +189,9 @@ class GeraetStatus:
                 "server_verbunden": anzeige.server_ok if anzeige is not None else False,
                 "geraet_hinweise": hinweise(anzeige) if anzeige is not None else [],
                 "anlage_name": lokal["anlage_name"], "konfig_version": lokal["konfig_version"],
-                "mindest_integration": lokal["mindest_integration"], "kreise": kreise}
+                "mindest_integration": lokal["mindest_integration"],
+                "benachrichtigung": list(lokal.get("benachrichtigung") or ()),
+                "hinweise_aus": list(lokal.get("hinweise_aus") or ()), "kreise": kreise}
 
     def _senden(self, *, force: bool) -> None:
         with self._senden_lock:

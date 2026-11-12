@@ -5,7 +5,7 @@ import threading
 import time
 
 from fakes import FakeClock, FakeHa
-from geraet_helpers import Device, _host, _register, konfiguration_aus_optionen
+from geraet_helpers import Device, _host, _register, ha_konfiguration, konfiguration_aus_optionen
 from runtime_helpers import OPTIONS
 
 from heizungsbruecke import geraet_status
@@ -454,3 +454,90 @@ def test_ein_folgeereignis_nach_neuer_dokumentversion_traegt_die_neue_version():
     stand[0] = _dokument(8, {"mindest_integration": "1.3.0", "kreise": [{"kreis": 1, "name": "Wohnen"}]})
     sink.anzeige(_anzeige())  # nur die Version hat sich geaendert: inhaltliche Aenderung, wird gesendet
     assert [(d["konfig_version"], d["mindest_integration"]) for _, d in ha.events] == [(7, "1.2.0"), (8, "1.3.0")]
+
+
+# --- Ziele des Push und Stummschaltung (Felder der Anlage) ---
+
+
+def _sicht_bindung(**bindung):
+    """Lokale Sicht eines gueltigen Konfigurationsdokuments, dessen Bindung die genannten Felder ueberschreibt."""
+    return _sicht(ha_konfiguration(bindung=bindung))
+
+
+def test_die_lokale_sicht_traegt_ziele_und_stummschaltung_aus_der_bindung():
+    sicht = _sicht_bindung(benachrichtigung=["notify.mobile_app_handy", "notify.mobile_app_tablet"],
+                           hinweise_aus=["batterie", "schreibbudget"])
+    assert sicht["benachrichtigung"] == ["notify.mobile_app_handy", "notify.mobile_app_tablet"]
+    assert sicht["hinweise_aus"] == ["batterie", "schreibbudget"]
+
+
+def test_ohne_konfiguration_oder_ohne_felder_sind_beide_listen_leer():
+    assert (_sicht(None)["benachrichtigung"], _sicht(None)["hinweise_aus"]) == ([], [])
+    assert (_sicht({"kreise": []})["benachrichtigung"], _sicht({"kreise": []})["hinweise_aus"]) == ([], [])
+    leer = _sicht_bindung(benachrichtigung=[], hinweise_aus=[])
+    assert (leer["benachrichtigung"], leer["hinweise_aus"]) == ([], [])
+
+
+def test_eine_bindung_mit_unbekanntem_hebelsatz_gibt_leere_listen_und_wirft_nicht():
+    konfiguration = ha_konfiguration()
+    konfiguration["kreise"][0]["hebelsatz"] = "gibt_es_nicht"
+    sicht = _sicht(konfiguration)
+    assert (sicht["benachrichtigung"], sicht["hinweise_aus"]) == ([], [])
+
+
+def test_nur_handy_dienste_kommen_ins_ereignis_und_ihre_zahl_ist_begrenzt():
+    dienste = ["notify.email", "notify.mobile_app_Handy", "notify.mobile_app_", "mobile_app_x", "notify.mobile_app_ok",
+               "notify.mobile_app_ok", "notify.mobile_app_x y", 5, None]
+    assert _sicht_bindung(benachrichtigung=dienste)["benachrichtigung"] == ["notify.mobile_app_ok"]
+    viele = [f"notify.mobile_app_h{nr}" for nr in range(15)]
+    assert _sicht_bindung(benachrichtigung=viele)["benachrichtigung"] == viele[:10]
+
+
+def test_nur_bekannte_kategorien_kommen_in_hinweise_aus_und_keine_doppelten():
+    sicht = _sicht_bindung(hinweise_aus=["batterie", "notbetrieb", "zugang", "batterie", "quatsch", ["raumfuehler"]])
+    assert sicht["hinweise_aus"] == ["batterie"]
+
+
+def test_ein_ungueltiger_dienst_steht_nie_im_log_und_das_ereignis_wird_gesendet(caplog):
+    ha = FakeHa()
+    lokal = geraet_status.lokale_sicht(
+        lambda: Dokument("konfiguration", 1, ha_konfiguration(bindung={"benachrichtigung": ["notify.GeheimerDienst"]})),
+        lambda n: 20.0, lambda n: 19.0, lambda: None)
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, lokal, laufzeit_merken=lambda e: None)
+    with caplog.at_level(logging.DEBUG):
+        sink.anzeige(_anzeige())
+    assert ha.events[-1][1]["benachrichtigung"] == []
+    assert "GeheimerDienst" not in caplog.text
+
+
+def test_das_ereignis_traegt_die_felder_nach_dem_anlagennamen_und_gibt_die_listen_der_lokalen_sicht_weiter():
+    felder = list(geraet_status.EVENT_FIELDS)
+    assert {"benachrichtigung", "hinweise_aus"} <= set(felder)
+    assert felder.index("mindest_integration") < felder.index("benachrichtigung") < felder.index("hinweise_aus")
+    ha = FakeHa()
+    lokal = {**_lokal()(), "benachrichtigung": ["notify.mobile_app_handy"], "hinweise_aus": ["batterie"]}
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, lambda: lokal, laufzeit_merken=lambda e: None)
+    sink.anzeige(_anzeige())
+    data = ha.events[-1][1]
+    assert (data["benachrichtigung"], data["hinweise_aus"]) == (["notify.mobile_app_handy"], ["batterie"])
+    assert set(data) == set(felder)
+
+
+def test_eine_lokale_sicht_ohne_die_felder_ergibt_leere_listen_im_ereignis():
+    ha = FakeHa()
+    sink, _ = _status(ha)  # die Sicht des Helfers kennt beide Felder nicht (Mischstand)
+    sink.anzeige(_anzeige())
+    data = ha.events[-1][1]
+    assert (data["benachrichtigung"], data["hinweise_aus"]) == ([], [])
+
+
+def test_eine_aenderung_der_ziele_ist_eine_inhaltliche_aenderung_und_wird_gesendet():
+    ha = FakeHa()
+    stand = {"benachrichtigung": [], "hinweise_aus": []}
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, lambda: {**_lokal()(), **stand}, laufzeit_merken=lambda e: None)
+    sink.anzeige(_anzeige())
+    sink.anzeige(_anzeige())
+    assert len(ha.events) == 1
+    stand["benachrichtigung"] = ["notify.mobile_app_handy"]
+    sink.anzeige(_anzeige())
+    assert [d["benachrichtigung"] for _, d in ha.events] == [[], ["notify.mobile_app_handy"]]

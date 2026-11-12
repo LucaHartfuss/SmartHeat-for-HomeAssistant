@@ -27,6 +27,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -78,6 +82,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -145,6 +153,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -196,6 +208,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -289,6 +305,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -405,6 +425,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -535,6 +559,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -666,6 +694,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -803,6 +835,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -857,6 +893,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -995,6 +1035,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -1155,6 +1199,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -1291,6 +1339,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -1418,6 +1470,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -1549,6 +1605,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -1681,6 +1741,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -1777,6 +1841,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -1926,6 +1994,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -2010,6 +2082,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -2168,6 +2244,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -2270,6 +2350,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -2384,6 +2468,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -2461,6 +2549,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -2538,6 +2630,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -2615,6 +2711,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -2692,6 +2792,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -2769,6 +2873,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -2846,6 +2954,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -2923,6 +3035,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -3000,6 +3116,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -3097,6 +3217,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -3159,6 +3283,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -3236,6 +3364,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -3364,6 +3496,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -3449,6 +3585,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -3582,6 +3722,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -3638,6 +3782,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -3698,6 +3846,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -3777,6 +3929,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -3910,6 +4066,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -3983,6 +4143,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -4123,6 +4287,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -4264,6 +4432,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -4324,6 +4496,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -4465,6 +4641,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -4568,6 +4748,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -4707,6 +4891,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
@@ -4776,6 +4964,10 @@
      "anlage_name": "Testanlage",
      "konfig_version": 1,
      "mindest_integration": null,
+     "benachrichtigung": [
+      "notify.mobile_app_handy"
+     ],
+     "hinweise_aus": [],
      "kreise": [
       {
        "kreis": 1,
