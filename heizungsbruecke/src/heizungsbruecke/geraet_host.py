@@ -21,6 +21,7 @@ from heizungsbruecke import config, dokument, inventur
 from heizungsbruecke.discovery import Discovery
 from heizungsbruecke.geraet_status import GeraetStatus
 from heizungsbruecke.ha_sinks import GeraetUndHaSink, HaNotifySink
+from heizungsbruecke.integration_stand import IntegrationStand
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_device import fehler, nachrichten, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Outcome, Waiting
@@ -55,6 +56,7 @@ class HaDeviceHost(GeraetHostBasis):
         self.discovery: Discovery | None = None  # Supervisor-Meldung (__main__.verdrahten)
         self.claim_code: Callable[[], str | None] = lambda: None  # Uebernahme-Code des Geraets (__main__.verdrahten)
         self.runtime_status_event: dict | None = None  # letztes Status-Ereignis der Laufzeit (laufzeit_merken)
+        self.integration_stand = IntegrationStand()  # Lebenszeichen der Integration (geraet_trigger.build)
         self._raeume: dict[int, dict | None] = {}  # je Kreis der Raum des letzten Takts
         self._uhr: tuple[float, bool | None] | None = None
 

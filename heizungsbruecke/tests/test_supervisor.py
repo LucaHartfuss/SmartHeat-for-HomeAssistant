@@ -89,3 +89,52 @@ def test_a_timeout_or_a_broken_connection_raises_the_request_error(monkeypatch, 
         api.discovery_anmelden({"geraet_id": "shg-a", "zustand": "uebernommen"})
     with pytest.raises(type(fehler)):
         api.discovery_entfernen("u-1")
+
+
+# --- Schalter „Automatisch aktualisieren“ des Add-ons ---
+
+@pytest.mark.parametrize("wert", [True, False])
+def test_addon_auto_update_reads_the_switch_of_the_own_addon(monkeypatch, wert):
+    calls = []
+    monkeypatch.setattr(requests, "get", lambda url, **kw: calls.append((url, kw)) or HttpAntwort(
+        {"result": "ok", "data": {"auto_update": wert, "version": "1.2.3"}}))
+    assert supervisor.SupervisorApi(token="t").addon_auto_update() is wert
+    assert calls[0][0] == "http://supervisor/addons/self/info"
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer t" and calls[0][1]["timeout"] == supervisor.TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize("body", [
+    {}, {"data": None}, {"data": {}}, {"data": {"auto_update": None}}, {"data": {"auto_update": "true"}},
+    {"data": {"auto_update": 1}}, {"data": {"auto_update": 0}}, {"data": {"auto_update": []}}, [], "text", None,
+])
+def test_addon_auto_update_without_a_usable_field_is_unknown(monkeypatch, body):
+    monkeypatch.setattr(requests, "get", lambda url, **kw: HttpAntwort(body))
+    assert supervisor.SupervisorApi(token="t").addon_auto_update() is None
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 500, 503])
+def test_addon_auto_update_without_access_or_service_is_unknown(monkeypatch, status):
+    """Ob die Rolle default /addons/self/info lesen darf, ist nicht belegt: ein Zugriffsfehler ist „unbekannt“, kein Absturz."""
+    monkeypatch.setattr(requests, "get", lambda url, **kw: HttpAntwort({"result": "error"}, status=status))
+    assert supervisor.SupervisorApi(token="t").addon_auto_update() is None
+
+
+@pytest.mark.parametrize("fehler", [requests.Timeout("Bearer t"), requests.ConnectionError("Bearer t"),
+                                    requests.exceptions.JSONDecodeError("kaputt", "doc", 0)])
+def test_addon_auto_update_without_an_answer_is_unknown_and_logs_no_token(monkeypatch, caplog, fehler):
+    def werfen(url, **kw):
+        raise fehler
+
+    monkeypatch.setattr(requests, "get", werfen)
+    with caplog.at_level("DEBUG"):
+        assert supervisor.SupervisorApi(token="geheim").addon_auto_update() is None
+    assert "geheim" not in caplog.text and "Bearer" not in caplog.text
+
+
+def test_addon_auto_update_with_a_broken_body_is_unknown(monkeypatch):
+    class KaputteAntwort(HttpAntwort):
+        def json(self):
+            raise ValueError("kein JSON")
+
+    monkeypatch.setattr(requests, "get", lambda url, **kw: KaputteAntwort({}))
+    assert supervisor.SupervisorApi(token="t").addon_auto_update() is None

@@ -139,6 +139,15 @@ def _antwort(welt, kreis, **hebel):
     welt.laufzeit.worker.run_pending()
 
 
+def test_das_lebenszeichen_der_integration_abonniert_nur_der_client_des_kleinsten_kreises(zwei):
+    welt = zwei()
+    abo = {"platform": "event", "event_type": "smartheat_integration"}
+    assert abo in _client(welt, 1).kwargs["triggers"] and abo not in _client(welt, 2).kwargs["triggers"]
+    _client(welt, 1).kwargs["on_trigger_event"]({"platform": "event", "event": {
+        "event_type": "smartheat_integration", "data": {"schema": 1, "version": "0.4.2", "v5_schemas": [4]}}})
+    assert welt.geraet.integration_stand.version(welt.env.clock()) == "0.4.2"
+
+
 def test_jeder_kreis_hat_seine_laufzeit_seinen_speicher_und_seine_ordner(zwei):
     welt = zwei(soll=(21.0, 22.5))
     eins, zwei_ = welt.laufzeit.kreise()[1], welt.laufzeit.kreise()[2]

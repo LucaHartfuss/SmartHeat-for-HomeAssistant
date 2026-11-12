@@ -3,13 +3,16 @@ die Soll-Entity (mit for: 10 s), ihren HVAC-Modus (Climate), das Raumfuehler-Mit
 smartheat_wunsch der Integration und den Tagestick. Der WS-Thread stellt nur Ereignisse in den Worker ein; dort
 entscheidet der Soll-Eingang (smartheat_runtime.soll_eingang, entprellen 0 s): Wunsch mit Herkunft (soll_entity bzw.
 ha) und durch (nutzer/automation aus dem HA-Kontext), Thermostat aus/Frostschutz, Angleichen der
-Soll-Entity (nur Climate ist schreibbar) ohne Echo."""
+Soll-Entity (nur Climate ist schreibbar) ohne Echo. Das Ereignis smartheat_integration (Lebenszeichen der Integration)
+geht nur in den Stand der Integration (integration_stand), nie in den Worker."""
 import logging
 import math
 import time
+from collections.abc import Callable
 from typing import TypeGuard
 
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
+from heizungsbruecke.integration_stand import IntegrationStand
 from smartheat_core.logtext import lesbar
 from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
 from smartheat_runtime.dokument_config import ConfigError
@@ -36,6 +39,8 @@ NACHLESEN_PUFFER_SECONDS = 1.0
 OHNE_ZAHL_LOG_SECONDS = 3600.0
 
 EREIGNIS_WUNSCH = "smartheat_wunsch"
+#: Lebenszeichen der Integration (Version und gelesene Status-Schemata), gelesen in integration_stand.
+EREIGNIS_INTEGRATION = "smartheat_integration"
 HERKUNFT_SOLL = "soll_entity"
 HERKUNFT_SMARTHEAT = "ha"
 
@@ -142,8 +147,11 @@ class HaSollQuelle:
 def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_ref: str | None, *,
           tagestick: str | None, wache_s: float, wunsch, soll_quelle_aus,
           quelle: HaSollQuelle | None = None, kreis: int = KREIS,
-          anlagenkreise: frozenset[int] | None = None) -> HaTriggerClient:
-    """kreis: der Heizkreis des Clients; ein Ereignis smartheat_wunsch gilt dem Kreis seiner Ereignisdaten (Pflicht;
+          anlagenkreise: frozenset[int] | None = None, integration_stand: IntegrationStand | None = None,
+          uhr: Callable[[], float] = time.monotonic) -> HaTriggerClient:
+    """integration_stand: nimmt das Lebenszeichen der Integration (Ereignis smartheat_integration, anlagenweit) auf, nach
+    der monotonen uhr; nur der Client, der ihn bekommt, abonniert das Ereignis (ohne Stand gibt es kein Abonnement).
+    kreis: der Heizkreis des Clients; ein Ereignis smartheat_wunsch gilt dem Kreis seiner Ereignisdaten (Pflicht;
     ohne gueltigen Kreis wird es verworfen) und erreicht nur den Client dieses Kreises. anlagenkreise: alle Kreise der
     Anlage; gilt ein Wunsch keinem davon, meldet das nur der Client des niedrigsten Kreises (sonst eine Meldung je Kreis). soll_ref: die echte Soll-Entity aus der Konfiguration (nicht manifest.refs["room_target"], das ist SOLL_REF).
     tagestick: Uhrzeit des taeglichen Ticks (HH:MM) oder None; wache_s: Takt des lokalen Checks (RuntimeConfig).
@@ -186,6 +194,8 @@ def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_r
             trigger["attribute"] = attribute
         triggers.append(trigger)
     triggers.append({"platform": "event", "event_type": EREIGNIS_WUNSCH})
+    if integration_stand is not None:
+        triggers.append({"platform": "event", "event_type": EREIGNIS_INTEGRATION})
     if tagestick:
         triggers.append({"platform": "time", "at": tagestick})
 
@@ -305,6 +315,10 @@ def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_r
         platform = trigger.get("platform")
         if platform == "event":
             event = trigger.get("event") or {}
+            if event.get("event_type") == EREIGNIS_INTEGRATION:
+                if integration_stand is not None:  # nur Version und Schemata; kein Wunsch, kein lokaler Check
+                    integration_stand.ereignis(event.get("data"), uhr())
+                return
             ziel = _wunsch_kreis(event.get("data"))
             if ziel is None:
                 logger.warning("Ereignis %s mit ungueltigem Kreis verworfen", EREIGNIS_WUNSCH)
