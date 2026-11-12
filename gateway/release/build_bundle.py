@@ -4,8 +4,9 @@ Bundle-Compose, in der die Gateway-Dienste das Image `smartheat-gateway@<Index-D
 Mosquitto und Zigbee2MQTT behalten ihre gepinnten Digests. Das Archiv kommt mit in den Bundle-Ordner
 (gateway-image.oci.tar), nach dem Einbau der Annotation `io.containerd.image.name`: so legt `docker load` auf dem Geraet
 das Image unter dem Namen der Compose-Datei an (die Blobs und damit der Index-Digest bleiben, die index.json liegt
-ausserhalb der Digests). Manifest mit Version, min_updater_version, SHA-256 der Dateien, Images und dem Feld `archiv`
-(Datei, SHA-256, Groesse, Name, Index-Digest). Mit `--system DATEI` kommt das signierte RAUC-System-Bundle (`system.raucb`,
+ausserhalb der Digests). Manifest mit Version, min_updater_version, `art` (sicherheit, funktion oder treiberfix), `ablauf`
+(UTC, Standard zwoelf Kalendermonate ab dem Bau; signieren.py setzt ihn beim Signieren neu), SHA-256 der Dateien, Images
+und dem Feld `archiv` (Datei, SHA-256, Groesse, Name, Index-Digest). Mit `--system DATEI` kommt das signierte RAUC-System-Bundle (`system.raucb`,
 von rauc_signieren.py) dazu: das Manifest bindet dann Datei, SHA-256, Groesse und `compatible` (`system`), und
 `min_updater_version` steigt auf 0.9.0 (ein aelterer Updater kennt den Systemwechsel nicht). Geprueft mit denselben
 Funktionen wie auf dem Geraet."""
@@ -17,14 +18,18 @@ import re
 import shutil
 import sys
 import tarfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, NoReturn
 
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "host"))  # Aufruf als Skript ohne PYTHONPATH
+from kalender import plus_monate  # noqa: E402
 from smartheat_host import bundles  # noqa: E402
 
+ABLAUF_MONATE = 12  # so lange gilt ein Manifest, wenn das Zertifikat nicht frueher endet
+ABLAUF_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 MIN_UPDATER_VERSION = "0.8.0"  # steigt nur, wenn sich das Manifest-Format aendert (0.8.0: Feld archiv)
 MIN_UPDATER_VERSION_SYSTEM = "0.9.0"  # Bundles mit Feld `system` (0.9.0: Systemwechsel); der Updater 0.8.0 nimmt die ohne an
 GATEWAY_SERVICES = ("init", "runtime")
@@ -122,9 +127,23 @@ def min_updater_version(system: bool) -> str:
     return MIN_UPDATER_VERSION_SYSTEM if system else MIN_UPDATER_VERSION
 
 
+def ablauf_text(moment: datetime) -> str:
+    """Der Ablauf als Text des Manifests: UTC, auf Sekunden abgeschnitten."""
+    return moment.astimezone(UTC).strftime(ABLAUF_FORMAT)
+
+
+def manifest_bytes(manifest: dict) -> bytes:
+    """Die Bytes, in denen das Manifest liegt (und die signiert werden): sortierte Schluessel, zwei Leerzeichen, Zeilenende."""
+    return json.dumps(manifest, indent=2, sort_keys=True).encode() + b"\n"
+
+
 def build(compose_path: Path, mosquitto_conf: Path, archive: Path, version: str, out: Path,
-          system: Path | None = None) -> dict:
+          system: Path | None = None, *, art: str, ablauf: datetime | None = None, jetzt: datetime | None = None) -> dict:
+    """Baut das Bundle nach `out`. `art` sagt, was das Bundle ist; `ablauf` (Standard: `jetzt` plus zwoelf Kalendermonate,
+    `jetzt` Standard: die Uhr) ist der Zeitpunkt, ab dem das Geraet es nicht mehr installiert."""
     bundles.parse_version(version)
+    if ablauf is None:
+        ablauf = plus_monate((jetzt or datetime.now(UTC)).astimezone(UTC), ABLAUF_MONATE)
     digest = oci_digest(archive)
     ref = f"{bundles.ARCHIVE_IMAGE}@{digest}"
     compose = render_compose(compose_path.read_text(), ref)
@@ -143,6 +162,7 @@ def build(compose_path: Path, mosquitto_conf: Path, archive: Path, version: str,
             if other != ref:
                 images[other.split("@", 1)[0].split("/")[-1].split(":")[0]] = other
         manifest = {"version": version, "min_updater_version": min_updater_version(system is not None),
+                    "art": art, "ablauf": ablauf_text(ablauf),
                     "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}, "images": images,
                     "archiv": {"datei": archiv.datei, "sha256": archiv.sha256, "bytes": archiv.bytes, "name": archiv.name,
                                "digest": archiv.digest}}
@@ -150,7 +170,7 @@ def build(compose_path: Path, mosquitto_conf: Path, archive: Path, version: str,
             shutil.copyfile(system, pending_system)
             manifest["system"] = {"datei": bundles.SYSTEM_NAME, "sha256": _sha256_file(pending_system),
                                   "groesse": pending_system.stat().st_size, "compatible": bundles.SYSTEM_COMPATIBLE}
-        raw = json.dumps(manifest, indent=2, sort_keys=True).encode() + b"\n"
+        raw = manifest_bytes(manifest)
         bundles.parse_manifest(raw)  # alles pruefen, bevor etwas Endgueltiges liegt
         for name, data in files.items():
             (out / name).write_bytes(data)
@@ -174,16 +194,26 @@ def _sha256_file(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def _ablauf_arg(text: str) -> datetime:
+    try:
+        return bundles.parse_ablauf(text)
+    except bundles.ManifestError as fehler:
+        raise argparse.ArgumentTypeError(str(fehler)) from None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compose", type=Path, required=True)
     parser.add_argument("--mosquitto-conf", type=Path, required=True)
     parser.add_argument("--archive", type=Path, required=True, help="OCI-Archiv des Gateway-Images (buildx type=oci)")
     parser.add_argument("--system", type=Path, help="signiertes RAUC-System-Bundle (rauc_signieren.py) fuer das Feld `system`")
+    parser.add_argument("--art", required=True, choices=bundles.ARTEN, help="was das Bundle ist")
+    parser.add_argument("--ablauf", type=_ablauf_arg, help="Ablauf JJJJ-MM-TTThh:mm:ssZ (Standard: zwoelf Monate ab jetzt)")
     parser.add_argument("--version", required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
-    manifest = build(args.compose, args.mosquitto_conf, args.archive, args.version, args.out, args.system)
+    manifest = build(args.compose, args.mosquitto_conf, args.archive, args.version, args.out, args.system, art=args.art,
+                     ablauf=args.ablauf)
     print(json.dumps(manifest["files"], indent=2))
     return 0
 

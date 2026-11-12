@@ -174,12 +174,16 @@ def _signierter_tag(werk, schluessel: Path | None = None):
 OPENSSL_ECHT = shutil.which("openssl") or "openssl"
 
 
-def _lauf(werk, *args, version=VERSION, umgebung=None, ohne_system=True):
-    """Ruft das Skript auf. Die meisten Tests pruefen das Container-Bundle: `ohne_system` haengt `--ohne-system` an."""
+def _lauf(werk, *args, version=VERSION, umgebung=None, ohne_system=True, art="funktion"):
+    """Ruft das Skript auf. Die meisten Tests pruefen das Container-Bundle: `ohne_system` haengt `--ohne-system` an.
+
+    `art` haengt `--art <art>` an, wenn die Argumente keine `--art` nennen; `art=None` laesst sie weg."""
     argumente = args or ("--schluessel", str(werk.kette / "release.key"), "--zertifikat", str(werk.kette / "release.crt"),
                          "--roots", str(werk.kette / "root.crt"), "--aus", str(werk.aus))
     if ohne_system:
         argumente = (*argumente, "--ohne-system")
+    if art is not None and "--art" not in argumente:
+        argumente = (*argumente, "--art", art)
     env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
            "PATH": f"{werk.bin}:{os.environ['PATH']}", "ATTRAPPE_LOGS": str(werk.logs), "PYTHON": sys.executable,
            "TMPDIR": str(werk.bin.parent), "ATTRAPPE_LOG": str(werk.logs / "rauc.log"),
@@ -206,6 +210,45 @@ def _pruefen(werk, bundle: Path, kette: Path | None = None) -> int:
 
 
 DATEIEN = ["docker-compose.yml", "gateway-image.oci.tar", "manifest.json", "manifest.json.sig", "mosquitto.conf"]
+
+
+def _probe(werk, **kwargs):
+    return _lauf(werk, "--probe", "--schluessel", str(werk.test_kette / "release.key"),
+                 "--zertifikat", str(werk.test_kette / "release.crt"), "--roots", str(werk.test_kette / "root.crt"),
+                 "--aus", str(werk.aus), **kwargs)
+
+
+@pytest.mark.parametrize("art", ["funktion", "treiberfix"])
+def test_die_art_der_anfrage_steht_im_signierten_manifest(werk, art):
+    ergebnis = _probe(werk, art=art)
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    manifest = json.loads((werk.aus / VERSION / "manifest.json").read_text())
+    assert manifest["art"] == art
+    assert manifest["ablauf"].endswith("Z")
+    assert _pruefen(werk, werk.aus / VERSION, werk.test_kette) == 0
+
+
+def test_ohne_art_exit_2_vor_jedem_aufruf(werk):
+    ergebnis = _probe(werk, art=None)
+    assert ergebnis.returncode == 2
+    assert _log(werk, "docker.log") == []
+    assert not werk.aus.exists()
+
+
+def test_unbekannte_art_exit_2_vor_jedem_aufruf(werk):
+    ergebnis = _probe(werk, art="wichtig")
+    assert ergebnis.returncode == 2
+    assert _log(werk, "docker.log") == []
+    assert not werk.aus.exists()
+
+
+def test_sicherheit_ohne_changelog_abschnitt_bricht_vor_der_signatur_ab(werk):
+    """Das Gate greift im Ablauf: die Version 9.9.9 hat keinen Abschnitt im Changelog, also nichts signiert, nichts hoch."""
+    ergebnis = _probe(werk, art="sicherheit")
+    assert ergebnis.returncode == 1
+    assert "Changelog" in ergebnis.stderr
+    assert not (werk.aus / VERSION / "manifest.json.sig").exists()
+    assert _log(werk, "scp.log") == []
 
 
 def test_release_lokal_probe_baut_und_signiert_ohne_upload(werk):

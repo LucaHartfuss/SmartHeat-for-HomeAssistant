@@ -5,16 +5,22 @@ import shutil
 import stat
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from oci_helper import make_oci_archive
 
 import ca
 import signieren
-from smartheat_host import kette
+from build_bundle import build
+from kalender import plus_monate
+from smartheat_host import bundles, kette
+
+GW = Path(__file__).resolve().parents[2]
 
 SIGNIEREN_PY = Path(__file__).resolve().parents[1] / "signieren.py"
 ECHTES_OPENSSL = shutil.which("openssl")
@@ -27,6 +33,15 @@ def kette_dir(tmp_path):
     ziel = tmp_path / "kette"
     ca.test_kette_anlegen(ziel)
     return ziel
+
+
+def _echtes_manifest(wo: Path, art: str = "funktion") -> bytes:
+    """Die Bytes eines Manifests, wie build_bundle.py es schreibt (das Geraet liest es mit bundles.parse_manifest)."""
+    archiv = wo / "image.oci.tar"
+    make_oci_archive(archiv)
+    build(GW / "compose" / "docker-compose.yml", GW / "compose" / "mosquitto.conf", archiv, "0.2.0", wo / "gebaut", art=art,
+          jetzt=datetime(2026, 1, 15, 9, 0, tzinfo=UTC))
+    return (wo / "gebaut" / "manifest.json").read_bytes()
 
 
 def _jetzt() -> datetime:
@@ -130,7 +145,7 @@ def test_openssl_fehler_wird_zu_signierefehler_ohne_den_schluessel(kette_dir, op
 def test_signierschluessel_erscheint_nie_in_der_ausgabe(kette_dir, openssl_attrappe, tmp_path):
     bundle = tmp_path / "bundle"
     bundle.mkdir()
-    (bundle / "manifest.json").write_bytes(MANIFEST)
+    (bundle / "manifest.json").write_bytes(_echtes_manifest(tmp_path))
     umgebung = {**os.environ, "ATTRAPPE_SCHLUESSEL": str(kette_dir / "release.key"), "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "host")}
     args = [sys.executable, str(SIGNIEREN_PY), str(bundle), "--zertifikat", str(kette_dir / "release.crt"), "--schluessel", URI,
             "--roots", str(kette_dir / "root.crt")]
@@ -162,7 +177,7 @@ def _cli(kette_dir, bundle, *extra, roots=None, schluessel=None, zertifikat=None
 def bundle(tmp_path):
     ziel = tmp_path / "bundle"
     ziel.mkdir()
-    (ziel / "manifest.json").write_bytes(MANIFEST)
+    (ziel / "manifest.json").write_bytes(_echtes_manifest(tmp_path))
     return ziel
 
 
@@ -210,3 +225,106 @@ def test_cli_aus_schreibt_an_einen_anderen_ort(kette_dir, bundle, tmp_path):
 
 def test_cli_falscher_aufruf_exit_2():
     assert subprocess.run([sys.executable, str(SIGNIEREN_PY)], capture_output=True).returncode == 2
+
+
+# --- Ablauf neu setzen ---------------------------------------------------------------------------------------------
+
+JETZT = datetime(2026, 11, 12, 8, 30, tzinfo=UTC)
+
+
+def _blatt_pem(monate: int, jetzt: datetime) -> str:
+    """Ein Release-Zertifikat (PEM), das `monate` Monate ab `jetzt` gilt, ausgestellt von einer eigenen Test-Root."""
+    root_key, blatt_key = ca._schluessel(), ca._schluessel()
+    root = ca._root_zertifikat(root_key, "Test-Root", jetzt)
+    return ca._blatt(root, root_key, blatt_key.public_key(), monate, jetzt).decode()
+
+
+def _ablauf_von(manifest: bytes) -> datetime:
+    return bundles.parse_manifest(manifest).ablauf
+
+
+def test_der_ablauf_ist_zwoelf_monate_ab_jetzt(tmp_path):
+    neu = signieren.ablauf_setzen(_echtes_manifest(tmp_path), _blatt_pem(24, JETZT), JETZT)
+    assert _ablauf_von(neu) == datetime(2027, 11, 12, 8, 30, tzinfo=UTC)
+
+
+def test_der_ablauf_wird_auf_sekunden_gerundet(tmp_path):
+    neu = signieren.ablauf_setzen(_echtes_manifest(tmp_path), _blatt_pem(24, JETZT), JETZT.replace(microsecond=999_999))
+    assert _ablauf_von(neu) == datetime(2027, 11, 12, 8, 30, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(("monate", "erwartet"), [
+    (11, datetime(2027, 10, 12, 8, 30, tzinfo=UTC)),   # Zertifikat endet vor den zwoelf Monaten: der Ablauf folgt ihm
+    (12, datetime(2027, 11, 12, 8, 30, tzinfo=UTC)),   # genau gleich
+    (13, datetime(2027, 11, 12, 8, 30, tzinfo=UTC)),   # Zertifikat laenger: zwoelf Monate
+])
+def test_der_ablauf_liegt_nie_nach_dem_zertifikat(tmp_path, monate, erwartet):
+    pem = _blatt_pem(monate, JETZT)
+    neu = signieren.ablauf_setzen(_echtes_manifest(tmp_path), pem, JETZT)
+    assert _ablauf_von(neu) == erwartet
+    bis = x509.load_pem_x509_certificate(pem.encode()).not_valid_after_utc
+    assert _ablauf_von(neu) <= bis
+
+
+def test_ein_abgelaufenes_oder_gerade_ablaufendes_zertifikat_wird_nicht_signiert(tmp_path):
+    vorher = JETZT - timedelta(days=61)
+    pem = _blatt_pem(1, vorher)  # gueltig bis vor rund einem Monat
+    with pytest.raises(signieren.SigniereFehler, match="Zertifikat"):
+        signieren.ablauf_setzen(_echtes_manifest(tmp_path), pem, JETZT)
+    bis = x509.load_pem_x509_certificate(pem.encode()).not_valid_after_utc
+    with pytest.raises(signieren.SigniereFehler, match="Zertifikat"):
+        signieren.ablauf_setzen(_echtes_manifest(tmp_path), pem, bis)  # in der Sekunde des Endes
+    signieren.ablauf_setzen(_echtes_manifest(tmp_path), pem, bis - timedelta(seconds=1))  # eine Sekunde davor geht es
+
+
+def test_art_und_alles_andere_im_manifest_bleiben_beim_neu_setzen(tmp_path):
+    alt = _echtes_manifest(tmp_path, art="sicherheit")
+    neu = signieren.ablauf_setzen(alt, _blatt_pem(24, JETZT), JETZT)
+    vorher, nachher = json.loads(alt), json.loads(neu)
+    assert vorher.pop("ablauf") != nachher.pop("ablauf")
+    assert vorher == nachher and nachher["art"] == "sicherheit"
+
+
+def test_das_neu_gesetzte_manifest_hat_das_format_des_bauwerkzeugs(tmp_path):
+    """Gleiche Serialisierung wie build_bundle.py: ein Manifest mit unveraendertem Ablauf ist byte-gleich."""
+    alt = _echtes_manifest(tmp_path)
+    ablauf = _ablauf_von(alt)
+    start = ablauf - timedelta(days=365)
+    gleich = signieren.ablauf_setzen(alt, _blatt_pem(24, start), start)
+    assert _ablauf_von(gleich) == ablauf  # zwoelf Monate vor dem alten Ablauf gesetzt ergibt wieder den alten
+    assert gleich == alt
+
+
+def test_ein_unlesbares_manifest_wird_nicht_signiert(tmp_path):
+    for roh in (b"kein json", MANIFEST, b"[]"):
+        with pytest.raises(signieren.SigniereFehler, match="Manifest"):
+            signieren.ablauf_setzen(roh, _blatt_pem(24, JETZT), JETZT)
+
+
+def test_cli_setzt_den_ablauf_und_signiert_das_neue_manifest(kette_dir, bundle):
+    vorher = datetime.now(UTC)
+    alt = (bundle / "manifest.json").read_bytes()
+    ergebnis = _cli(kette_dir, bundle)
+    nachher = datetime.now(UTC)
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    neu = (bundle / "manifest.json").read_bytes()
+    assert neu != alt and plus_monate(vorher.replace(microsecond=0), 12) <= _ablauf_von(neu) <= plus_monate(nachher, 12)
+    # die Signatur gilt fuer genau die neuen Bytes
+    kette.verify(kette.load_roots((kette_dir / "root.crt").read_text()), neu, (bundle / "manifest.json.sig").read_text(), _jetzt())
+
+
+def test_cli_laesst_bei_einem_fehler_das_manifest_unveraendert(kette_dir, bundle, tmp_path):
+    alt = (bundle / "manifest.json").read_bytes()
+    ca.test_kette_anlegen(tmp_path / "andere")
+    falsch = _cli(kette_dir, bundle, roots=tmp_path / "andere" / "root.crt")
+    assert falsch.returncode == 1 and (bundle / "manifest.json").read_bytes() == alt
+
+
+def test_cli_mit_aus_ist_eine_zusaetzliche_signatur_ueber_das_unveraenderte_manifest(kette_dir, bundle, tmp_path):
+    """--aus erzeugt eine weitere Signatur derselben Bytes (etwa mit einer fremden Kette): das Manifest im Bundle und damit
+    die Signatur daneben bleiben gueltig, der Ablauf wird nicht neu gesetzt."""
+    manifest = (bundle / "manifest.json").read_bytes()
+    ziel = tmp_path / "anders.sig"
+    assert _cli(kette_dir, bundle, "--aus", str(ziel)).returncode == 0
+    assert (bundle / "manifest.json").read_bytes() == manifest
+    kette.verify(kette.load_roots((kette_dir / "root.crt").read_text()), manifest, ziel.read_text(), _jetzt())

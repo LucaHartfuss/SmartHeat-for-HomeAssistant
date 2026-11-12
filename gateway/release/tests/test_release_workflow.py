@@ -97,6 +97,7 @@ def test_probe_runs_the_local_script_with_a_test_chain_and_uploads_nothing():
     runs = [run for run in _runs(probe) if "release_lokal.sh" in run]
     assert len(runs) == 1 and "ca.py test-kette" in runs[0]
     assert "--probe" in runs[0] and "--roots" in runs[0] and "--schluessel" in runs[0] and "--zertifikat" in runs[0]
+    assert "--art funktion" in runs[0]  # das Skript verlangt die Art; die Probe baut wie ein gewoehnliches Funktions-Release
     assert "SHG_BUNDLE" not in yaml.safe_dump(probe) and "scp" not in " ".join(runs).split()
     uses = [step.get("uses", "") for step in probe["steps"]]
     assert any(u.startswith("docker/setup-qemu-action@") for u in uses)

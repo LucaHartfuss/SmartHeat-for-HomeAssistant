@@ -10,21 +10,32 @@ des Tags ueberein; eine fremde Compose-Datei (privileged, Host-Mounts, andere Im
 zu ihr passt. Ob das Archiv wirklich aus dem Quelltext des Tags gebaut wurde, zeigt diese Pruefung nicht (reproduzierbarer
 Bau: Restpunkt AP-04-Repro); sie stellt sicher, dass das Manifest zum Archiv passt, das signiert wird.
 
-Aufruf: verify_bundle.py BUNDLE_DIR VERSION [--compose PFAD] [--mosquitto-conf PFAD]
+Dazu `art` und `ablauf`: der Ablauf liegt nach dem Jetzt und hoechstens zwoelf Kalendermonate davor (ein Manifest, das beim
+Signieren schon abgelaufen waere, oder eines mit einem fernen Ablauf wird nicht signiert); der Neubau uebernimmt beide
+Werte aus dem Manifest (art kennt der Tag nicht, den Ablauf setzt signieren.py neu). Ist die Art `sicherheit`, darf der
+Abschnitt der Version im Changelog unter "### Funktion" nichts enthalten (ein Sicherheitsbundle darf keine Funktion
+mitliefern, die ein Kunde sonst nur mit Sicherheitsupdate bekaeme); fehlt der Abschnitt, ist das Bundle ebenfalls
+abgelehnt, weil das Gate dann nichts pruefen kann.
+
+Aufruf: verify_bundle.py BUNDLE_DIR VERSION [--compose PFAD] [--mosquitto-conf PFAD] [--changelog PFAD]
 Exit 0 = gueltig, 1 = abgelehnt (Grund auf stderr)."""
 import argparse
 import hashlib
 import sys
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "host"))  # Aufruf als Skript ohne PYTHONPATH
-from build_bundle import build, oci_digest  # noqa: E402
+from build_bundle import ABLAUF_MONATE, build, oci_digest  # noqa: E402
+from changelog_section import unterabschnitt  # noqa: E402
+from kalender import plus_monate  # noqa: E402
 from smartheat_host import bundles  # noqa: E402
 
 GW = Path(__file__).resolve().parents[1]
 COMPOSE = GW / "compose" / "docker-compose.yml"
 MOSQUITTO_CONF = GW / "compose" / "mosquitto.conf"
+CHANGELOG = GW / "CHANGELOG.md"
 # Reihenfolge: Dateien vor dem Manifest; mit Systemteil kommt bundles.SYSTEM_NAME dazu
 EXPECTED_FILES = (*bundles.MANIFEST_FILES, bundles.ARCHIVE_NAME, bundles.MANIFEST_NAME)
 
@@ -51,7 +62,28 @@ def _same_bytes(a: Path, b: Path) -> bool:
                 return True
 
 
-def verify(bundle: Path, version: str, compose: Path = COMPOSE, mosquitto_conf: Path = MOSQUITTO_CONF) -> None:
+def _pruefe_ablauf(manifest: bundles.Manifest, jetzt: datetime) -> None:
+    if manifest.ablauf <= jetzt:
+        raise BundleRejected(f"Manifest ist seit {manifest.ablauf.isoformat()} abgelaufen")
+    if manifest.ablauf > plus_monate(jetzt, ABLAUF_MONATE):
+        raise BundleRejected(f"Ablauf {manifest.ablauf.isoformat()} liegt mehr als zwoelf Monate voraus")
+
+
+def _pruefe_changelog(manifest: bundles.Manifest, version: str, changelog: Path) -> None:
+    if manifest.art != "sicherheit":
+        return
+    try:
+        funktion = unterabschnitt(changelog.read_text(encoding="utf-8"), version, "Funktion")
+    except OSError as fehler:
+        raise BundleRejected(f"Changelog nicht lesbar: {fehler}") from None
+    if funktion is None:
+        raise BundleRejected(f"Changelog hat keinen Abschnitt fuer {version}: ein Sicherheitsbundle bleibt ungeprueft")
+    if funktion:
+        raise BundleRejected(f"Sicherheitsbundle, aber der Changelog fuehrt {version} unter Funktion auf")
+
+
+def verify(bundle: Path, version: str, compose: Path = COMPOSE, mosquitto_conf: Path = MOSQUITTO_CONF, *,
+           changelog: Path = CHANGELOG, jetzt: datetime | None = None) -> None:
     found = sorted(path.name for path in bundle.iterdir())
     try:
         manifest = bundles.parse_manifest((bundle / bundles.MANIFEST_NAME).read_bytes())
@@ -65,6 +97,8 @@ def verify(bundle: Path, version: str, compose: Path = COMPOSE, mosquitto_conf: 
         raise BundleRejected(f"Manifest: {error}")
     if manifest.version != version:
         raise BundleRejected(f"Manifest-Version {manifest.version} passt nicht zur Release-Version {version}")
+    _pruefe_ablauf(manifest, jetzt or datetime.now(UTC))
+    _pruefe_changelog(manifest, version, changelog)
     for name, sha in manifest.files.items():
         if hashlib.sha256((bundle / name).read_bytes()).hexdigest() != sha:
             raise BundleRejected(f"{name}: SHA-256 passt nicht zum Manifest")
@@ -86,7 +120,8 @@ def verify(bundle: Path, version: str, compose: Path = COMPOSE, mosquitto_conf: 
     with tempfile.TemporaryDirectory() as tmp:
         try:
             build(compose, mosquitto_conf, archive, version, Path(tmp) / "neu",
-                  bundle / bundles.SYSTEM_NAME if manifest.system is not None else None)
+                  bundle / bundles.SYSTEM_NAME if manifest.system is not None else None,
+                  art=manifest.art, ablauf=manifest.ablauf)
         except (SystemExit, bundles.ManifestError) as error:
             raise BundleRejected(f"Neubau aus dem Tag gescheitert: {error}") from None
         for name in expected:
@@ -100,9 +135,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("version")
     parser.add_argument("--compose", type=Path, default=COMPOSE)
     parser.add_argument("--mosquitto-conf", type=Path, default=MOSQUITTO_CONF)
+    parser.add_argument("--changelog", type=Path, default=CHANGELOG)
     args = parser.parse_args(argv)
     try:
-        verify(args.bundle, args.version, args.compose, args.mosquitto_conf)
+        verify(args.bundle, args.version, args.compose, args.mosquitto_conf, changelog=args.changelog)
     except BundleRejected as error:
         print(f"Bundle abgelehnt: {error}", file=sys.stderr)
         return 1

@@ -62,7 +62,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           python gateway/release/ca.py test-kette --aus "$RUNNER_TEMP/kette"
-          bash gateway/release/release_lokal.sh "$VERSION" --probe --schluessel "$RUNNER_TEMP/kette/release.key" \
+          bash gateway/release/release_lokal.sh "$VERSION" --probe --art funktion --schluessel "$RUNNER_TEMP/kette/release.key" \
             --zertifikat "$RUNNER_TEMP/kette/release.crt" --roots "$RUNNER_TEMP/kette/root.crt" \
             --aus "$RUNNER_TEMP/out"
   gate:

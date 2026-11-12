@@ -3,9 +3,12 @@
 # Image-Archiv, das Werks-Image und das Bundle aus dem signierten Tag, prueft es per Neubau, signiert das Manifest und das
 # RAUC-System-Bundle mit dem Release-Schluessel (Hardware-Token oder Test-Kette) und laedt das Bundle per scp in die Ablage.
 #
-# Aufruf:  release_lokal.sh VERSION --schluessel PEM|pkcs11:URI --zertifikat DATEI --device-api-url URL --portal-base-url URL
+# Aufruf:  release_lokal.sh VERSION --art ART --schluessel PEM|pkcs11:URI --zertifikat DATEI --device-api-url URL --portal-base-url URL
 #                           [--roots DATEI] [--aus DIR] [--ohne-system] [--probe | --labor]
 #   VERSION       x.y.z, ohne "v"; der Tag heisst gateway-vVERSION.
+#   --art ART     sicherheit | funktion | treiberfix (Pflicht): Art der Aenderung, steht im signierten Manifest. Bei
+#                 `sicherheit` verweigert verify_bundle.py, wenn der Changelog der Version einen Eintrag unter „Funktion“ hat.
+#                 Den Ablauf des Manifests (12 Monate, nie nach dem Zertifikat) setzt signieren.py.
 #   --schluessel  PEM-Datei (Test-Kette) oder pkcs11:-URI des Release-Schluessels (signieren.py; die PIN gehoert nicht in
 #                 die URI, siehe signieren.py).
 #   --zertifikat  das Release-Zertifikat (PEM, von ca.py ausstellen).
@@ -69,7 +72,7 @@ set -euo pipefail
 umask 022
 
 usage() {
-  echo "Aufruf: $0 VERSION --schluessel PEM|pkcs11:URI --zertifikat DATEI --device-api-url URL --portal-base-url URL" \
+  echo "Aufruf: $0 VERSION --art sicherheit|funktion|treiberfix --schluessel PEM|pkcs11:URI --zertifikat DATEI --device-api-url URL --portal-base-url URL" \
        "[--roots DATEI] [--aus DIR] [--ohne-system] [--probe | --labor]" >&2
   exit 2
 }
@@ -78,9 +81,10 @@ fehler() { echo "FEHLER: $*" >&2; exit 1; }
 [ $# -ge 1 ] || usage
 version="$1"; shift
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "FEHLER: Version muss x.y.z sein: $version" >&2; exit 2; }
-schluessel=""; zertifikat=""; roots=""; aus=""; probe=0; labor=0; ohne_system=0; api_url=""; portal_url=""
+schluessel=""; zertifikat=""; roots=""; aus=""; probe=0; labor=0; ohne_system=0; api_url=""; portal_url=""; art=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --art) [ $# -ge 2 ] || usage; art="$2"; shift 2 ;;
     --schluessel) [ $# -ge 2 ] || usage; schluessel="$2"; shift 2 ;;
     --zertifikat) [ $# -ge 2 ] || usage; zertifikat="$2"; shift 2 ;;
     --roots) [ $# -ge 2 ] || usage; roots="$2"; shift 2 ;;
@@ -94,6 +98,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$schluessel" ] && [ -n "$zertifikat" ] || usage
+case "$art" in sicherheit|funktion|treiberfix) ;; *) usage ;; esac
 [ "$probe" = 0 ] || [ "$labor" = 0 ] || usage
 # syft (CycloneDX-SBOM): Image per Digest gepinnt, laeuft ohne Netz und liest das Archiv nur lesend. Erneuern: Tag holen
 # (`docker pull anchore/syft:vX.Y.Z`), Digest aus `docker inspect --format '{{index .RepoDigests 0}}'` eintragen; die CI
@@ -220,7 +225,7 @@ grep -q '"bomFormat": *"CycloneDX"' "$sbom" || fehler "syft: $sbom ist kein Cycl
 bundle_bauen() {
   local ordner="$1"; shift
   py "$here/build_bundle.py" --compose "$repo/gateway/compose/docker-compose.yml" \
-    --mosquitto-conf "$repo/gateway/compose/mosquitto.conf" --archive "$archiv" --version "$version" --out "$ordner" "$@" >/dev/null
+    --mosquitto-conf "$repo/gateway/compose/mosquitto.conf" --archive "$archiv" --version "$version" --art "$art" --out "$ordner" "$@" >/dev/null
   # Der Neubau legt eine Kopie des System-Bundles an: nicht in $TMPDIR (oft ein kleines tmpfs), sondern im Arbeitsordner.
   TMPDIR="$aus" py "$here/verify_bundle.py" "$ordner" "$version" >&2
   py "$here/signieren.py" "$ordner" --zertifikat "$zertifikat" --schluessel "$schluessel" --roots "$roots" >&2

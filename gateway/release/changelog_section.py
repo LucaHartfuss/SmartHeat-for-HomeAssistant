@@ -26,6 +26,24 @@ def section(text: str, version: str) -> str | None:
     return None
 
 
+def unterabschnitt(text: str, version: str, name: str) -> str | None:
+    """Der Text unter "### <name>" im Abschnitt der Version (bis zur naechsten "### "-Zeile), leer ohne die Ueberschrift
+    oder ohne Eintrag darunter; None, wenn die Version keinen (oder einen leeren) Abschnitt hat."""
+    abschnitt = section(text, version)
+    if abschnitt is None:
+        return None
+    heading = f"### {name}"
+    body: list[str] = []
+    drin = False
+    for line in abschnitt.splitlines():
+        if line.startswith("### "):
+            drin = line.rstrip() == heading
+        elif drin:
+            body.append(line)
+    found = "\n".join(body).strip()
+    return found + "\n" if found else ""
+
+
 def main(argv: list[str]) -> int:
     path, version = argv
     found = section(Path(path).read_text(encoding="utf-8"), version)

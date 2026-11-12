@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 import tarfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -18,12 +19,14 @@ from build_bundle import (
     oci_digest,
     render_compose,
 )
+from kalender import plus_monate
 from smartheat_host import bundles
 
 GW = Path(__file__).resolve().parents[2]
 COMPOSE = GW / "compose" / "docker-compose.yml"
 MOSQUITTO_CONF = GW / "compose" / "mosquitto.conf"
 IMAGE = "smartheat-gateway@sha256:" + "a" * 64
+JETZT = datetime(2026, 11, 12, 8, 30, tzinfo=UTC)
 
 
 class Archivdatei(type(Path())):
@@ -93,7 +96,7 @@ def test_render_keeps_hardening_and_dependencies_of_the_source():
 
 def test_build_schreibt_archiv_und_manifest(tmp_path, archive):
     out = tmp_path / "out"
-    manifest = build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out)
+    manifest = build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out, art="funktion")
     raw = (out / "manifest.json").read_bytes()
     parsed = bundles.parse_manifest(raw)  # das Geraet nimmt genau dieses Manifest an
     assert parsed.version == "0.2.0" and parsed.min_updater_version == MIN_UPDATER_VERSION == "0.8.0"
@@ -129,7 +132,7 @@ def system_datei(tmp_path):
 
 def test_build_mit_system_bindet_die_datei_im_manifest(tmp_path, archive, system_datei):
     out = tmp_path / "out"
-    manifest = build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out, system_datei)
+    manifest = build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out, system_datei, art="funktion")
     parsed = bundles.parse_manifest((out / "manifest.json").read_bytes())  # das Geraet nimmt genau dieses Manifest an
     assert parsed.min_updater_version == "0.9.0"
     assert sorted(p.name for p in out.iterdir()) == ["docker-compose.yml", "gateway-image.oci.tar", "manifest.json",
@@ -143,34 +146,34 @@ def test_build_mit_system_bindet_die_datei_im_manifest(tmp_path, archive, system
 
 
 def test_build_ohne_system_hat_kein_system_feld_und_0_8_0(tmp_path, archive):
-    manifest = build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out")
+    manifest = build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", art="funktion")
     assert "system" not in manifest and manifest["min_updater_version"] == "0.8.0"
     assert not (tmp_path / "out" / "system.raucb").exists()
 
 
 def test_build_mit_system_ist_reproduzierbar(tmp_path, archive, system_datei):
-    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "a", system_datei)
-    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "b", system_datei)
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "a", system_datei, art="funktion", jetzt=JETZT)
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "b", system_datei, art="funktion", jetzt=JETZT)
     for name in ("manifest.json", "system.raucb"):
         assert (tmp_path / "a" / name).read_bytes() == (tmp_path / "b" / name).read_bytes()
 
 
 def test_build_mit_fehlendem_system_hinterlaesst_nichts(tmp_path, archive):
     with pytest.raises(OSError):
-        build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", tmp_path / "gibt-es-nicht.raucb")
+        build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", tmp_path / "gibt-es-nicht.raucb", art="funktion")
     assert not (tmp_path / "out").exists()
 
 
 def test_build_mit_zu_grossem_system_wird_abgelehnt(tmp_path, archive, system_datei, monkeypatch):
     monkeypatch.setattr(bundles, "MAX_SYSTEM_BYTES", system_datei.stat().st_size - 1)
     with pytest.raises(bundles.ManifestError, match="system.groesse"):
-        build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", system_datei)
+        build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", system_datei, art="funktion")
     assert not (tmp_path / "out").exists()
 
 
 def test_cli_mit_system(tmp_path, archive, system_datei):
     code = main(["--compose", str(COMPOSE), "--mosquitto-conf", str(MOSQUITTO_CONF), "--archive", str(archive),
-                 "--system", str(system_datei), "--version", "1.2.3", "--out", str(tmp_path / "out")])
+                 "--system", str(system_datei), "--art", "funktion", "--version", "1.2.3", "--out", str(tmp_path / "out")])
     assert code == 0 and (tmp_path / "out" / "system.raucb").is_file()
     assert bundles.parse_manifest((tmp_path / "out" / "manifest.json").read_bytes()).system is not None
 
@@ -181,7 +184,7 @@ def test_das_archiv_im_bundle_traegt_den_namen_unter_dem_der_docker_es_findet(tm
     Speicher) `smartheat-gateway@<Digest>` und listet es mit Repository und Digest (Probe 2026-10-26). Alles andere
     im Archiv, vor allem die Blobs und damit der Index-Digest, bleibt unveraendert."""
     out = tmp_path / "out"
-    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out)
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", out, art="funktion")
     neu = out / bundles.ARCHIVE_NAME
     eintraege = _index(neu)["manifests"]
     assert len(eintraege) == 1 and eintraege[0]["digest"] == archive.digest
@@ -195,9 +198,9 @@ def test_das_archiv_im_bundle_traegt_den_namen_unter_dem_der_docker_es_findet(tm
 def test_ein_archiv_mit_dem_richtigen_namen_wird_unveraendert_uebernommen(tmp_path, archive):
     """Der Neubau aus dem Archiv des Bundles (verify_bundle.py) ergibt dieselben Bytes."""
     erst = tmp_path / "erst"
-    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", erst)
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", erst, art="funktion", jetzt=JETZT)
     zweit = tmp_path / "zweit"
-    build(COMPOSE, MOSQUITTO_CONF, erst / bundles.ARCHIVE_NAME, "0.2.0", zweit)
+    build(COMPOSE, MOSQUITTO_CONF, erst / bundles.ARCHIVE_NAME, "0.2.0", zweit, art="funktion", jetzt=JETZT)
     for name in ("docker-compose.yml", "gateway-image.oci.tar", "manifest.json", "mosquitto.conf"):
         assert (erst / name).read_bytes() == (zweit / name).read_bytes(), name
 
@@ -206,12 +209,12 @@ def test_ein_archiv_mit_fremdem_namen_wird_abgelehnt(tmp_path):
     fremd = tmp_path / "fremd.tar"
     make_oci_archive(fremd, annotations={ANNOTATION: "docker.io/library/anderes@sha256:" + "a" * 64})
     with pytest.raises(SystemExit, match="Name"):
-        build(COMPOSE, MOSQUITTO_CONF, fremd, "0.2.0", tmp_path / "out")
+        build(COMPOSE, MOSQUITTO_CONF, fremd, "0.2.0", tmp_path / "out", art="funktion")
     assert not (tmp_path / "out").exists()
 
 
 def test_manifest_hashes_match_the_written_files(tmp_path, archive):
-    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out")
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", art="funktion")
     out = tmp_path / "out"
     parsed = bundles.parse_manifest((out / "manifest.json").read_bytes())
     for name in bundles.MANIFEST_FILES:
@@ -221,8 +224,8 @@ def test_manifest_hashes_match_the_written_files(tmp_path, archive):
 
 
 def test_build_is_reproducible(tmp_path, archive):
-    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "a")
-    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "b")
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "a", art="funktion", jetzt=JETZT)
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "b", art="funktion", jetzt=JETZT)
     for name in ("docker-compose.yml", "gateway-image.oci.tar", "manifest.json", "mosquitto.conf"):
         assert (tmp_path / "a" / name).read_bytes() == (tmp_path / "b" / name).read_bytes(), name
 
@@ -242,7 +245,7 @@ def test_ein_archiv_ohne_stimmigen_index_wird_abgelehnt(tmp_path, fehler, text):
     kaputt = tmp_path / "kaputt.tar"
     make_oci_archive(kaputt, **fehler)
     with pytest.raises(SystemExit, match=text):
-        build(COMPOSE, MOSQUITTO_CONF, kaputt, "0.2.0", tmp_path / "out")
+        build(COMPOSE, MOSQUITTO_CONF, kaputt, "0.2.0", tmp_path / "out", art="funktion")
     assert not (tmp_path / "out").exists()
 
 
@@ -250,32 +253,32 @@ def test_eine_datei_die_kein_tar_ist_wird_abgelehnt(tmp_path):
     keins = tmp_path / "keins.tar"
     keins.write_bytes(b"kein tar")
     with pytest.raises(SystemExit, match="Archiv"):
-        build(COMPOSE, MOSQUITTO_CONF, keins, "0.2.0", tmp_path / "out")
+        build(COMPOSE, MOSQUITTO_CONF, keins, "0.2.0", tmp_path / "out", art="funktion")
     with pytest.raises(SystemExit, match="Archiv"):
-        build(COMPOSE, MOSQUITTO_CONF, tmp_path / "fehlt.tar", "0.2.0", tmp_path / "out")
+        build(COMPOSE, MOSQUITTO_CONF, tmp_path / "fehlt.tar", "0.2.0", tmp_path / "out", art="funktion")
 
 
 def test_ein_archiv_ueber_der_grenze_hinterlaesst_nichts(tmp_path, archive, monkeypatch):
     monkeypatch.setattr(bundles, "MAX_ARCHIVE_BYTES", 1000)  # das Test-Archiv ist rund 10 KB gross
     with pytest.raises(bundles.ManifestError):
-        build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out")
+        build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", art="funktion")
     assert not (tmp_path / "out").exists()  # weder das halbe Archiv noch ein Manifest
     vorhanden = tmp_path / "vorhanden"
     vorhanden.mkdir()
     with pytest.raises(bundles.ManifestError):
-        build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", vorhanden)
+        build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", vorhanden, art="funktion")
     assert list(vorhanden.iterdir()) == []  # ein schon vorhandener Ordner bleibt, leer
 
 
 def test_invalid_version_is_refused(tmp_path, archive):
     with pytest.raises(bundles.ManifestError):
-        build(COMPOSE, MOSQUITTO_CONF, archive, "v0.2", tmp_path / "out")
+        build(COMPOSE, MOSQUITTO_CONF, archive, "v0.2", tmp_path / "out", art="funktion")
     assert not (tmp_path / "out").exists()
 
 
 def test_cli_writes_the_bundle(tmp_path, archive, capsys):
     code = main(["--compose", str(COMPOSE), "--mosquitto-conf", str(MOSQUITTO_CONF), "--archive", str(archive),
-                 "--version", "1.2.3", "--out", str(tmp_path / "out")])
+                 "--art", "funktion", "--version", "1.2.3", "--out", str(tmp_path / "out")])
     assert code == 0
     assert set(json.loads(capsys.readouterr().out)) == set(bundles.MANIFEST_FILES)
     assert bundles.parse_manifest((tmp_path / "out" / "manifest.json").read_bytes()).version == "1.2.3"
@@ -289,7 +292,7 @@ def test_script_runs_without_pythonpath(tmp_path, archive):
     script = Path(__file__).resolve().parents[1] / "build_bundle.py"
     result = subprocess.run(
         [sys.executable, str(script), "--compose", str(COMPOSE), "--mosquitto-conf", str(MOSQUITTO_CONF),
-         "--archive", str(archive), "--version", "0.2.0", "--out", str(tmp_path / "out")],
+         "--archive", str(archive), "--art", "funktion", "--version", "0.2.0", "--out", str(tmp_path / "out")],
         capture_output=True, text=True, env=_ENV_OHNE_PYTHONPATH, check=False)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "out" / "manifest.json").is_file()
@@ -297,10 +300,73 @@ def test_script_runs_without_pythonpath(tmp_path, archive):
 
 def test_device_parser_of_the_updater_finds_the_stick_in_the_bundle(tmp_path, archive):
     """Der Updater liest devices: ohne yaml (bundles.compose_devices); er muss den Stick im erzeugten Bundle finden."""
-    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out")
+    build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", art="funktion")
     text = (tmp_path / "out" / "docker-compose.yml").read_text()
     expected = [entry.split(":", 1)[0] for service in yaml.safe_load(text)["services"].values()
                 for entry in service.get("devices", [])]
     assert expected == ["/dev/zigbee"]
     assert bundles.compose_devices(text) == expected
     assert bundles.compose_devices(COMPOSE.read_text()) == expected  # Quelle (Flussliste) ebenso
+
+
+# --- art und ablauf ------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("art", bundles.ARTEN)
+def test_build_schreibt_art_und_zwoelf_monate_ablauf(tmp_path, archive, art):
+    manifest = build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", art=art, jetzt=JETZT)
+    assert manifest["art"] == art and manifest["ablauf"] == "2027-11-12T08:30:00Z"
+    parsed = bundles.parse_manifest((tmp_path / "out" / "manifest.json").read_bytes())  # so liest es das Geraet
+    assert parsed.art == art and parsed.ablauf == datetime(2027, 11, 12, 8, 30, tzinfo=UTC)
+
+
+def test_der_ablauf_am_schalttag_endet_am_letzten_tag_des_zielmonats(tmp_path, archive):
+    manifest = build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", art="funktion",
+                     jetzt=datetime(2028, 2, 29, 12, 0, tzinfo=UTC))
+    assert manifest["ablauf"] == "2029-02-28T12:00:00Z"
+
+
+def test_ein_ausdruecklicher_ablauf_wird_so_geschrieben(tmp_path, archive):
+    ablauf = datetime(2026, 12, 1, 0, 0, 1, tzinfo=UTC)
+    manifest = build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", art="funktion", ablauf=ablauf, jetzt=JETZT)
+    assert manifest["ablauf"] == "2026-12-01T00:00:01Z"
+
+
+def test_build_ohne_jetzt_nimmt_die_uhr_und_rundet_auf_sekunden(tmp_path, archive):
+    vorher = datetime.now(UTC)
+    manifest = build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", art="funktion")
+    nachher = datetime.now(UTC)
+    ablauf = bundles.parse_manifest((tmp_path / "out" / "manifest.json").read_bytes()).ablauf
+    assert plus_monate(vorher.replace(microsecond=0), 12) <= ablauf <= plus_monate(nachher, 12)
+    assert manifest["ablauf"] == ablauf.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@pytest.mark.parametrize("art", ["kritisch", "", "Sicherheit", None])
+def test_eine_unbekannte_art_wird_nicht_gebaut(tmp_path, archive, art):
+    with pytest.raises(bundles.ManifestError, match="art"):
+        build(COMPOSE, MOSQUITTO_CONF, archive, "0.2.0", tmp_path / "out", art=art, jetzt=JETZT)
+    assert not (tmp_path / "out").exists()
+
+
+def test_cli_nimmt_art_und_ablauf(tmp_path, archive):
+    code = main(["--compose", str(COMPOSE), "--mosquitto-conf", str(MOSQUITTO_CONF), "--archive", str(archive),
+                 "--art", "treiberfix", "--ablauf", "2027-01-02T03:04:05Z", "--version", "1.2.3",
+                 "--out", str(tmp_path / "out")])
+    parsed = bundles.parse_manifest((tmp_path / "out" / "manifest.json").read_bytes())
+    assert code == 0 and parsed.art == "treiberfix" and parsed.ablauf == datetime(2027, 1, 2, 3, 4, 5, tzinfo=UTC)
+
+
+def test_cli_verlangt_die_art(tmp_path, archive):
+    with pytest.raises(SystemExit) as ende:
+        main(["--compose", str(COMPOSE), "--mosquitto-conf", str(MOSQUITTO_CONF), "--archive", str(archive),
+              "--version", "1.2.3", "--out", str(tmp_path / "out")])
+    assert ende.value.code == 2 and not (tmp_path / "out").exists()
+
+
+def test_cli_lehnt_eine_unbekannte_art_und_einen_schiefen_ablauf_ab(tmp_path, archive):
+    grund = ["--compose", str(COMPOSE), "--mosquitto-conf", str(MOSQUITTO_CONF), "--archive", str(archive),
+             "--version", "1.2.3", "--out", str(tmp_path / "out")]
+    with pytest.raises(SystemExit) as art:
+        main([*grund, "--art", "kritisch"])
+    with pytest.raises(SystemExit) as ablauf:
+        main([*grund, "--art", "funktion", "--ablauf", "2027-01-02"])
+    assert art.value.code == 2 and ablauf.value.code == 2 and not (tmp_path / "out").exists()

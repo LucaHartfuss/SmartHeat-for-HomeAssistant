@@ -6,7 +6,8 @@ aeltere Ordner gueltig bleiben). Das eigene Container-Image kommt als OCI-Archiv
 `docker load` und startet es ueber `smartheat-gateway@<Index-Digest>` mit `pull_policy: never`, ohne Registry. Ein Bundle
 kann zusaetzlich ein System-Bundle (RAUC) tragen (optionales Manifest-Feld `system`, Ablage
 updater/system/<version>.raucb ausserhalb von bundles/): Datei, SHA-256, Groesse und `compatible` stehen im signierten
-Manifest, das Geraet vergleicht `compatible` mit dem seiner system.conf."""
+Manifest, das Geraet vergleicht `compatible` mit dem seiner system.conf. `art` (sicherheit, funktion, treiberfix) und
+`ablauf` (UTC, `JJJJ-MM-TTThh:mm:ssZ`) kennzeichnen das Release; ob ein Manifest noch gilt, entscheidet der Updater."""
 import contextlib
 import fcntl
 import json
@@ -15,6 +16,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 MANIFEST_FILES = ("docker-compose.yml", "mosquitto.conf")
@@ -26,6 +28,8 @@ MAX_ARCHIVE_BYTES = 536870912  # 512 MiB
 SYSTEM_NAME = "system.raucb"  # Dateiname des System-Bundles im Bundle der Betreiber und im Manifest
 SYSTEM_COMPATIBLE = "smartheat-gateway-pi5"  # `compatible` der system.conf des Images (rauc/system.conf.in)
 MAX_SYSTEM_BYTES = 2147483648  # 2 GiB
+ARTEN = ("sicherheit", "funktion", "treiberfix")  # Art eines Releases im signierten Manifest
+_ABLAUF = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 _SHA = re.compile(r"[0-9a-f]{64}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -92,6 +96,8 @@ class Manifest:
     files: dict[str, str]
     images: dict[str, str]
     archiv: Archiv
+    art: str
+    ablauf: datetime  # UTC, bis dahin darf das Geraet dieses Manifest installieren
     system: SystemBundle | None = None
 
 
@@ -106,8 +112,9 @@ def parse_version(text) -> tuple[int, int, int]:
 def parse_manifest(raw: bytes) -> Manifest:
     try:
         data = json.loads(raw)
-        version, minimum, files, images, archiv = (
-            data["version"], data["min_updater_version"], data["files"], data["images"], data["archiv"],
+        version, minimum, files, images, archiv, art, ablauf = (
+            data["version"], data["min_updater_version"], data["files"], data["images"], data["archiv"], data["art"],
+            data["ablauf"],
         )
     except (ValueError, KeyError, TypeError):
         raise ManifestError("Manifest unlesbar oder unvollstaendig") from None
@@ -119,8 +126,19 @@ def parse_manifest(raw: bytes) -> Manifest:
         raise ManifestError("Manifest: SHA-256 der Dateien ungueltig")
     if not isinstance(images, dict) or not all(isinstance(ref, str) and "@sha256:" in ref for ref in images.values()):
         raise ManifestError("Manifest: Images ohne Digest")
+    if not (isinstance(art, str) and art in ARTEN):
+        raise ManifestError(f"Manifest: art muss eine von {', '.join(ARTEN)} sein")
     system = _parse_system(data["system"]) if "system" in data else None
-    return Manifest(version, minimum, dict(files), dict(images), _parse_archiv(archiv), system)
+    return Manifest(version, minimum, dict(files), dict(images), _parse_archiv(archiv), art, parse_ablauf(ablauf), system)
+
+
+def parse_ablauf(value) -> datetime:
+    if not (isinstance(value, str) and _ABLAUF.fullmatch(value)):
+        raise ManifestError("Manifest: ablauf muss JJJJ-MM-TTThh:mm:ssZ (UTC) sein")
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except ValueError:
+        raise ManifestError("Manifest: ablauf ist kein Zeitpunkt") from None
 
 
 def _parse_archiv(value) -> Archiv:

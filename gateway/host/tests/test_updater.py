@@ -45,9 +45,14 @@ BASE = "https://release.example.test/0.3.0/"
 JETZT = datetime(2026, 6, 1, 12, tzinfo=UTC)  # die synchrone Uhr der Tests
 ZERTIFIKAT_VON = datetime(2026, 3, 1, tzinfo=UTC)
 ZERTIFIKAT_BIS = datetime(2027, 3, 1, tzinfo=UTC)
+ABLAUF_FRIST = timedelta(days=365)  # so lange gilt ein Manifest der Tests ab der Uhr der Tests
 SYSTEM_INHALT = b"rauc-bundle-der-tests" * 40  # Inhalt egal: der Updater prueft Groesse und SHA-256, rauc install ist eine Attrappe
 SYSTEM = {"datei": bundles.SYSTEM_NAME, "sha256": hashlib.sha256(SYSTEM_INHALT).hexdigest(), "groesse": len(SYSTEM_INHALT),
           "compatible": "smartheat-gateway-pi5"}
+
+
+def _utc_text(moment: datetime) -> str:
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class FakeKanal:
@@ -128,7 +133,7 @@ class World:
         files = {"docker-compose.yml": compose, "mosquitto.conf": MOSQ}
         manifest = {"version": "0.3.0", "min_updater_version": "0.2.0",
                     "files": {n: hashlib.sha256(d).hexdigest() for n, d in files.items()},
-                    "images": {"gateway": IMAGE}, "archiv": dict(ARCHIV)}
+                    "images": {"gateway": IMAGE}, "archiv": dict(ARCHIV), "art": "funktion", "ablauf": _utc_text(JETZT + ABLAUF_FRIST)}
         if system:
             manifest["system"] = dict(SYSTEM)
         manifest.update(manifest_over or {})
@@ -323,6 +328,8 @@ def test_start_failure_rolls_back(tmp_path):
     ({"manifest_over": {"version": "0.4.0"}}, "manifest_ungueltig"),
     ({"url": "http://release.example.test/0.3.0/manifest.json"}, "manifest_ungueltig"),
     ({"manifest_over": {"min_updater_version": "9.0.0"}}, "updater_zu_alt"),
+    ({"manifest_over": {"art": "kritisch"}}, "manifest_ungueltig"),
+    ({"manifest_over": {"ablauf": "morgen"}}, "manifest_ungueltig"),
     ({"compose": b"services:\n  runtime:\n    image: ghcr.io/x/gw:latest\n"}, "manifest_ungueltig"),
 ])
 def test_refused_bundles_are_never_started(tmp_path, kwargs, reason):
@@ -334,6 +341,63 @@ def test_refused_bundles_are_never_started(tmp_path, kwargs, reason):
     assert not world.store.exists("0.3.0")  # nichts davon landet im Bundle-Ordner
     assert world.api.results == [("0.3.0", "rollback", reason)]
     assert world.state().current == "0.2.0" and world.state().rejected == [world.abgelehnt()]
+
+
+def _abgelaufen_geprueft(world, durchlaeufe=1):
+    """Der Updater hat das Angebot weder angenommen noch abgelehnt: nichts gemeldet, nichts in `rejected`, nichts
+    installiert, nichts ausser dem Manifest selbst geholt (je Durchlauf einmal)."""
+    assert world.api.results == [] and world.state().rejected == []
+    assert world.fetched == [BASE + "manifest.json"] * durchlaeufe and world.state().current == "0.2.0"
+    assert not world.store.exists("0.3.0") and not any(call[0] in ("up", "pull") for call in world.compose.calls)
+
+
+@pytest.mark.parametrize("abstand", [timedelta(seconds=-1), timedelta(seconds=0), timedelta(days=-400)],
+                         ids=["eine_sekunde_vorbei", "genau_jetzt", "lange_vorbei"])
+def test_ein_abgelaufenes_manifest_wird_nicht_installiert_und_nicht_abgelehnt(tmp_path, abstand):
+    world = World(tmp_path, manifest_over={"ablauf": _utc_text(JETZT + abstand)})
+    assert world.updater.run_once() == "manifest_abgelaufen"
+    _abgelaufen_geprueft(world)
+    assert world.updater.run_once() == "manifest_abgelaufen"  # kein Eintrag in rejected: jeder Durchlauf prueft neu
+    _abgelaufen_geprueft(world, 2)
+
+
+def test_ein_manifest_das_in_einer_sekunde_ablaeuft_wird_noch_installiert(tmp_path):
+    world = World(tmp_path, manifest_over={"ablauf": _utc_text(JETZT + timedelta(seconds=1))})
+    assert world.updater.run_once() == "aktualisiert"
+    assert world.state().current == "0.3.0"
+
+
+def test_eine_neu_signierte_fassung_derselben_version_ist_nach_dem_ablauf_annehmbar(tmp_path):
+    world = World(tmp_path, manifest_over={"ablauf": _utc_text(JETZT - timedelta(seconds=1))})
+    assert world.updater.run_once() == "manifest_abgelaufen"
+    alt = json.loads(world.served[BASE + "manifest.json"])
+    neu = json.dumps({**alt, "ablauf": _utc_text(JETZT + ABLAUF_FRIST)}, sort_keys=True).encode()
+    _serve_manifest(world, neu)  # gleiche Version, gleiche Dateien, neuer Ablauf
+    assert world.updater.run_once() == "aktualisiert"
+    assert world.state().current == "0.3.0" and world.state().rejected == []
+
+
+def test_der_ablauf_zaehlt_gegen_die_uhr_des_geraets_nicht_gegen_die_wanduhr(tmp_path):
+    world = World(tmp_path, manifest_over={"ablauf": _utc_text(JETZT + timedelta(days=30))})
+    world.now = JETZT + timedelta(days=30)
+    assert world.updater.run_once() == "manifest_abgelaufen"
+    _abgelaufen_geprueft(world)
+
+
+def test_ein_abgelaufenes_manifest_ohne_synchrone_uhr_wartet_auf_die_zeit(tmp_path):
+    world = World(tmp_path, manifest_over={"ablauf": _utc_text(JETZT - timedelta(days=1))})
+    world.now = None
+    assert world.updater.run_once() == "wartet_auf_zeit"
+    assert world.fetched == [] and world.api.results == [] and world.state().rejected == []
+
+
+def test_ein_abgelaufenes_manifest_mit_falscher_signatur_wird_abgelehnt_statt_uebergangen(tmp_path):
+    """Den Ablauf glaubt der Updater erst dem geprueften Manifest: ein unechtes mit altem Ablauf darf nicht als
+    harmlos abgelaufen durchgehen."""
+    world = World(tmp_path, manifest_over={"ablauf": _utc_text(JETZT - timedelta(days=1))})
+    _serve_manifest(world, world.served[BASE + "manifest.json"], signed=b"anderes")
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "signatur_ungueltig")]
 
 
 def test_manifest_with_wrong_sha_is_refused(tmp_path):
@@ -2501,7 +2565,8 @@ def _main_update(monkeypatch, root, site, *, signed_by_other_root=False, release
     neu = _main_bundle_version()
     raw = json.dumps({"version": neu, "min_updater_version": min_updater_version,
                       "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()},
-                      "images": {"gateway": IMAGE}, "archiv": dict(ARCHIV)}).encode()
+                      "images": {"gateway": IMAGE}, "archiv": dict(ARCHIV), "art": "funktion",
+                      "ablauf": _utc_text(jetzt + ABLAUF_FRIST)}).encode()
     signature = signiere(*signer, raw)
     site.routes.update({f"/{neu}/manifest.json": raw, **{f"/{neu}/{name}": data for name, data in files.items()},
                         f"/{neu}/" + bundles.ARCHIVE_NAME: ARCHIV_INHALT, health_path: health_body})

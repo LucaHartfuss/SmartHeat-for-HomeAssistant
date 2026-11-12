@@ -11,6 +11,11 @@ Der Signaturtext (manifest.json.sig) ist das JSON smartheat-kette-1: Format, Zer
 von openssl gibt das Werkzeug erst nach dem Lauf weiter, den Schluessel (Pfad oder URI) und jeden pin-value darin
 geschwaerzt. Die PIN-Abfrage liest openssl am Terminal (/dev/tty), nicht ueber stderr.
 
+Vor dem Signieren setzt das Werkzeug `ablauf` im Manifest neu: zwoelf Kalendermonate ab jetzt, nie nach dem Ende des
+Zertifikats (ein Manifest ueberlebt sein Zertifikat nicht); alles andere im Manifest, auch `art`, bleibt. Die Signatur
+deckt die neu geschriebenen Bytes, die das Werkzeug ins Bundle zurueckschreibt, erst nach bestandener Pruefung. Mit --aus
+entsteht nur eine weitere Signatur ueber das unveraenderte Manifest (etwa mit einer fremden Kette fuer Ablehnungsproben).
+
 Aufruf: signieren.py BUNDLE_DIR --zertifikat DATEI --schluessel PEM|pkcs11:URI --roots DATEI [--aus DATEI]
 Exit 0 = signiert und geprueft, 1 = Fehler (es bleibt keine Signatur liegen), 2 = falscher Aufruf."""
 import argparse
@@ -23,7 +28,11 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from cryptography import x509
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "host"))  # Aufruf als Skript ohne PYTHONPATH
+from build_bundle import ABLAUF_MONATE, ablauf_text, manifest_bytes  # noqa: E402
+from kalender import plus_monate  # noqa: E402
 from smartheat_host import bundles, kette  # noqa: E402
 
 FORMAT = "smartheat-kette-1"
@@ -37,6 +46,25 @@ class SigniereFehler(Exception):
 def geschwaerzt(text: str, schluessel: str) -> str:
     """Meldung von openssl ohne den Schluessel (Pfad oder URI) und ohne jeden pin-value."""
     return re.sub(r"pin-value=[^;&?\s]*", "pin-value=[entfernt]", text.replace(schluessel, "[Schluessel]"))
+
+
+def ablauf_setzen(manifest: bytes, zertifikat_pem: str, jetzt: datetime) -> bytes:
+    """Das Manifest mit neuem `ablauf`: `jetzt` plus zwoelf Kalendermonate, hoechstens bis zum Ende des Zertifikats, auf
+    Sekunden genau. Gleiche Serialisierung wie build_bundle.py. Ein Zertifikat, das `jetzt` schon beendet ist, signiert nicht."""
+    try:
+        daten = json.loads(manifest)
+        bundles.parse_manifest(manifest)
+    except (ValueError, bundles.ManifestError) as fehler:
+        raise SigniereFehler(f"Manifest nicht lesbar: {fehler}") from None
+    try:
+        ende = x509.load_pem_x509_certificate(zertifikat_pem.encode()).not_valid_after_utc
+    except ValueError:
+        raise SigniereFehler("Zertifikat nicht lesbar") from None
+    jetzt = jetzt.astimezone(UTC).replace(microsecond=0)
+    if ende <= jetzt:
+        raise SigniereFehler(f"Zertifikat ist seit {ende.isoformat()} abgelaufen")
+    daten["ablauf"] = ablauf_text(min(plus_monate(jetzt, ABLAUF_MONATE), ende))
+    return manifest_bytes(daten)
 
 
 def signiere(manifest: bytes, zertifikat_pem: str, schluessel: str) -> str:
@@ -71,10 +99,15 @@ def main(argv: list[str] | None = None) -> int:
     ziel = args.aus or args.bundle / bundles.SIGNATURE_NAME
     try:
         ziel.unlink(missing_ok=True)
+        zertifikat = args.zertifikat.read_text()
         manifest = (args.bundle / bundles.MANIFEST_NAME).read_bytes()
-        text = signiere(manifest, args.zertifikat.read_text(), args.schluessel)
+        if not args.aus:  # eine zusaetzliche Signatur (--aus) deckt dieselben Bytes wie die im Bundle
+            manifest = ablauf_setzen(manifest, zertifikat, datetime.now(UTC))
+        text = signiere(manifest, zertifikat, args.schluessel)
         # Dieselbe Pruefung wie auf dem Geraet, vor dem Schreiben: eine Signatur, die sie nicht besteht, liegt nie herum.
         cert = kette.verify(kette.load_roots(args.roots.read_text()), manifest, text, datetime.now(UTC))
+        if not args.aus:
+            (args.bundle / bundles.MANIFEST_NAME).write_bytes(manifest)
         ziel.write_text(text)
         ziel.chmod(0o644)
     except (OSError, SigniereFehler) as fehler:

@@ -126,6 +126,7 @@ OFFER_KEYS = ("manifest_url", "manifest_sha256", "signature")
 STATUS_MAX_ALTER = timedelta(minutes=15)  # so alt darf host/status.json fuer die Uhr hoechstens sein
 STATUS_MAX_VORSPRUNG = timedelta(minutes=1)  # so weit darf ts vor der Uhr liegen (Korrektur durch NTP)
 WARTET_AUF_ZEIT = "wartet_auf_zeit"
+MANIFEST_ABGELAUFEN = "manifest_abgelaufen"  # Ergebnis eines Durchlaufs, kein Grund einer Meldung (nicht in REASONS)
 _HEALTHY, _UNHEALTHY, _UNREACHABLE = "gesund", "ungesund", "unerreichbar"
 REQUIRED_HEALTHY = ("runtime",)
 LOKAL_GESUND_SECONDS = 600  # lokale Gesundheit im Probestart: fest ab dem Start des Updaters, ohne Verlaengerung
@@ -146,6 +147,10 @@ HOST_DIENSTE = ("docker.service", "smartheat-hoststatus.service", "smartheat-fir
 
 class FetchError(Exception):
     pass
+
+
+class _Abgelaufen(Exception):
+    """Das gepruefte Manifest gilt nicht mehr: kein Fehler des Angebots, keine Ablehnung und keine Meldung."""
 
 
 class _Refused(Exception):
@@ -936,6 +941,9 @@ class Updater:
         except bundles.LoadError as error:  # Datentraeger voll, Daemon beschaeftigt: kein Fehler des Angebots
             logger.error("Image von %s nicht geladen (%s), naechster Durchlauf", version, error)
             return "vorlaeufig"
+        except _Abgelaufen as abgelaufen:  # nichts merken: eine neu signierte Fassung derselben Version bleibt annehmbar
+            logger.warning("Bundle %s nicht installiert: %s", version, abgelaufen)
+            return MANIFEST_ABGELAUFEN
         except _Refused as refused:
             logger.error("Bundle %s abgelehnt: %s", version, refused)
             self._reject(state, version, refused.reason, manifest_sha, signatur)
@@ -979,7 +987,7 @@ class Updater:
     # --- Schritte ---
 
     def _download(self, desired: dict, version: str, jetzt: datetime, untergrenze: datetime | None) -> _Paket:
-        """Prueft und laedt; liefert die Bundle-Dateien plus Manifest und Signatur (alles fuer bundles/<version>/), das
+        """Prueft und laedt (ein abgelaufenes Manifest, erst nach Signatur und Version geprueft, wirft _Abgelaufen); liefert die Bundle-Dateien plus Manifest und Signatur (alles fuer bundles/<version>/), das
         Release-Zertifikat, mit dem das Manifest signiert ist, das gepruefte Manifest und seine Adresse. Das Archiv des
         Images holt erst `_image_bereitstellen`."""
         url, expected_sha, signature = (desired.get(key) for key in OFFER_KEYS)
@@ -1014,6 +1022,8 @@ class Updater:
             raise _Refused(MANIFEST_UNGUELTIG, f"Manifest nennt {manifest.version}, Soll ist {version}")
         if bundles.parse_version(manifest.min_updater_version) > bundles.parse_version(self._version):
             raise _Refused(UPDATER_ZU_ALT, f"Bundle verlangt Updater {manifest.min_updater_version}")
+        if manifest.ablauf <= jetzt:
+            raise _Abgelaufen(f"Manifest ist seit {manifest.ablauf.isoformat()} abgelaufen")
         files = {}
         for name, sha in manifest.files.items():
             data = self._fetch(urllib.parse.urljoin(url, name), MAX_FILE_BYTES)

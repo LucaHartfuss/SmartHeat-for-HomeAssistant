@@ -1,4 +1,5 @@
 {
+  "ablauf": "2099-12-31T23:59:59Z",
   "archiv": {
     "bytes": 1048576,
     "datei": "gateway-image.oci.tar",
@@ -6,6 +7,7 @@
     "name": "smartheat-gateway",
     "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   },
+  "art": "funktion",
   "files": {
     "docker-compose.yml": "fefab0edc66b8f8759efd79b61bc09417799f98a985a320b135a04f33a0fee23",
     "mosquitto.conf": "36ccefec33ba79178463319ce0de96e4f12fd0815f2501d2fc45987e2146f120"
