@@ -627,6 +627,13 @@ def test_accept_language_waehlt_nur_de_oder_en(kopf, erwartet):
     assert lokale_texte.sprache_waehlen(kopf) == erwartet
 
 
+@pytest.mark.parametrize(("davor", "erwartet"), [(31, "de"), (32, "en"), (40, "en")])
+def test_accept_language_zaehlt_nur_die_ersten_32_eintraege(davor, erwartet):
+    kopf = ",".join(["fr"] * davor + ["de"])
+    assert len(kopf) < lokale_texte.KOPF_MAX_ZEICHEN
+    assert lokale_texte.sprache_waehlen(kopf) == erwartet
+
+
 def test_schluessel_de_gleich_en_und_nur_einfache_platzhalter():
     de, en = lokale_texte.alle("de"), lokale_texte.alle("en")
     assert de.keys() == en.keys() and de
