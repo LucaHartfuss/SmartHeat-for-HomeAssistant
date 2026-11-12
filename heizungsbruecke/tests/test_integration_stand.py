@@ -68,9 +68,22 @@ def test_unknown_fields_and_a_foreign_event_schema_are_read_by_their_core():
     assert stand.version(0.0) == "0.9.0"
 
 
-def test_window_is_the_own_and_the_previous_status_schema():
+def test_integration_is_current_when_it_reads_the_schema_the_addon_sends():
     stand = IntegrationStand()
-    for schemas in ((STATUS,), (STATUS - 1,), (STATUS - 1, STATUS), (STATUS + 1,), (1, STATUS + 1)):
+    for schemas in ((STATUS,), (STATUS - 1, STATUS), (STATUS, STATUS + 1), (STATUS - 2, STATUS)):
+        stand.ereignis(ereignis(schemas=schemas), 0.0)
+        assert not stand.veraltet(0.0), schemas
+
+
+def test_an_integration_reading_only_the_previous_schema_cannot_read_the_addon_and_is_flagged():
+    stand = IntegrationStand()
+    stand.ereignis(ereignis(schemas=(STATUS - 1,)), 0.0)
+    assert stand.veraltet(0.0)
+
+
+def test_a_newer_integration_is_not_flagged():
+    stand = IntegrationStand()
+    for schemas in ((STATUS + 1,), (STATUS + 1, STATUS + 2)):
         stand.ereignis(ereignis(schemas=schemas), 0.0)
         assert not stand.veraltet(0.0), schemas
 

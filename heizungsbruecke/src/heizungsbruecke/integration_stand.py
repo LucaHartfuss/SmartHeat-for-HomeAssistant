@@ -2,7 +2,7 @@
 Das Ereignis kommt vom HA-Event-Bus und ist nicht vertrauenswuerdig: gelesen werden nur der eingefrorene Kern (schema,
 version, v5_schemas) in strenger Form, unbekannte Felder werden ignoriert, ein unlesbares Ereignis aendert nichts und
 verlaengert nichts. Eine Faelschung kann hoechstens eine Version oder den Hinweis „Integration aelter als das
-Lesefenster“ zeigen. Zeit kommt als monotone Sekunden vom Aufrufer, nie von der Wanduhr. Versionen und Schemata
+Status-Schema des Add-ons“ zeigen. Zeit kommt als monotone Sekunden vom Aufrufer, nie von der Wanduhr. Versionen und Schemata
 gehoeren nicht in Logs."""
 import re
 import threading
@@ -11,8 +11,6 @@ from heizungsbruecke import geraet_status
 
 #: Ohne Ereignis seit so vielen Sekunden ist die Version der Integration unbekannt (die Integration sendet alle 300 s).
 FRIST_SECONDS = 900
-#: Lesefenster fuer die Status-Schemata der Integration: das eigene und das vorige Schema des Add-ons.
-LESEFENSTER = tuple(s for s in (geraet_status.EVENT_SCHEMA - 1, geraet_status.EVENT_SCHEMA) if s >= 1)
 _VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}")
 _MAX_SCHEMATA = 16
 
@@ -22,7 +20,7 @@ def _ganzzahl(wert, *, ab: int = 1) -> bool:
 
 
 def _lesen(daten) -> tuple[str, bool] | None:
-    """(Version, aelter als das Fenster) aus einem Ereignis; None, wenn der Kern nicht lesbar ist."""
+    """(Version, kann das gesendete Status-Schema nicht lesen und ist aelter) aus einem Ereignis; None, wenn der Kern nicht lesbar ist."""
     if not isinstance(daten, dict) or not _ganzzahl(daten.get("schema")):
         return None
     version, schemata = daten.get("version"), daten.get("v5_schemas")
@@ -31,7 +29,7 @@ def _lesen(daten) -> tuple[str, bool] | None:
     if not isinstance(schemata, list) or not 1 <= len(schemata) <= _MAX_SCHEMATA \
             or not all(_ganzzahl(s) for s in schemata):
         return None
-    return version, max(schemata) < min(LESEFENSTER)
+    return version, geraet_status.EVENT_SCHEMA not in schemata and max(schemata) < geraet_status.EVENT_SCHEMA
 
 
 class IntegrationStand:
@@ -65,7 +63,7 @@ class IntegrationStand:
         return aussage[0] if aussage else None
 
     def veraltet(self, jetzt: float) -> bool:
-        """Die Integration liest nur Status-Schemata unter dem Lesefenster des Add-ons (ist sie neuer, zeigt sie das selbst)."""
+        """Die Integration liest das Status-Schema nicht, das das Add-on sendet, und nur aeltere (ist sie neuer, zeigt sie das selbst)."""
         with self._lock:
             aussage = self._gueltig(jetzt)
         return bool(aussage and aussage[1])
