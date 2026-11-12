@@ -6,6 +6,7 @@ import dataclasses
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
+from fakes import FakeClock
 from test_runtime_kaelteschutz import (
     MINUTE,
     REFS,
@@ -16,7 +17,6 @@ from test_runtime_kaelteschutz import (
     _lauf,
     _lauft,
     _pruefen,
-    uhr,  # noqa: F401 - Fixture
     wall,  # noqa: F401 - Fixture
 )
 
@@ -29,6 +29,16 @@ ZEITPROGRAMM = "auto"
 AUSSER = "ausser_betrieb"
 OHNE = "testphase_ohne"
 ZONEN_REFS = {**REFS, "shift_current": f"{ZONE}::temperature"}
+# Startwerte der monotonen Test-Uhr: die Test-Uhr startete frueher bei der Betriebszeit des Rechners, und bei manchen
+# Werten (die beiden Kommazahlen) ergibt dreimal "+ 300 s" abzueglich des Starts knapp unter 900 s. Die Ruhe darf nicht
+# vom Start der Uhr abhaengen.
+UHR_STARTS = [pytest.param(1_000_000.0, id="ganzzahl"), pytest.param(519663.84716953227, id="knapp-unter-900"),
+              pytest.param(4189505.2215352473, id="knapp-unter-900-gross")]
+
+
+@pytest.fixture(params=UHR_STARTS)
+def uhr(request):
+    return FakeClock(request.param)
 
 
 class ZonenHa:
@@ -121,7 +131,10 @@ def test_scheitert_die_rueckstellung_nach_dem_lauf_wiederholt_der_naechste_check
     assert rt.ha.modes[ZONE] == MANUAL_HVAC_MODE  # nicht schreibbar: die Zone bleibt, die Rueckstellung offen
 
     rt.ha.mode_fehler = False
-    _lauf(rt, 10 * MINUTE)
+    # Nach zwei Fehlschlaegen wartet die Rueckkehr-Treppe 15 min. Der Check, der genau 15 min nach dem Fehlschlag liegt,
+    # sitzt auf der Schwelle (je nach Gleitkomma-Rundung der Uhr knapp davor): ein Check mehr Luft, der Erfolg selbst
+    # ist der des ersten erlaubten Checks.
+    _lauf(rt, 15 * MINUTE)
 
     assert rt.ha.modes[ZONE] == ZEITPROGRAMM
     danach = len(rt.ha.ereignisse)
