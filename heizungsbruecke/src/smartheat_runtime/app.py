@@ -25,6 +25,7 @@ from smartheat_runtime import (
     datentraeger,
     delivery,
     entitlement,
+    kontingent,
     kreiszustand,
     regulation,
     roles,
@@ -597,7 +598,8 @@ def _on_health(rt: Runtime, event: Event) -> None:
     if rt.store.state.abo_finished:
         abo.ende_festhalten(rt)  # ein gescheitertes Speichern des Endes wird im Takt wiederholt
         return
-    checks = [battery.check_batteries, room_sensors.check_room_sensors, aussentemperatur.check]
+    checks = [battery.check_batteries, room_sensors.check_room_sensors, aussentemperatur.check,
+              kontingent.check]
     # Ohne Setwell (Testphase, Kreis ausser Betrieb) gibt es nichts durchzusetzen: ein Eingriff von Hand ist dann der
     # Normalfall.
     if not (testphase.aktiv(rt) or kreiszustand.ausser_betrieb(rt)):

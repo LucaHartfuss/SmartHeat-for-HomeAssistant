@@ -1,12 +1,13 @@
 """SignalSource des Gateways: zigbee:<ieee>:<feld> aus dem Zigbee-Spiegel, soll:room_target aus
 dem Soll-Speicher, treiber:<rolle> aus dem Cache des Treibers, raum:mittel = Raummittel (room_mean) ueber die
 Referenzraum-Fuehler, raum:<n> = Mittel der Fuehler des Raums mit dieser Nummer (Referenz- und Kontrollraeume). Ungueltige Werte werfen ValueError/KeyError wie beim HA-Host; ein getrennter lokaler Bus wirft
-SourceUnavailable; eine unbekannte Referenz SignalNotFound. Gelesen wird nur im Worker-Thread."""
+SourceUnavailable, ein erschoepftes Kontingent des Treibers QuelleErschoepft; eine unbekannte Referenz SignalNotFound. Gelesen wird nur im Worker-Thread."""
 import re
 
 from smartheat_gateway.bus import Bus
+from smartheat_gateway.quota import QuotaExhausted
 from smartheat_gateway.zigbee import ZigbeeMirror
-from smartheat_runtime.ports import SignalNotFound, SignalUngueltig, SourceUnavailable
+from smartheat_runtime.ports import QuelleErschoepft, SignalNotFound, SignalUngueltig, SourceUnavailable
 from smartheat_runtime.room_mean import room_mean
 
 REF_ROOM_TARGET = "soll:room_target"
@@ -29,6 +30,11 @@ class GatewaySignalSource:
         """`room_sensor_refs`: Fuehler der Referenzraeume (Kreismittel); `raeume`: (Nummer, Fuehler) je Raum."""
         self._driver, self._store, self._room_refs = driver, store, tuple(room_sensor_refs)
         self._raeume = {nummer: tuple(fuehler) for nummer, fuehler in raeume}
+
+    def kontingent_meldung(self) -> str | None:
+        """Kundentext, solange das Abfragekontingent des Treibers erschoepft und sein Cache veraltet ist (die Laufzeit
+        meldet es, kontingent.check), sonst None."""
+        return None if self._driver is None else self._driver.kontingent_meldung()
 
     def _mittel(self, sensors: tuple[str, ...]) -> float:
         values = []
@@ -58,7 +64,10 @@ class GatewaySignalSource:
         if ref.startswith("treiber:"):
             if self._driver is None:
                 raise SourceUnavailable("Treiber noch nicht geladen")
-            return self._driver.read_signal(ref.removeprefix("treiber:"))
+            try:
+                return self._driver.read_signal(ref.removeprefix("treiber:"))
+            except QuotaExhausted as error:
+                raise QuelleErschoepft(str(error)) from None
         match = _ZIGBEE.fullmatch(ref)
         if match is None:
             raise SignalNotFound(ref)

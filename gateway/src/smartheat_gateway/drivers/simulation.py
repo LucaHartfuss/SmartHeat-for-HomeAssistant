@@ -344,6 +344,9 @@ class SimulationDriver:
         roles += ["outdoor_temp", "flow_setpoint", "flow_temperature", "room_temperature", "generator_hours"]
         return {role: f"treiber:{role}" for role in roles}
 
+    def kontingent_meldung(self) -> str | None:
+        return None  # die Simulation hat kein Abfragekontingent (quota_exhausted sperrt nur das Schreiben)
+
     def read_signal(self, role: str) -> float | str:
         return self._fresh()[role]
 

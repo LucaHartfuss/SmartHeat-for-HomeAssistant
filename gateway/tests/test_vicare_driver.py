@@ -206,6 +206,21 @@ def test_a_stale_cache_raises_value_error_and_under_an_exhausted_quota_quota_exh
         driver.write("curve", 1.2)
 
 
+def test_the_quota_notice_exists_only_while_the_quota_is_exhausted_and_the_cache_is_stale(env):
+    """Ein erschoepftes Kontingent mit frischem Cache stoert den Kunden nicht; erst veraltete Daten ohne Aussicht auf
+    eine Abfrage werden gemeldet, und mit dem Ende der Sperre (hier: das Fenster rutscht weiter) ist die Meldung weg."""
+    server, driver, paths, clock = env
+    assert driver.kontingent_meldung() is None
+    for _ in range(1200 - len(driver._guard._load()["aufrufe"])):
+        driver._guard.take()
+    assert driver.kontingent_meldung() is None  # Cache noch frisch
+    clock.advance(3 * 300 + 1)
+    assert driver.kontingent_meldung() == vicare_driver.QUOTA_TEXT
+    jetzt = driver._guard._now()
+    driver._guard._now = lambda: jetzt + 86400 + 1  # alle Aufrufe liegen ausserhalb des Fensters
+    assert driver.kontingent_meldung() is None
+
+
 @pytest.mark.parametrize(("alter_s", "frisch"), [(899, True), (900, True), (901, False)])
 def test_the_cache_is_fresh_up_to_exactly_three_poll_intervals(env, alter_s, frisch):
     """poll_seconds ist 300: der Cache gilt bis 3 x 300 s einschliesslich, eine Sekunde mehr und er ist veraltet."""
