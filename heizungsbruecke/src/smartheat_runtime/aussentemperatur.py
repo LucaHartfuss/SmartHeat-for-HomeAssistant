@@ -12,7 +12,7 @@ import logging
 from smartheat_core.logtext import lesbar
 from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.plausibility import OUTDOOR_TEMP_RANGE, is_plausible
-from smartheat_runtime.ports import SignalNotFound, SourceUnavailable
+from smartheat_runtime.ports import QuelleErschoepft, SignalNotFound, SourceUnavailable
 from smartheat_runtime.room_sensors import FAILED_ROUNDS
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,8 @@ def check(rt) -> None:
         value = rt.signals.get_state(ref)
     except SignalNotFound:
         value = None
+    except QuelleErschoepft:
+        return  # die Meldung zum Kontingent (kontingent.py) erklaert den fehlenden Wert
     except SourceUnavailable as error:
         logger.warning("Aussentemperatur-Pruefung abgebrochen, %s: %s", rt.texts.source_unavailable_log,
                        lesbar(str(error)))

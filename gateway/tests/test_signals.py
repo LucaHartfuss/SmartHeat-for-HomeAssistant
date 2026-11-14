@@ -9,12 +9,13 @@ from fakes import FakeBus
 
 from smartheat_gateway.drivers.registry import create
 from smartheat_gateway.paths import Paths
+from smartheat_gateway.quota import QuotaExhausted
 from smartheat_gateway.signals import REF_ROOM_MEAN, REF_ROOM_TARGET, GatewaySignalSource
 from smartheat_gateway.texts import SHG_TEXTS
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import battery
 from smartheat_runtime.notifier import Notifier
-from smartheat_runtime.ports import SignalNotFound, SignalUngueltig, SourceUnavailable
+from smartheat_runtime.ports import QuelleErschoepft, SignalNotFound, SignalUngueltig, SourceUnavailable
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BatteryRef
 from smartheat_runtime.soll_speicher import TargetStore
 from smartheat_runtime.state import StateStore
@@ -50,6 +51,28 @@ def test_room_mean_target_and_driver(world):
     assert source.get_state(REF_ROOM_MEAN) == 20.5
     assert source.get_state(REF_ROOM_TARGET) == 21.0
     assert isinstance(source.get_state("treiber:outdoor_temp"), float)
+
+
+def test_an_exhausted_driver_quota_is_an_unavailable_source_with_the_driver_text(world):
+    """Die Laufzeit kennt kein Kontingent: sie bekommt eine nicht verfuegbare Quelle (kein Programmfehler im Log)."""
+    _, _, source = world
+
+    def erschoepft(role):
+        raise QuotaExhausted("Kontingent weg")
+
+    source._driver.read_signal = erschoepft
+    with pytest.raises(QuelleErschoepft, match="Kontingent weg") as caught:
+        source.get_state("treiber:outdoor_temp")
+    assert isinstance(caught.value, SourceUnavailable)
+
+
+def test_the_quota_notice_of_the_driver_reaches_the_runtime(world):
+    _, _, source = world
+    assert source.kontingent_meldung() is None
+    source._driver.kontingent_meldung = lambda: "weg"
+    assert source.kontingent_meldung() == "weg"
+    source._driver = None
+    assert source.kontingent_meldung() is None  # Treiber noch nicht geladen
 
 
 def test_one_dead_sensor_keeps_the_mean_none_is_invalid(world):

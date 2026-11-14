@@ -20,6 +20,11 @@ class SourceUnavailable(OSError):
     die Runde ohne Meldung."""
 
 
+class QuelleErschoepft(SourceUnavailable):
+    """Das Abfragekontingent der Quelle ist aufgebraucht (Gateway: Cloud-Treiber), die Daten sind veraltet. Der Text ist
+    der Kundentext zum Kontingent; die Meldung dazu gibt kontingent.check, die Ueberwachungen beenden die Runde still."""
+
+
 class SignalSource(Protocol):
     """Werte ueber hostspezifische Referenzen lesen (HA: Entity-ID bzw. `entity::attribut`). Ein ungueltiger Wert
     (nicht verfuegbar, keine Zahl, Attribut fehlt) wirft SignalUngueltig (ein ValueError), KeyError oder TypeError."""
